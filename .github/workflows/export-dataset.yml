@@ -1,0 +1,52 @@
+name: Export SWE Dataset
+
+on:
+  workflow_dispatch:
+    inputs:
+      search_query:
+        description: >
+          GitHub issue search
+          (example: '-label:Epic label:Security assignee:@me is:open')
+        required: true
+      output_file:
+        description: "Export file name"
+        default: "dataset.json"
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install jq
+        run: sudo apt-get update && sudo apt-get -y install jq
+
+      - name: Export tasks by query
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
+          ORG:  ${{ github.repository_owner }}
+          PROJ: 2
+          QRAW: ${{ inputs.search_query }}
+          OUT:  ${{ inputs.output_file }}
+        shell: bash
+        run: |
+          ME="${{ github.actor }}"
+          QFIXED=$(echo "$QRAW" | sed "s/@me/$ME/g")
+          QUERY="project:$ORG/$PROJ $QFIXED"
+
+          echo "🔎 GitHub search query: $QUERY"
+
+          PAGE=1000
+          echo "[]" > "$OUT"
+
+          gh api --paginate -X GET search/issues \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            -f q="$QUERY" -f per_page="$PAGE" -f advanced_search=true |
+          jq -c '.items[] | {title: .title}' | \
+          jq -s '.' > "$OUT"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: project-tasks
+          path: ${{ inputs.output_file }}

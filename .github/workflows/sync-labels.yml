@@ -1,0 +1,37 @@
+name: Sync Labels to Repositories
+
+on:
+  workflow_dispatch:
+    inputs:
+      repositories:
+        description: 'Comma-separated list of target repositories (repo1,repo2)'
+        required: true
+        default: '.github,ee-swe-java-spring-benchmark,spring-petclinic-rest,feature-service,piggymetrics,train-ticket,spring-petclinic-microservices,realworld-java21-springboot3,jhipster-sample-app,spring-petclinic,spring-modular-monolith,empty-maven-springboot3'
+
+jobs:
+  sync-labels:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install github-label-sync
+        run: npm install -g github-label-sync
+
+      - name: Sync labels (add / update only)
+        env:
+          GITHUB_TOKEN: ${{ secrets.PAT_LABEL_SYNC }}
+        run: |
+          IFS=',' read -ra REPOS <<< "${{ github.event.inputs.repositories }}"
+          for REPO in "${REPOS[@]}"; do
+            echo "➡️  Syncing labels to jetbrains-eval-lab/$REPO"
+            github-label-sync \
+              --access-token "$GITHUB_TOKEN" \
+              --labels .github/labels.json \
+              --allow-added-labels \
+              "jetbrains-eval-lab/$REPO"
+          done

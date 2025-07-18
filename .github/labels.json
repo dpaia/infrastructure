@@ -1,0 +1,147 @@
+[
+  {
+    "name": "Epic",
+    "color": "e3502f",
+    "description": ""
+  },
+  {
+    "name": "Review",
+    "color": "A619A6",
+    "description": ""
+  },
+  {
+    "name": "Invalid",
+    "color": "e4e669",
+    "description": "This doesn't seem right"
+  },
+  {
+    "name": "Wontfix",
+    "color": "ffffff",
+    "description": "This will not be worked on"
+  },
+  {
+    "name": "Verified",
+    "color": "0E8A16",
+    "description": ""
+  },
+  {
+    "name": "Bugfix",
+    "color": "d73a4a",
+    "description": "Something is not working"
+  },
+  {
+    "name": "Documentation",
+    "color": "0075ca",
+    "description": "Improvements or additions to documentation"
+  },
+  {
+    "name": "Data",
+    "color": "CA905E",
+    "description": ""
+  },
+  {
+    "name": "REST",
+    "color": "A619A6",
+    "description": ""
+  },
+  {
+    "name": "Tests",
+    "color": "CD32B5",
+    "description": ""
+  },
+  {
+    "name": "Validation",
+    "color": "05E9A7",
+    "description": ""
+  },
+  {
+    "name": "Logs",
+    "color": "940CA5",
+    "description": ""
+  },
+  {
+    "name": "Events",
+    "color": "cad54b",
+    "description": ""
+  },
+  {
+    "name": "DTO",
+    "color": "CD3228",
+    "description": ""
+  },
+  {
+    "name": "Security",
+    "color": "5A372E",
+    "description": ""
+  },
+  {
+    "name": "API",
+    "color": "A60BE4",
+    "description": ""
+  },
+  {
+    "name": "Controller",
+    "color": "5ce015",
+    "description": ""
+  },
+  {
+    "name": "Endpoints",
+    "color": "5d1f9d",
+    "description": ""
+  },
+  {
+    "name": "Cache",
+    "color": "ee6cb7",
+    "description": ""
+  },
+  {
+    "name": "Flyway",
+    "color": "fa3d0a",
+    "description": ""
+  },
+  {
+    "name": "Liquibase",
+    "color": "930383",
+    "description": ""
+  },
+  {
+    "name": "Exceptions",
+    "color": "829ad3",
+    "description": ""
+  },
+  {
+    "name": "SQL",
+    "color": "1d76db",
+    "description": ""
+  },
+  {
+    "name": "JPA",
+    "color": "033fdb",
+    "description": ""
+  },
+  {
+    "name": "JPQL",
+    "color": "c42f02",
+    "description": ""
+  },
+  {
+    "name": "Tracing",
+    "color": "c94cbf",
+    "description": ""
+  },
+  {
+    "name": "AOP",
+    "color": "4f3ee4",
+    "description": ""
+  },
+  {
+    "name": "RabbitMQ",
+    "color": "64ca19",
+    "description": ""
+  },
+  {
+    "name": "Transaction",
+    "color": "24866d",
+    "description": ""
+  }
+]

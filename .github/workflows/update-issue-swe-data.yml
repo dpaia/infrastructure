@@ -21,7 +21,7 @@ jobs:
 
       - name: Add Issue to Project and set Commit field
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
           PROJECT_NUMBER: 3
           ORG_NAME: jetbrains-eval-lab
           COMMIT_VALUE: "TEST"

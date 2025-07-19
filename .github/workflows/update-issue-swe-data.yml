@@ -68,19 +68,22 @@ jobs:
           echo "Item ID: $item_id"
 
           echo "Fetching Field ID for Commit..."
+          
           field_id=$(gh api graphql -f query='
           query($project:ID!) {
             node(id: $project) {
               ... on ProjectV2 {
-                fields(first: 20) {
+                fields(first: 100) {
                   nodes {
-                    id
-                    name
+                    ... on ProjectV2FieldCommon {
+                      id
+                      name
+                    }
                   }
                 }
               }
             }
-          }' -f project=$project_id --jq '.data.node.fields.nodes[] | select(.name == "Commit") | .id')
+          }' -f project=$project_id --jq '.data.node.fields.nodes[] | select(.name == "Commit") | .id')        
 
           echo "Field ID: $field_id"
 

@@ -1,0 +1,104 @@
+name: Update Issue SWE Data
+
+on:
+  workflow_dispatch:
+    inputs:
+      repository:
+        description: 'Repository name (repo)'
+        required: true
+        type: string
+      issue_id:
+        description: 'Issue number'
+        required: true
+        type: string
+
+jobs:
+  add-to-project:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (not required but good practice)
+        uses: actions/checkout@v4
+
+      - name: Add Issue to Project and set Commit field
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PROJECT_NUMBER: 3
+          ORG_NAME: jetbrains-eval-lab
+          COMMIT_VALUE: "TEST"
+        run: |
+          gh auth status
+
+          echo "Fetching project ID..."
+          project_id=$(gh api graphql -f query='
+          query($org:String!, $number:Int!) {
+            organization(login: $org) {
+              projectV2(number: $number) {
+                id
+              }
+            }
+          }' -f org="$ORG_NAME" -F number=$PROJECT_NUMBER --jq '.data.organization.projectV2.id')
+
+          echo "Project ID: $project_id"
+
+          repo="jetbrains-eval-lab/${{ github.event.inputs.repository }}"
+          issue_number="${{ github.event.inputs.issue_id }}"
+
+          echo "Fetching Issue ID..."
+          issue_id=$(gh api graphql -f query='
+          query($repo:String!, $owner:String!, $number:Int!) {
+            repository(name: $repo, owner: $owner) {
+              issue(number: $number) {
+                id
+              }
+            }
+          }' -f repo="${repo##*/}" -f owner="${repo%/*}" -F number=$issue_number --jq '.data.repository.issue.id')
+
+          echo "Issue ID: $issue_id"
+
+          echo "Adding Issue to Project..."
+          item_id=$(gh api graphql -f query='
+          mutation($projectId:ID!, $contentId:ID!) {
+            addProjectV2ItemById(input: {projectId: $projectId, contentId: $contentId}) {
+              item {
+                id
+              }
+            }
+          }' -f projectId=$project_id -f contentId=$issue_id --jq '.data.addProjectV2ItemById.item.id')
+
+          echo "Item ID: $item_id"
+
+          echo "Fetching Field ID for Commit..."
+          field_id=$(gh api graphql -f query='
+          query($project:ID!) {
+            node(id: $project) {
+              ... on ProjectV2 {
+                fields(first: 20) {
+                  nodes {
+                    id
+                    name
+                  }
+                }
+              }
+            }
+          }' -f project=$project_id --jq '.data.node.fields.nodes[] | select(.name == "Commit") | .id')
+
+          echo "Field ID: $field_id"
+
+          echo "Setting Commit field value..."
+          gh api graphql -f query='
+          mutation($itemId:ID!, $fieldId:ID!, $value:String!) {
+            updateProjectV2ItemFieldValue(input: {
+              projectId: "'$project_id'",
+              itemId: $itemId,
+              fieldId: $fieldId,
+              value: {
+                text: $value
+              }
+            }) {
+              projectV2Item {
+                id
+              }
+            }
+          }' -f itemId=$item_id -f fieldId=$field_id -f value="$COMMIT_VALUE"
+
+          echo "✅ Done!"

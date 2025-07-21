@@ -249,6 +249,7 @@ jobs:
           REPOSITORY: ${{ github.event.inputs.repository }}
           LATEST_COMMIT: ${{ needs.get-latest-commit.outputs.commit_hash }}
           BASE_COMMIT: ${{ needs.get-latest-commit.outputs.base_commit_hash || '' }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           echo "data_value<<EOF" >> $GITHUB_OUTPUT
           .github/scripts/generate_data_value.py >> $GITHUB_OUTPUT

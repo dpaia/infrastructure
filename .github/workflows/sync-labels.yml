@@ -36,71 +36,78 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.PAT_LABEL_SYNC }}
         run: |
+          echo "Input topics: ${{ github.event.inputs.topics }}"
           IFS=',' read -ra TOPICS <<< "${{ github.event.inputs.topics }}"
+          echo "Number of topics to process: ${#TOPICS[@]}"
           REPOS=""
-          
+
+          # Build a single query for all topics with OR condition
+          TOPIC_QUERY=""
           for TOPIC in "${TOPICS[@]}"; do
-            echo "Fetching repositories with topic: $TOPIC"
-            
-            # Initialize variables for pagination
-            PAGE=1
-            PER_PAGE=100
-            ALL_REPOS_FOR_TOPIC=""
-            
-            # Loop through all pages of results
-            while true; do
-              echo "Fetching page $PAGE..."
-              
-              # Get repositories for current page using gh api command
-              PAGE_RESULT=$(gh api \
-                search/repositories \
-                --method=GET \
-                -H "Accept: application/vnd.github+json" \
-                -f q="org:jetbrains-eval-lab topic:$TOPIC" \
-                -f per_page="$PER_PAGE" \
-                -f page="$PAGE")
-              
-              # Extract repository names and convert to comma-separated list
-              PAGE_REPOS=$(echo "$PAGE_RESULT" | jq -r '.items[].name' | tr '\n' ',' | sed 's/,$//')
-              
-              # Check if we got any results on this page
-              if [ -z "$PAGE_REPOS" ]; then
-                break
-              fi
-              
-              # Add results to the list
-              if [ -n "$ALL_REPOS_FOR_TOPIC" ]; then
-                ALL_REPOS_FOR_TOPIC="$ALL_REPOS_FOR_TOPIC,$PAGE_REPOS"
-              else
-                ALL_REPOS_FOR_TOPIC="$PAGE_REPOS"
-              fi
-              
-              # Check if we've reached the last page
-              TOTAL_COUNT=$(echo "$PAGE_RESULT" | jq -r '.total_count')
-              ITEMS_SO_FAR=$((PAGE * PER_PAGE))
-              if [ $ITEMS_SO_FAR -ge $TOTAL_COUNT ]; then
-                break
-              fi
-              
-              # Move to the next page
-              PAGE=$((PAGE + 1))
-            done
-            
-            echo "Found repositories with topic $TOPIC: $ALL_REPOS_FOR_TOPIC"
-            
-            # Add to the overall list
-            if [ -n "$ALL_REPOS_FOR_TOPIC" ]; then
-              if [ -n "$REPOS" ]; then
-                REPOS="$REPOS,$ALL_REPOS_FOR_TOPIC"
-              else
-                REPOS="$ALL_REPOS_FOR_TOPIC"
-              fi
+            echo "Adding topic to query: $TOPIC"
+            if [ -n "$TOPIC_QUERY" ]; then
+              TOPIC_QUERY="$TOPIC_QUERY+OR+topic:$TOPIC"
+            else
+              TOPIC_QUERY="topic:$TOPIC"
             fi
           done
+
+          echo "Using combined topic query: $TOPIC_QUERY"
+
+          # Initialize variables for pagination
+          PAGE=1
+          PER_PAGE=100
+          REPOS=""
+
+          # Loop through all pages of results
+          while true; do
+            echo "Fetching page $PAGE..."
+
+            # Get repositories for current page using gh api command
+            PAGE_RESULT=$(gh api \
+              search/repositories \
+              --method=GET \
+              -H "Accept: application/vnd.github+json" \
+              -f q="org:jetbrains-eval-lab+($TOPIC_QUERY)" \
+              -f per_page="$PER_PAGE" \
+              -f page="$PAGE")
+
+            # Debug response
+            echo "DEBUG: API response for page $PAGE:"
+            echo "$PAGE_RESULT" | jq '.total_count, .items | length'
+
+            # Extract repository names and convert to comma-separated list
+            PAGE_REPOS=$(echo "$PAGE_RESULT" | jq -r '.items[].name' | tr '\n' ',' | sed 's/,$//')
+
+            # Check if we got any results on this page
+            if [ -z "$PAGE_REPOS" ]; then
+              break
+            fi
+
+            # Add results to the list
+            if [ -n "$REPOS" ]; then
+              REPOS="$REPOS,$PAGE_REPOS"
+            else
+              REPOS="$PAGE_REPOS"
+            fi
+
+            # Check if we've reached the last page
+            TOTAL_COUNT=$(echo "$PAGE_RESULT" | jq -r '.total_count')
+            ITEMS_SO_FAR=$((PAGE * PER_PAGE))
+            if [ $ITEMS_SO_FAR -ge $TOTAL_COUNT ]; then
+              break
+            fi
+
+            # Move to the next page
+            PAGE=$((PAGE + 1))
+          done
+
+          echo "Found repositories with combined topics: $REPOS"
           
           # Remove duplicates
           UNIQUE_REPOS=$(echo "$REPOS" | tr ',' '\n' | sort -u | tr '\n' ',' | sed 's/,$//')
           echo "Found repositories (total): $UNIQUE_REPOS"
+          echo "Number of unique repositories: $(echo "$UNIQUE_REPOS" | tr ',' '\n' | wc -l)"
           echo "repos=$UNIQUE_REPOS" >> $GITHUB_OUTPUT
 
       - name: Sync labels (add / update only)

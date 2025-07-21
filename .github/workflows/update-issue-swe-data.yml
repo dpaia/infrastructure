@@ -24,7 +24,6 @@ jobs:
           GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
           PROJECT_NUMBER: 3
           ORG_NAME: jetbrains-eval-lab
-          COMMIT_VALUE: "TEST"
         run: |
           gh auth status
 
@@ -42,6 +41,16 @@ jobs:
 
           repo="jetbrains-eval-lab/${{ github.event.inputs.repository }}"
           issue_number="${{ github.event.inputs.issue_id }}"
+
+          echo "Fetching latest commit related to issue..."
+          latest_commit=$(gh api repos/${repo}/commits --jq '.[] | select(.commit.message | contains("#'$issue_number'")) | .sha' | head -n 1)
+
+          if [ -z "$latest_commit" ]; then
+            echo "No commit found with reference to issue #${issue_number}, using latest commit from repository"
+            latest_commit=$(gh api repos/${repo}/commits --jq '.[0].sha')
+          fi
+
+          echo "Latest commit: $latest_commit"
 
           echo "Fetching Issue ID..."
           issue_id=$(gh api graphql -f query='
@@ -102,6 +111,6 @@ jobs:
                 id
               }
             }
-          }' -f itemId=$item_id -f fieldId=$field_id -f value="$COMMIT_VALUE"
+          }' -f itemId=$item_id -f fieldId=$field_id -f value="$latest_commit"
 
           echo "✅ Done!"

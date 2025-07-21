@@ -3,6 +3,11 @@ name: Update Issue SWE Data
 on:
   workflow_dispatch:
     inputs:
+      organization:
+        description: 'GitHub organization name'
+        required: false
+        default: 'jetbrains-eval-lab'
+        type: string
       repository:
         description: 'Repository name (repo)'
         required: true
@@ -10,11 +15,6 @@ on:
       issue_id:
         description: 'Issue number'
         required: true
-        type: string
-      organization:
-        description: 'GitHub organization name'
-        required: false
-        default: 'jetbrains-eval-lab'
         type: string
 
 jobs:

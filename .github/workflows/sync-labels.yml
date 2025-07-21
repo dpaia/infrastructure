@@ -46,13 +46,18 @@ jobs:
           for TOPIC in "${TOPICS[@]}"; do
             echo "Adding topic to query: $TOPIC"
             if [ -n "$TOPIC_QUERY" ]; then
-              TOPIC_QUERY="$TOPIC_QUERY+OR+topic:$TOPIC"
+              # GitHub API doesn't handle parentheses well in search queries
+              # Use simple OR syntax without parentheses
+              TOPIC_QUERY="$TOPIC_QUERY OR topic:$TOPIC"
             else
               TOPIC_QUERY="topic:$TOPIC"
             fi
           done
 
           echo "Using combined topic query: $TOPIC_QUERY"
+
+          # For debugging
+          echo "Full search query: org:jetbrains-eval-lab $TOPIC_QUERY"
 
           # Initialize variables for pagination
           PAGE=1
@@ -68,7 +73,7 @@ jobs:
               search/repositories \
               --method=GET \
               -H "Accept: application/vnd.github+json" \
-              -f q="org:jetbrains-eval-lab+($TOPIC_QUERY)" \
+              -f q="org:jetbrains-eval-lab+$TOPIC_QUERY" \
               -f per_page="$PER_PAGE" \
               -f page="$PAGE")
 

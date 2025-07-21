@@ -70,19 +70,47 @@ jobs:
 
           echo "commit_hash=$latest_commit" >> $GITHUB_OUTPUT
 
-  add-to-project:
-    needs: get-latest-commit
+  get-issue-id:
     runs-on: ubuntu-latest
+    outputs:
+      issue_id: ${{ steps.fetch-issue-id.outputs.issue_id }}
     steps:
-      - name: Checkout (not required but good practice)
-        uses: actions/checkout@v4
+      - name: Fetch GitHub issue ID
+        id: fetch-issue-id
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          repo="jetbrains-eval-lab/${{ github.event.inputs.repository }}"
+          issue_number="${{ github.event.inputs.issue_id }}"
+          owner="${repo%/*}"
+          repo_name="${repo##*/}"
 
-      - name: Add Issue to Project and set Commit field
+          echo "Fetching Issue ID..."
+          issue_id=$(gh api graphql -f query='
+          query($repo:String!, $owner:String!, $number:Int!) {
+            repository(name: $repo, owner: $owner) {
+              issue(number: $number) {
+                id
+              }
+            }
+          }' -f repo="$repo_name" -f owner="$owner" -F number=$issue_number --jq '.data.repository.issue.id')
+
+          echo "Issue ID: $issue_id"
+          echo "issue_id=$issue_id" >> $GITHUB_OUTPUT
+
+  get-project-data:
+    runs-on: ubuntu-latest
+    outputs:
+      project_id: ${{ steps.fetch-project-data.outputs.project_id }}
+      commit_field_id: ${{ steps.fetch-project-data.outputs.commit_field_id }}
+      data_field_id: ${{ steps.fetch-project-data.outputs.data_field_id }}
+    steps:
+      - name: Fetch project and field IDs
+        id: fetch-project-data
         env:
           GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
           PROJECT_NUMBER: 3
           ORG_NAME: jetbrains-eval-lab
-          LATEST_COMMIT: ${{ needs.get-latest-commit.outputs.commit_hash }}
         run: |
           gh auth status
 
@@ -97,39 +125,10 @@ jobs:
           }' -f org="$ORG_NAME" -F number=$PROJECT_NUMBER --jq '.data.organization.projectV2.id')
 
           echo "Project ID: $project_id"
+          echo "project_id=$project_id" >> $GITHUB_OUTPUT
 
-          repo="jetbrains-eval-lab/${{ github.event.inputs.repository }}"
-          issue_number="${{ github.event.inputs.issue_id }}"
-
-          echo "Using commit hash: $LATEST_COMMIT"
-
-          echo "Fetching Issue ID..."
-          issue_id=$(gh api graphql -f query='
-          query($repo:String!, $owner:String!, $number:Int!) {
-            repository(name: $repo, owner: $owner) {
-              issue(number: $number) {
-                id
-              }
-            }
-          }' -f repo="${repo##*/}" -f owner="${repo%/*}" -F number=$issue_number --jq '.data.repository.issue.id')
-
-          echo "Issue ID: $issue_id"
-
-          echo "Adding Issue to Project..."
-          item_id=$(gh api graphql -f query='
-          mutation($projectId:ID!, $contentId:ID!) {
-            addProjectV2ItemById(input: {projectId: $projectId, contentId: $contentId}) {
-              item {
-                id
-              }
-            }
-          }' -f projectId=$project_id -f contentId=$issue_id --jq '.data.addProjectV2ItemById.item.id')
-
-          echo "Item ID: $item_id"
-
-          echo "Fetching Field ID for Commit..."
-
-          field_id=$(gh api graphql -f query='
+          echo "Fetching Field IDs..."
+          fields_query=$(gh api graphql -f query='
           query($project:ID!) {
             node(id: $project) {
               ... on ProjectV2 {
@@ -143,15 +142,50 @@ jobs:
                 }
               }
             }
-          }' -f project=$project_id --jq '.data.node.fields.nodes[] | select(.name == "Commit") | .id')        
+          }' -f project=$project_id)
 
-          echo "Field ID: $field_id"
+          commit_field_id=$(echo "$fields_query" | jq -r '.data.node.fields.nodes[] | select(.name == "Commit") | .id')
+          data_field_id=$(echo "$fields_query" | jq -r '.data.node.fields.nodes[] | select(.name == "Data") | .id')
+
+          echo "Commit Field ID: $commit_field_id"
+          echo "Data Field ID: $data_field_id"
+
+          echo "commit_field_id=$commit_field_id" >> $GITHUB_OUTPUT
+          echo "data_field_id=$data_field_id" >> $GITHUB_OUTPUT
+
+  add-to-project:
+    needs: [get-latest-commit, get-issue-id, get-project-data]
+    runs-on: ubuntu-latest
+    outputs:
+      item_id: ${{ steps.add-to-project.outputs.item_id }}
+    steps:
+      - name: Add Issue to Project and set Commit field
+        id: add-to-project
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
+          PROJECT_ID: ${{ needs.get-project-data.outputs.project_id }}
+          ISSUE_ID: ${{ needs.get-issue-id.outputs.issue_id }}
+          COMMIT_FIELD_ID: ${{ needs.get-project-data.outputs.commit_field_id }}
+          LATEST_COMMIT: ${{ needs.get-latest-commit.outputs.commit_hash }}
+        run: |
+          echo "Adding Issue to Project..."
+          item_id=$(gh api graphql -f query='
+          mutation($projectId:ID!, $contentId:ID!) {
+            addProjectV2ItemById(input: {projectId: $projectId, contentId: $contentId}) {
+              item {
+                id
+              }
+            }
+          }' -f projectId=$PROJECT_ID -f contentId=$ISSUE_ID --jq '.data.addProjectV2ItemById.item.id')
+
+          echo "Item ID: $item_id"
+          echo "item_id=$item_id" >> $GITHUB_OUTPUT
 
           echo "Setting Commit field value..."
           gh api graphql -f query='
-          mutation($itemId:ID!, $fieldId:ID!, $value:String!) {
+          mutation($projectId:ID!, $itemId:ID!, $fieldId:ID!, $value:String!) {
             updateProjectV2ItemFieldValue(input: {
-              projectId: "'$project_id'",
+              projectId: $projectId,
               itemId: $itemId,
               fieldId: $fieldId,
               value: {
@@ -162,6 +196,36 @@ jobs:
                 id
               }
             }
-          }' -f itemId=$item_id -f fieldId=$field_id -f value="$LATEST_COMMIT"
+          }' -f projectId=$PROJECT_ID -f itemId=$item_id -f fieldId=$COMMIT_FIELD_ID -f value="$LATEST_COMMIT"
 
-          echo "✅ Done!"
+          echo "✅ Commit field updated!"
+
+  update-data-field:
+    needs: [get-project-data, add-to-project]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Update Data field
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
+          PROJECT_ID: ${{ needs.get-project-data.outputs.project_id }}
+          ITEM_ID: ${{ needs.add-to-project.outputs.item_id }}
+          DATA_FIELD_ID: ${{ needs.get-project-data.outputs.data_field_id }}
+        run: |
+          echo "Setting Data field value..."
+          gh api graphql -f query='
+          mutation($projectId:ID!, $itemId:ID!, $fieldId:ID!, $value:String!) {
+            updateProjectV2ItemFieldValue(input: {
+              projectId: $projectId,
+              itemId: $itemId,
+              fieldId: $fieldId,
+              value: {
+                text: $value
+              }
+            }) {
+              projectV2Item {
+                id
+              }
+            }
+          }' -f projectId=$PROJECT_ID -f itemId=$ITEM_ID -f fieldId=$DATA_FIELD_ID -f value="TEST"
+
+          echo "✅ Data field updated!"

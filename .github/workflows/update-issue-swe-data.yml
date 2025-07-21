@@ -212,6 +212,110 @@ jobs:
 
           echo "✅ Issue added to project!"
 
+  extract-test-fields:
+    needs: [get-latest-commit]
+    runs-on: ubuntu-latest
+    outputs:
+      fail_to_pass: ${{ steps.extract-fields.outputs.fail_to_pass }}
+      pass_to_pass: ${{ steps.extract-fields.outputs.pass_to_pass }}
+      has_error: ${{ steps.extract-fields.outputs.has_error }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.x'
+
+      - name: Make Python script executable
+        run: chmod +x .github/generator/utils/extract_test_fields.py
+
+      - name: Extract FAIL_TO_PASS and PASS_TO_PASS
+        id: extract-fields
+        env:
+          ISSUE_NUMBER: ${{ github.event.inputs.issue_id }}
+          REPOSITORY: ${{ github.event.inputs.repository }}
+          ORGANIZATION: ${{ github.event.inputs.organization }}
+          GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
+        run: |
+          echo "data_value<<EOF" >> $GITHUB_OUTPUT
+          .github/generator/utils/extract_test_fields.py >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT      
+
+  update-data-field:
+    needs: [get-project-data, add-to-project, get-latest-commit, extract-test-fields]
+    runs-on: ubuntu-latest
+    outputs:
+      has_error: ${{ steps.update-data.outputs.has_error }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Make Python script executable
+        run: chmod +x .github/generator/${{ github.event.inputs.generator }}.py
+
+      - name: Generate data value with Python script
+        id: generate-data
+        env:
+          ISSUE_NUMBER: ${{ github.event.inputs.issue_id }}
+          REPOSITORY: ${{ github.event.inputs.repository }}
+          ORGANIZATION: ${{ github.event.inputs.organization }}
+          LATEST_COMMIT: ${{ needs.get-latest-commit.outputs.commit_hash }}
+          BASE_COMMIT: ${{ needs.get-latest-commit.outputs.base_commit_hash || '' }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TEST_FAIL_TO_PASS: ${{ needs.extract-test-fields.outputs.fail_to_pass }}
+          TEST_PASS_TO_PASS: ${{ needs.extract-test-fields.outputs.pass_to_pass }}
+        run: |
+          echo "data_value<<EOF" >> $GITHUB_OUTPUT
+          .github/generator/${{ github.event.inputs.generator }}.py >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Update Data field
+        id: update-data
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
+          PROJECT_ID: ${{ needs.get-project-data.outputs.project_id }}
+          ITEM_ID: ${{ needs.add-to-project.outputs.item_id }}
+          DATA_FIELD_ID: ${{ needs.get-project-data.outputs.data_field_id }}
+          DATA_VALUE: ${{ steps.generate-data.outputs.data_value }}
+          EXTRACT_ERROR: ${{ needs.extract-test-fields.outputs.has_error }}
+        run: |
+          echo "Setting Data field value from Python script..."
+
+          # Check if data generation or extraction encountered an error
+          if [ "$EXTRACT_ERROR" == "true" ] || echo "$DATA_VALUE" | jq -e '.has_error == true' > /dev/null 2>&1; then
+            echo "Error detected in data generation or test field extraction. Setting empty Data field."
+            VALUE_TO_SET=""
+            echo "has_error=true" >> $GITHUB_OUTPUT
+          else
+            echo "Data value: $DATA_VALUE"
+            VALUE_TO_SET="$DATA_VALUE"
+            echo "has_error=false" >> $GITHUB_OUTPUT
+          fi
+
+          gh api graphql -f query='
+          mutation($projectId:ID!, $itemId:ID!, $fieldId:ID!, $value:String!) {
+            updateProjectV2ItemFieldValue(input: {
+              projectId: $projectId,
+              itemId: $itemId,
+              fieldId: $fieldId,
+              value: {
+                text: $value
+              }
+            }) {
+              projectV2Item {
+                id
+              }
+            }
+          }' -f projectId=$PROJECT_ID -f itemId=$ITEM_ID -f fieldId=$DATA_FIELD_ID -f value="$VALUE_TO_SET"
+
+          if [ "$VALUE_TO_SET" == "" ]; then
+            echo "✅ Data field updated with empty value due to error!"
+          else
+            echo "✅ Data field updated with Python-generated value!"
+          fi
+
   update-status-field:
     needs: [get-project-data, add-to-project, update-data-field]
     runs-on: ubuntu-latest
@@ -334,73 +438,3 @@ jobs:
           }' -f projectId=$PROJECT_ID -f itemId=$ITEM_ID -f fieldId=$COMMIT_FIELD_ID -f value="$LATEST_COMMIT"
 
           echo "✅ Commit field updated with latest commit hash: $LATEST_COMMIT"
-
-  update-data-field:
-    needs: [get-project-data, add-to-project, get-latest-commit]
-    runs-on: ubuntu-latest
-    outputs:
-      has_error: ${{ steps.update-data.outputs.has_error }}
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Make Python script executable
-        run: chmod +x .github/generator/${{ github.event.inputs.generator }}.py
-
-      - name: Generate data value with Python script
-        id: generate-data
-        env:
-          ISSUE_NUMBER: ${{ github.event.inputs.issue_id }}
-          REPOSITORY: ${{ github.event.inputs.repository }}
-          ORGANIZATION: ${{ github.event.inputs.organization }}
-          LATEST_COMMIT: ${{ needs.get-latest-commit.outputs.commit_hash }}
-          BASE_COMMIT: ${{ needs.get-latest-commit.outputs.base_commit_hash || '' }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          echo "data_value<<EOF" >> $GITHUB_OUTPUT
-          .github/generator/${{ github.event.inputs.generator }}.py >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
-
-      - name: Update Data field
-        id: update-data
-        env:
-          GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
-          PROJECT_ID: ${{ needs.get-project-data.outputs.project_id }}
-          ITEM_ID: ${{ needs.add-to-project.outputs.item_id }}
-          DATA_FIELD_ID: ${{ needs.get-project-data.outputs.data_field_id }}
-          DATA_VALUE: ${{ steps.generate-data.outputs.data_value }}
-        run: |
-          echo "Setting Data field value from Python script..."
-
-          # Check if data generation encountered an error
-          if echo "$DATA_VALUE" | jq -e '.has_error == true' > /dev/null 2>&1; then
-            echo "Error detected in data generation. Setting empty Data field."
-            VALUE_TO_SET=""
-            echo "has_error=true" >> $GITHUB_OUTPUT
-          else
-            echo "Data value: $DATA_VALUE"
-            VALUE_TO_SET="$DATA_VALUE"
-            echo "has_error=false" >> $GITHUB_OUTPUT
-          fi
-
-          gh api graphql -f query='
-          mutation($projectId:ID!, $itemId:ID!, $fieldId:ID!, $value:String!) {
-            updateProjectV2ItemFieldValue(input: {
-              projectId: $projectId,
-              itemId: $itemId,
-              fieldId: $fieldId,
-              value: {
-                text: $value
-              }
-            }) {
-              projectV2Item {
-                id
-              }
-            }
-          }' -f projectId=$PROJECT_ID -f itemId=$ITEM_ID -f fieldId=$DATA_FIELD_ID -f value="$VALUE_TO_SET"
-
-          if [ "$VALUE_TO_SET" == "" ]; then
-            echo "✅ Data field updated with empty value due to error!"
-          else
-            echo "✅ Data field updated with Python-generated value!"
-          fi

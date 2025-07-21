@@ -307,7 +307,7 @@ jobs:
           INSTANCE_ID=$(echo "$DATA_VALUE" | jq -r '.instance_id')
           
           # Create a temporary file with the JSON data
-          GIST_FILENAME="${{ github.event.inputs.organization }}/${{ github.event.inputs.repository }}/${INSTANCE_ID}.json"
+          GIST_FILENAME="${INSTANCE_ID}.json"
           
           # Replace slashes with underscores for the local filename to avoid directory issues
           LOCAL_FILENAME="${GIST_FILENAME//\//__}"

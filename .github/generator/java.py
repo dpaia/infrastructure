@@ -54,6 +54,9 @@ try:
     # Process test fields
     fail_to_pass_json, pass_to_pass_json = process_test_fields(organization, repository, issue_number)
 
+    # Generate source and test patches
+    source_patch, test_patch = generate_patches(organization, repository, issue_number, is_test_file)
+    
     # Detect build system
     build_system = detect_build_system()
     
@@ -62,7 +65,8 @@ try:
         "instance_id": generate_instance_id(organization, repository, issue_number),
         "issue_numbers": f"[\"{issue_number}\"]",
         "repo": f"{organization}/{repository}.git",
-        "patch": "",
+        "patch": source_patch,
+        "test_patch": test_patch,
         "FAIL_TO_PASS": fail_to_pass_json,
         "PASS_TO_PASS": pass_to_pass_json,
         "created_at": current_time,
@@ -96,6 +100,7 @@ except Exception as e:
         "issue_numbers": f"[\"{issue_number}\"]",
         "repo": f"{organization}/{repository}.git",
         "patch": "",
+        "test_patch": "",
         "FAIL_TO_PASS": "[]",
         "PASS_TO_PASS": "[]",
         "created_at": current_time,

@@ -6,6 +6,35 @@ import re
 import sys
 import glob
 
+# Function to determine if a file is a test file based on its path
+def is_test_file(file_path):
+    """
+    Determines if a file is a test file based on its path.
+    
+    Args:
+        file_path (str): The path of the file to check
+        
+    Returns:
+        bool: True if the file is a test file, False otherwise
+    """
+    # Common patterns for test files
+    test_patterns = [
+        r'/test/', r'/tests/',                  # Common test directories
+        r'_test\.', r'Test\.', r'Tests\.',      # Common test file naming patterns
+        r'/src/test/', r'/main/test/',          # Java/Maven test directories
+        r'/spec/', r'/specs/',                  # Ruby/JS spec directories
+        r'_spec\.', r'Spec\.',                  # Ruby/JS spec file naming patterns
+        r'__tests__', r'__test__',              # JS/TS test directories
+        r'_test_', r'test_'                     # Python test file naming patterns
+    ]
+    
+    # Check if any test pattern matches the file path
+    for pattern in test_patterns:
+        if re.search(pattern, file_path, re.IGNORECASE):
+            return True
+    
+    return False
+
 # Create a wrapper function for subprocess.run that won't be affected by mocks
 def run_subprocess(cmd, **kwargs):
     # Get the real subprocess module, even if it's been mocked
@@ -311,3 +340,198 @@ def process_test_fields(organization, repository, issue_number):
     pass_to_pass_json = to_json_array(pass_to_pass_value) if pass_to_pass_value else "[]"
     
     return fail_to_pass_json, pass_to_pass_json
+
+# Function to fetch commit IDs for a ticket
+def fetch_commit_ids(organization, repository, issue_number):
+    """
+    Fetches commit IDs linked to a specific issue.
+    
+    Args:
+        organization (str): GitHub organization name
+        repository (str): GitHub repository name
+        issue_number (str): Issue number
+        
+    Returns:
+        list: List of commit IDs linked to the issue
+    """
+    try:
+        # Check for test environment variable
+        test_commit_ids = os.environ.get('TEST_COMMIT_IDS', '')
+        if test_commit_ids:
+            print(f"Using test commit IDs from environment variable", file=sys.stderr)
+            return test_commit_ids.split(',')
+            
+        if issue_number == 'unknown' or not os.environ.get('GH_TOKEN', ''):
+            print("Missing issue number or GitHub token, skipping commit ID fetch", file=sys.stderr)
+            return []
+
+        print(f"Fetching linked commits for issue #{issue_number} in {organization}/{repository}...", file=sys.stderr)
+
+        # First, get directly linked commit IDs
+        cmd = [
+            'gh', 'api', 
+            f'repos/{organization}/{repository}/issues/{issue_number}/timeline',
+            '--jq', '.[] | select(.event == "referenced" and .commit_id != null) | .commit_id'
+        ]
+
+        print(f"Executing command: {' '.join(cmd)}", file=sys.stderr)
+        result = run_subprocess(cmd, capture_output=True, text=True, check=True)
+        commit_ids = result.stdout.strip().split('\n')
+        commit_ids = [commit_id for commit_id in commit_ids if commit_id]
+
+        if commit_ids:
+            print(f"Found {len(commit_ids)} directly linked commits: {', '.join(commit_ids)}", file=sys.stderr)
+        else:
+            print("No directly linked commits found, checking PRs...", file=sys.stderr)
+
+            # Try to get commits from PRs
+            cmd = [
+                'gh', 'api',
+                f'repos/{organization}/{repository}/issues/{issue_number}/timeline',
+                '--jq', '.[] | select(.event == "cross-referenced" and .source.issue.pull_request != null) | .source.issue.number'
+            ]
+
+            print(f"Executing command: {' '.join(cmd)}", file=sys.stderr)
+            result = run_subprocess(cmd, capture_output=True, text=True, check=True)
+            pr_numbers = result.stdout.strip().split('\n')
+            pr_numbers = [pr for pr in pr_numbers if pr]
+
+            if pr_numbers:
+                print(f"Found {len(pr_numbers)} related PRs: {', '.join(pr_numbers)}", file=sys.stderr)
+
+                for pr in pr_numbers:
+                    print(f"Fetching commits from PR #{pr}...", file=sys.stderr)
+                    cmd = [
+                        'gh', 'api',
+                        f'repos/{organization}/{repository}/pulls/{pr}/commits',
+                        '--jq', '.[].sha'
+                    ]
+
+                    print(f"Executing command: {' '.join(cmd)}", file=sys.stderr)
+                    result = run_subprocess(cmd, capture_output=True, text=True, check=True)
+                    pr_commits = result.stdout.strip().split('\n')
+                    new_commits = [commit for commit in pr_commits if commit]
+
+                    if new_commits:
+                        print(f"Added {len(new_commits)} commits from PR #{pr}: {', '.join(new_commits)}", file=sys.stderr)
+                        commit_ids.extend(new_commits)
+                    else:
+                        print(f"No commits found in PR #{pr}", file=sys.stderr)
+            else:
+                print("No related PRs found", file=sys.stderr)
+
+        if not commit_ids:
+            print("No linked commits found at all", file=sys.stderr)
+            
+        return commit_ids
+    except Exception as e:
+        print(f"Error fetching commit IDs: {e}", file=sys.stderr)
+        if hasattr(e, 'stderr'):
+            print(f"Command stderr: {e.stderr}", file=sys.stderr)
+        return []
+
+# Function to generate patches for a commit
+def generate_patches_for_commit(commit_id, test_file_detector=is_test_file):
+    """
+    Generates source and test patches for a specific commit.
+    
+    Args:
+        commit_id (str): The commit ID to generate patches for
+        test_file_detector (callable): A function that takes a file path and returns True if it's a test file,
+                                      False otherwise. Defaults to is_test_file function.
+        
+    Returns:
+        tuple: (source_patch, test_patch) containing the patches for source and test files
+    """
+    try:
+        # Get the diff for this commit
+        cmd = ['git', 'show', '--pretty=format:', '--patch', commit_id]
+        result = run_subprocess(cmd, capture_output=True, text=True, check=True)
+        full_diff = result.stdout.strip()
+        
+        if not full_diff:
+            print(f"No changes found in commit {commit_id}", file=sys.stderr)
+            return "", ""
+            
+        # Split the diff into individual file diffs
+        # Git diff format starts with "diff --git a/path b/path"
+        file_diffs = re.split(r'(diff --git )', full_diff)
+        
+        # Process the split result to get proper file diffs
+        processed_diffs = []
+        for i in range(1, len(file_diffs), 2):
+            if i+1 < len(file_diffs):
+                processed_diffs.append(file_diffs[i] + file_diffs[i+1])
+        
+        # Separate source and test patches
+        source_patches = []
+        test_patches = []
+        
+        for diff in processed_diffs:
+            # Extract file path from the diff
+            file_path_match = re.search(r'diff --git a/(.*) b/', diff)
+            if not file_path_match:
+                continue
+                
+            file_path = file_path_match.group(1)
+            
+            # Determine if it's a test file
+            if test_file_detector(file_path):
+                test_patches.append(diff)
+            else:
+                source_patches.append(diff)
+        
+        # Combine patches
+        source_patch = '\n'.join(source_patches)
+        test_patch = '\n'.join(test_patches)
+        
+        return source_patch, test_patch
+    except Exception as e:
+        print(f"Error generating patches for commit {commit_id}: {e}", file=sys.stderr)
+        if hasattr(e, 'stderr'):
+            print(f"Command stderr: {e.stderr}", file=sys.stderr)
+        return "", ""
+
+# Function to generate patches for all commits related to a ticket
+def generate_patches(organization, repository, issue_number, test_file_detector=is_test_file):
+    """
+    Generates source and test patches for all commits related to a ticket.
+    
+    Args:
+        organization (str): GitHub organization name
+        repository (str): GitHub repository name
+        issue_number (str): Issue number
+        
+    Returns:
+        tuple: (source_patch, test_patch) containing the combined patches for source and test files
+    """
+    # Get commit IDs for the ticket
+    commit_ids = fetch_commit_ids(organization, repository, issue_number)
+    
+    if not commit_ids:
+        print(f"No commits found for issue #{issue_number}", file=sys.stderr)
+        return "", ""
+    
+    print(f"Generating patches for {len(commit_ids)} commits...", file=sys.stderr)
+    
+    # Generate patches for each commit
+    all_source_patches = []
+    all_test_patches = []
+    
+    for commit_id in commit_ids:
+        print(f"Generating patches for commit {commit_id}...", file=sys.stderr)
+        source_patch, test_patch = generate_patches_for_commit(commit_id, test_file_detector)
+        
+        if source_patch:
+            all_source_patches.append(source_patch)
+            print(f"Added source patch for commit {commit_id}", file=sys.stderr)
+        
+        if test_patch:
+            all_test_patches.append(test_patch)
+            print(f"Added test patch for commit {commit_id}", file=sys.stderr)
+    
+    # Combine all patches
+    combined_source_patch = '\n\n'.join(all_source_patches)
+    combined_test_patch = '\n\n'.join(all_test_patches)
+    
+    return combined_source_patch, combined_test_patch

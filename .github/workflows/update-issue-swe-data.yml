@@ -154,19 +154,17 @@ jobs:
           echo "data_field_id=$data_field_id" >> $GITHUB_OUTPUT
 
   add-to-project:
-    needs: [get-latest-commit, get-issue-id, get-project-data]
+    needs: [get-issue-id, get-project-data]
     runs-on: ubuntu-latest
     outputs:
       item_id: ${{ steps.add-to-project.outputs.item_id }}
     steps:
-      - name: Add Issue to Project and set Commit field
+      - name: Add Issue to Project
         id: add-to-project
         env:
           GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
           PROJECT_ID: ${{ needs.get-project-data.outputs.project_id }}
           ISSUE_ID: ${{ needs.get-issue-id.outputs.issue_id }}
-          COMMIT_FIELD_ID: ${{ needs.get-project-data.outputs.commit_field_id }}
-          LATEST_COMMIT: ${{ needs.get-latest-commit.outputs.commit_hash }}
         run: |
           echo "Adding Issue to Project..."
           item_id=$(gh api graphql -f query='
@@ -181,6 +179,20 @@ jobs:
           echo "Item ID: $item_id"
           echo "item_id=$item_id" >> $GITHUB_OUTPUT
 
+          echo "✅ Issue added to project!"
+
+  update-commit-field:
+    needs: [get-latest-commit, get-project-data, add-to-project]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Update Commit field
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
+          PROJECT_ID: ${{ needs.get-project-data.outputs.project_id }}
+          ITEM_ID: ${{ needs.add-to-project.outputs.item_id }}
+          COMMIT_FIELD_ID: ${{ needs.get-project-data.outputs.commit_field_id }}
+          LATEST_COMMIT: ${{ needs.get-latest-commit.outputs.commit_hash }}
+        run: |
           echo "Setting Commit field value..."
           gh api graphql -f query='
           mutation($projectId:ID!, $itemId:ID!, $fieldId:ID!, $value:String!) {
@@ -196,9 +208,9 @@ jobs:
                 id
               }
             }
-          }' -f projectId=$PROJECT_ID -f itemId=$item_id -f fieldId=$COMMIT_FIELD_ID -f value="$LATEST_COMMIT"
+          }' -f projectId=$PROJECT_ID -f itemId=$ITEM_ID -f fieldId=$COMMIT_FIELD_ID -f value="$LATEST_COMMIT"
 
-          echo "✅ Commit field updated!"
+          echo "✅ Commit field updated with latest commit hash: $LATEST_COMMIT"
 
   update-data-field:
     needs: [get-project-data, add-to-project]

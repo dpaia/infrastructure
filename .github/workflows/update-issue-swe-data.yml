@@ -13,7 +13,65 @@ on:
         type: string
 
 jobs:
+  get-latest-commit:
+    runs-on: ubuntu-latest
+    outputs:
+      commit_hash: ${{ steps.fetch-commit.outputs.commit_hash }}
+    steps:
+      - name: Fetch latest commit related to issue
+        id: fetch-commit
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          repo="jetbrains-eval-lab/${{ github.event.inputs.repository }}"
+          issue_number="${{ github.event.inputs.issue_id }}"
+          owner="${repo%/*}"
+          repo_name="${repo##*/}"
+
+          echo "Fetching commits linked to issue #${issue_number}..."
+
+          # Use GitHub's Timeline API to find linked commits
+          linked_commits=$(gh api repos/${owner}/${repo_name}/issues/${issue_number}/timeline \
+            --jq '.[] | select(.event == "referenced" and .commit_id != null) | .commit_id')
+
+          # Get the most recent linked commit
+          if [ -n "$linked_commits" ]; then
+            latest_commit=$(echo "$linked_commits" | head -n 1)
+            echo "Found linked commits: $linked_commits"
+            echo "Using most recent linked commit: $latest_commit"
+          else
+            echo "No commits found linked to issue #${issue_number} through GitHub references"
+
+            # Try to check for cross-referenced PRs that might contain commits
+            echo "Checking for related pull requests..."
+            related_prs=$(gh api repos/${owner}/${repo_name}/issues/${issue_number}/timeline \
+              --jq '.[] | select(.event == "cross-referenced" and .source.issue.pull_request != null) | .source.issue.number')
+
+            if [ -n "$related_prs" ]; then
+              echo "Found related PRs: $related_prs"
+              # Get the most recent PR
+              recent_pr=$(echo "$related_prs" | head -n 1)
+              echo "Checking commits from PR #${recent_pr}..."
+
+              pr_commits=$(gh api repos/${owner}/${repo_name}/pulls/${recent_pr}/commits --jq '.[].sha')
+              if [ -n "$pr_commits" ]; then
+                latest_commit=$(echo "$pr_commits" | tail -n 1)
+                echo "Using most recent commit from PR #${recent_pr}: $latest_commit"
+              fi
+            fi
+
+            # If still no commit found, use the latest repository commit
+            if [ -z "$latest_commit" ]; then
+              echo "Falling back to latest repository commit"
+              latest_commit=$(gh api repos/${owner}/${repo_name}/commits --jq '.[0].sha')
+              echo "Using latest repository commit: $latest_commit"
+            fi
+          fi
+
+          echo "commit_hash=$latest_commit" >> $GITHUB_OUTPUT
+
   add-to-project:
+    needs: get-latest-commit
     runs-on: ubuntu-latest
     steps:
       - name: Checkout (not required but good practice)
@@ -24,6 +82,7 @@ jobs:
           GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
           PROJECT_NUMBER: 3
           ORG_NAME: jetbrains-eval-lab
+          LATEST_COMMIT: ${{ needs.get-latest-commit.outputs.commit_hash }}
         run: |
           gh auth status
 
@@ -42,15 +101,7 @@ jobs:
           repo="jetbrains-eval-lab/${{ github.event.inputs.repository }}"
           issue_number="${{ github.event.inputs.issue_id }}"
 
-          echo "Fetching latest commit related to issue..."
-          latest_commit=$(gh api repos/${repo}/commits --jq '.[] | select(.commit.message | contains("#'$issue_number'")) | .sha' | head -n 1)
-
-          if [ -z "$latest_commit" ]; then
-            echo "No commit found with reference to issue #${issue_number}, using latest commit from repository"
-            latest_commit=$(gh api repos/${repo}/commits --jq '.[0].sha')
-          fi
-
-          echo "Latest commit: $latest_commit"
+          echo "Using commit hash: $LATEST_COMMIT"
 
           echo "Fetching Issue ID..."
           issue_id=$(gh api graphql -f query='
@@ -77,7 +128,7 @@ jobs:
           echo "Item ID: $item_id"
 
           echo "Fetching Field ID for Commit..."
-          
+
           field_id=$(gh api graphql -f query='
           query($project:ID!) {
             node(id: $project) {
@@ -111,6 +162,6 @@ jobs:
                 id
               }
             }
-          }' -f itemId=$item_id -f fieldId=$field_id -f value="$latest_commit"
+          }' -f itemId=$item_id -f fieldId=$field_id -f value="$LATEST_COMMIT"
 
           echo "✅ Done!"

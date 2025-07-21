@@ -56,7 +56,7 @@ jobs:
                 search/repositories \
                 --method=GET \
                 -H "Accept: application/vnd.github+json" \
-                -f q="org:jetbrains-eval-lab topic:$TOPIC" \
+                -f q="org:jetbrains-eval-lab topic:$TOPIC fork:true" \
                 -f per_page="$PER_PAGE" \
                 -f page="$PAGE")
               
@@ -124,7 +124,7 @@ jobs:
             echo "➡️  Syncing labels to jetbrains-eval-lab/$REPO"
             github-label-sync \
               --access-token "$GITHUB_TOKEN" \
-              --labels ".github/${{ github.event.inputs.labels_file }}-labels.json" \
+              --labels ".github/labels/${{ github.event.inputs.labels_file }}.json" \
               --allow-added-labels \
               "jetbrains-eval-lab/$REPO"
           done

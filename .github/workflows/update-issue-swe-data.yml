@@ -17,6 +17,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       commit_hash: ${{ steps.fetch-commit.outputs.commit_hash }}
+      base_commit_hash: ${{ steps.fetch-commit.outputs.base_commit_hash }}
     steps:
       - name: Fetch latest commit related to issue
         id: fetch-commit
@@ -69,6 +70,21 @@ jobs:
           fi
 
           echo "commit_hash=$latest_commit" >> $GITHUB_OUTPUT
+
+          # Get the commit before the latest commit (base commit)
+          if [ -n "$latest_commit" ]; then
+            echo "Fetching base commit (parent of latest commit)..."
+            base_commit=$(gh api repos/${owner}/${repo_name}/commits/${latest_commit} --jq '.parents[0].sha')
+            if [ -n "$base_commit" ]; then
+              echo "Base commit: $base_commit"
+              echo "base_commit_hash=$base_commit" >> $GITHUB_OUTPUT
+            else
+              echo "No parent commit found, using older repository commit"
+              base_commit=$(gh api repos/${owner}/${repo_name}/commits --jq '.[1].sha')
+              echo "Older repository commit: $base_commit"
+              echo "base_commit_hash=$base_commit" >> $GITHUB_OUTPUT
+            fi
+          fi
 
   get-issue-id:
     runs-on: ubuntu-latest
@@ -217,7 +233,7 @@ jobs:
           echo "✅ Commit field updated with latest commit hash: $LATEST_COMMIT"
 
   update-data-field:
-    needs: [get-project-data, add-to-project]
+    needs: [get-project-data, add-to-project, get-latest-commit]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -231,8 +247,12 @@ jobs:
         env:
           ISSUE_NUMBER: ${{ github.event.inputs.issue_id }}
           REPOSITORY: ${{ github.event.inputs.repository }}
+          LATEST_COMMIT: ${{ needs.get-latest-commit.outputs.commit_hash }}
+          BASE_COMMIT: ${{ needs.get-latest-commit.outputs.base_commit_hash || '' }}
         run: |
-          echo "data_value=$(.github/scripts/generate_data_value.py)" >> $GITHUB_OUTPUT
+          echo "data_value<<EOF" >> $GITHUB_OUTPUT
+          .github/scripts/generate_data_value.py >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
 
       - name: Update Data field
         env:

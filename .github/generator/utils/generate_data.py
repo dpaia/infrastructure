@@ -431,22 +431,27 @@ def fetch_commit_ids(organization, repository, issue_number):
         return []
 
 # Function to generate patches for a commit
-def generate_patches_for_commit(commit_id, test_file_detector=is_test_file):
-    """
-    Generates source and test patches for a specific commit.
-    
-    Args:
-        commit_id (str): The commit ID to generate patches for
-        test_file_detector (callable): A function that takes a file path and returns True if it's a test file,
-                                      False otherwise. Defaults to is_test_file function.
-        
-    Returns:
-        tuple: (source_patch, test_patch) containing the patches for source and test files
-    """
+def generate_patches_for_commit(organization, repository, commit_id, test_file_detector=is_test_file):
     try:
-        # Get the diff for this commit
-        cmd = ['git', 'show', '--pretty=format:', '--patch', commit_id]
-        result = run_subprocess(cmd, capture_output=True, text=True, check=True)
+        # Use GitHub API to get the patch
+        print(f"Using GitHub API to get patch for commit {commit_id}", file=sys.stderr)
+        cmd = [
+            'gh', 'api',
+            f'repos/{organization}/{repository}/commits/{commit_id}',
+            '-H', 'Accept: application/vnd.github.v3.patch'
+        ]
+        result = run_subprocess(cmd, capture_output=True, text=True, check=False)
+
+        # Check if the command was successful
+        if result.returncode != 0:
+            print(
+                f"Error generating patches for commit {commit_id} using GitHub API: Command returned non-zero exit status {result.returncode}",
+                file=sys.stderr)
+            if result.stderr:
+                print(f"Command stderr: {result.stderr}", file=sys.stderr)
+            # Return empty patches but don't raise an exception
+            return "", ""
+
         full_diff = result.stdout.strip()
         
         if not full_diff:
@@ -520,7 +525,7 @@ def generate_patches(organization, repository, issue_number, test_file_detector=
     
     for commit_id in commit_ids:
         print(f"Generating patches for commit {commit_id}...", file=sys.stderr)
-        source_patch, test_patch = generate_patches_for_commit(commit_id, test_file_detector)
+        source_patch, test_patch = generate_patches_for_commit(organization, repository, commit_id, test_file_detector)
         
         if source_patch:
             all_source_patches.append(source_patch)

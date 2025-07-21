@@ -267,7 +267,7 @@ try:
         print(f"Using PASS_TO_PASS from TEST_PASS_TO_PASS environment variable: {pass_to_pass_value}", file=sys.stderr)
 
     # If not found in environment variables, check issue comments
-    if not test_fail_to_pass or not test_pass_to_pass:
+    if not test_fail_to_pass and not test_pass_to_pass:
         # First check issue comments
         print("Checking issue comments for test fields...", file=sys.stderr)
         comments = fetch_issue_comments()
@@ -285,7 +285,7 @@ try:
                 break
 
         # If not found in comments, check commit messages
-        if not fail_to_pass_value or not pass_to_pass_value:
+        if not fail_to_pass_value and not pass_to_pass_value:
             print("Checking commit messages for test fields...", file=sys.stderr)
             commit_messages = fetch_linked_commit_messages()
 
@@ -369,5 +369,4 @@ except Exception as e:
     }
 
     # Output the error data as JSON
-    print(json.dumps(error_data))
     print(json.dumps(error_data))

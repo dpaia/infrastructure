@@ -4,6 +4,7 @@ import json
 import os
 import re
 import sys
+import glob
 
 # Create a wrapper function for subprocess.run that won't be affected by mocks
 def run_subprocess(cmd, **kwargs):

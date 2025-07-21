@@ -36,8 +36,18 @@ instance_id = f"{org_for_id}__{repo_for_id}-{short_hash}"
 
 # Function to convert comma-separated list to JSON array string
 def to_json_array(value_str):
-    if not value_str:
+    if not value_str or value_str == "[]":
         return "[]"
+
+    # Check if it's already a JSON array
+    if value_str.startswith("[") and value_str.endswith("]"):
+        try:
+            # Validate it's proper JSON
+            json.loads(value_str)
+            return value_str  # Return as-is if it's valid JSON
+        except json.JSONDecodeError:
+            # Not valid JSON, proceed with parsing
+            pass
 
     # Split by comma and strip whitespace
     items = [item.strip() for item in value_str.split(',')]
@@ -236,8 +246,6 @@ for comment in reversed(comments):  # Start with the most recent comments
 if not fail_to_pass_value or pass_to_pass_value == "[]":
     print("Checking commit messages for test fields...", file=sys.stderr)
     commit_messages = fetch_linked_commit_messages()
-    commits_size = len(commit_messages)
-    print("Found {commits_size} commits", file=sys.stderr)
     for message in reversed(commit_messages):  # Start with the most recent commits
         commit_fail, commit_pass = extract_test_fields(message)
 

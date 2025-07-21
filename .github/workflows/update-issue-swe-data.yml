@@ -297,14 +297,17 @@ jobs:
         id: create-update-gist
         if: needs.generate-data.outputs.has_error != 'true'
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GIST_TOKEN }}
           DATA_VALUE: ${{ needs.generate-data.outputs.data_value }}
           ISSUE_ID: ${{ github.event.inputs.issue_id }}
         run: |
           echo "Creating or updating gist with JSON data..."
           
+          # Extract instance_id from the JSON data
+          INSTANCE_ID=$(echo "$DATA_VALUE" | jq -r '.instance_id')
+          
           # Create a temporary file with the JSON data
-          GIST_FILENAME="${ISSUE_ID}.json"
+          GIST_FILENAME="${{ github.event.inputs.organization }}/${{ github.event.inputs.repository }}/${INSTANCE_ID}.json"
           echo "$DATA_VALUE" > "$GIST_FILENAME"
           
           echo "Creating or updating secret gist with filename: $GIST_FILENAME"

@@ -308,7 +308,10 @@ jobs:
           
           # Create a temporary file with the JSON data
           GIST_FILENAME="${{ github.event.inputs.organization }}/${{ github.event.inputs.repository }}/${INSTANCE_ID}.json"
-          echo "$DATA_VALUE" > "$GIST_FILENAME"
+          
+          # Replace slashes with underscores for the local filename to avoid directory issues
+          LOCAL_FILENAME="${GIST_FILENAME//\//__}"
+          echo "$DATA_VALUE" > "$LOCAL_FILENAME"
           
           echo "Creating or updating secret gist with filename: $GIST_FILENAME"
           
@@ -321,19 +324,19 @@ jobs:
             echo "Found existing gist with ID: $GIST_ID, updating it..."
             
             # Update the existing gist
-            GIST_URL=$(gh gist edit "$GIST_ID" "$GIST_FILENAME" | grep -o 'https://gist.github.com/[^ ]*')
+            GIST_URL=$(gh gist edit "$GIST_ID" "$LOCAL_FILENAME" --filename="$GIST_FILENAME" | grep -o 'https://gist.github.com/[^ ]*')
           else
             echo "No existing gist found, creating a new one..."
             
             # Create a new secret gist
-            GIST_URL=$(gh gist create "$GIST_FILENAME" | grep -o 'https://gist.github.com/[^ ]*')
+            GIST_URL=$(gh gist create "$LOCAL_FILENAME" --filename="$GIST_FILENAME" | grep -o 'https://gist.github.com/[^ ]*')
           fi
           
           echo "Gist URL: $GIST_URL"
           echo "gist_url=$GIST_URL" >> $GITHUB_OUTPUT
           
           # Clean up temporary file
-          rm "$GIST_FILENAME"
+          rm "$LOCAL_FILENAME"
 
   update-data-field:
     needs: [get-project-data, add-to-project, create-gist]

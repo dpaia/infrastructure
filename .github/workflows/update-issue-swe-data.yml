@@ -345,7 +345,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Make Python script executable
-        run: chmod +x .github/scripts/generator/${{ github.event.inputs.generator }}.py
+        run: chmod +x .github/generator/${{ github.event.inputs.generator }}.py
 
       - name: Generate data value with Python script
         id: generate-data
@@ -358,7 +358,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           echo "data_value<<EOF" >> $GITHUB_OUTPUT
-          .github/scripts/generator/${{ github.event.inputs.generator }}.py >> $GITHUB_OUTPUT
+          .github/generator/${{ github.event.inputs.generator }}.py >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
 
       - name: Update Data field

@@ -1,17 +1,14 @@
 #!/usr/bin/env python3
 
-import unittest
-import os
-import sys
 import json
+import os
 import tempfile
-import subprocess
+import unittest
 from unittest.mock import patch, MagicMock
 
-# Import the script to test specific functions
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 # We'll import functions directly for unit tests
-from generate_data_value import to_json_array, extract_test_fields
+from generate_data import extract_test_fields
+
 
 class TestGenerateDataValue(unittest.TestCase):
 

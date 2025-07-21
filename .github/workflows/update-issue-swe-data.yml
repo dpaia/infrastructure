@@ -220,14 +220,36 @@ jobs:
     needs: [get-project-data, add-to-project]
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Kotlin
+        uses: fwilhe2/setup-kotlin@v2
+        with:
+          kotlin-version: '1.8.0'
+
+      - name: Make script executable
+        run: chmod +x .github/scripts/generate-data-value.kts
+
+      - name: Generate data value with Kotlin script
+        id: generate-data
+        env:
+          ISSUE_NUMBER: ${{ github.event.inputs.issue_id }}
+          REPOSITORY: ${{ github.event.inputs.repository }}
+        run: |
+          echo "data_value=$(kotlin .github/scripts/generate-data-value.kts)" >> $GITHUB_OUTPUT
+
       - name: Update Data field
         env:
           GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
           PROJECT_ID: ${{ needs.get-project-data.outputs.project_id }}
           ITEM_ID: ${{ needs.add-to-project.outputs.item_id }}
           DATA_FIELD_ID: ${{ needs.get-project-data.outputs.data_field_id }}
+          DATA_VALUE: ${{ steps.generate-data.outputs.data_value }}
         run: |
-          echo "Setting Data field value..."
+          echo "Setting Data field value from Kotlin script..."
+          echo "Data value: $DATA_VALUE"
+
           gh api graphql -f query='
           mutation($projectId:ID!, $itemId:ID!, $fieldId:ID!, $value:String!) {
             updateProjectV2ItemFieldValue(input: {
@@ -242,9 +264,9 @@ jobs:
                 id
               }
             }
-          }' -f projectId=$PROJECT_ID -f itemId=$ITEM_ID -f fieldId=$DATA_FIELD_ID -f value="TEST"
+          }' -f projectId=$PROJECT_ID -f itemId=$ITEM_ID -f fieldId=$DATA_FIELD_ID -f value="$DATA_VALUE"
 
-          echo "✅ Data field updated!"
+          echo "✅ Data field updated with Kotlin-generated value!"
 
   update-status-field:
     needs: [get-project-data, add-to-project]

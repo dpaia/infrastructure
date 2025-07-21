@@ -11,6 +11,11 @@ on:
         description: 'Issue number'
         required: true
         type: string
+      organization:
+        description: 'GitHub organization name'
+        required: false
+        default: 'jetbrains-eval-lab'
+        type: string
 
 jobs:
   get-latest-commit:
@@ -24,7 +29,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          repo="jetbrains-eval-lab/${{ github.event.inputs.repository }}"
+          repo="${{ github.event.inputs.organization }}/${{ github.event.inputs.repository }}"
           issue_number="${{ github.event.inputs.issue_id }}"
           owner="${repo%/*}"
           repo_name="${repo##*/}"
@@ -96,7 +101,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          repo="jetbrains-eval-lab/${{ github.event.inputs.repository }}"
+          repo="${{ github.event.inputs.organization }}/${{ github.event.inputs.repository }}"
           issue_number="${{ github.event.inputs.issue_id }}"
           owner="${repo%/*}"
           repo_name="${repo##*/}"
@@ -127,7 +132,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
           PROJECT_NUMBER: 3
-          ORG_NAME: jetbrains-eval-lab
+          ORG_NAME: ${{ github.event.inputs.organization }}
         run: |
           gh auth status
 
@@ -247,6 +252,7 @@ jobs:
         env:
           ISSUE_NUMBER: ${{ github.event.inputs.issue_id }}
           REPOSITORY: ${{ github.event.inputs.repository }}
+          ORGANIZATION: ${{ github.event.inputs.organization }}
           LATEST_COMMIT: ${{ needs.get-latest-commit.outputs.commit_hash }}
           BASE_COMMIT: ${{ needs.get-latest-commit.outputs.base_commit_hash || '' }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

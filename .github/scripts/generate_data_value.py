@@ -9,9 +9,15 @@ import sys
 # Get required input parameters from environment variables
 issue_number = os.environ.get('ISSUE_NUMBER', 'unknown')
 repository = os.environ.get('REPOSITORY', 'unknown')
+organization = os.environ.get('ORGANIZATION', 'jetbrains-eval-lab')
 latest_commit = os.environ.get('LATEST_COMMIT', '')
 base_commit = os.environ.get('BASE_COMMIT', '')
 gh_token = os.environ.get('GH_TOKEN', '')
+
+# Create full repository name
+full_repository = f"{organization}/{repository}"
+org_name = organization
+repo_name = repository
 
 # Generate current timestamp in ISO format
 current_time = datetime.datetime.now().strftime('%Y-%m-%dT%H:%M:%S%z')
@@ -19,13 +25,13 @@ if not current_time.endswith('+0000'):
     current_time += '+00:00'
 
 # Format repository
-repo_with_git = f"{repository}.git"
-if not repo_with_git.startswith('jetbrains-eval-lab/'):
-    repo_with_git = f"jetbrains-eval-lab/{repo_with_git}"
+repo_with_git = f"{full_repository}.git"
 
-# Create instance_id: <repository name>-<last commit short hash>
+# Create instance_id using organization and repository name
 short_hash = latest_commit[:8] if latest_commit else 'unknown'
-instance_id = f"jetbrains__eval__lab__{repository.replace('-', '__')}-{short_hash}"
+org_for_id = org_name.replace('-', '__')
+repo_for_id = repo_name.replace('-', '__')
+instance_id = f"{org_for_id}__{repo_for_id}-{short_hash}"
 
 # Default problem statement is empty
 default_problem_statement = ""
@@ -34,12 +40,10 @@ default_problem_statement = ""
 problem_statement = default_problem_statement
 try:
     if issue_number != 'unknown' and gh_token:
-        full_repo = f"jetbrains-eval-lab/{repository}"
-
         # Use GitHub CLI to fetch issue description
         cmd = [
             'gh', 'api', 
-            f'repos/{full_repo}/issues/{issue_number}',
+            f'repos/{full_repository}/issues/{issue_number}',
             '--jq', '.body'
         ]
 

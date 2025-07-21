@@ -143,5 +143,15 @@
     "name": "Transaction",
     "color": "24866d",
     "description": ""
+  },
+  {
+    "name": "Boot-3.x",
+    "color": "a53fea",
+    "description": ""
+  },
+  {
+    "name": "Boot-2.x",
+    "color": "f29d3e",
+    "description": ""
   }
 ]

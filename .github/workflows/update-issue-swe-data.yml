@@ -33,7 +33,7 @@ jobs:
       - name: Fetch latest commit related to issue
         id: fetch-commit
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
         run: |
           repo="${{ github.event.inputs.organization }}/${{ github.event.inputs.repository }}"
           issue_number="${{ github.event.inputs.issue_id }}"
@@ -105,7 +105,7 @@ jobs:
       - name: Fetch GitHub issue ID
         id: fetch-issue-id
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
         run: |
           repo="${{ github.event.inputs.organization }}/${{ github.event.inputs.repository }}"
           issue_number="${{ github.event.inputs.issue_id }}"
@@ -243,11 +243,12 @@ jobs:
           .github/generator/utils/extract_test_fields.py >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT      
 
-  update-data-field:
-    needs: [get-project-data, add-to-project, get-latest-commit, extract-test-fields]
+  generate-data:
+    needs: [get-latest-commit, extract-test-fields]
     runs-on: ubuntu-latest
     outputs:
-      has_error: ${{ steps.update-data.outputs.has_error }}
+      data_value: ${{ steps.generate-data.outputs.data_value }}
+      has_error: ${{ steps.check-error.outputs.has_error }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -270,57 +271,91 @@ jobs:
           echo "data_value<<EOF" >> $GITHUB_OUTPUT
           .github/generator/${{ github.event.inputs.generator }}.py >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
+      
+      - name: Check for errors
+        id: check-error
+        env:
+          DATA_VALUE: ${{ steps.generate-data.outputs.data_value }}
+          EXTRACT_ERROR: ${{ needs.extract-test-fields.outputs.has_error }}
+        run: |
+          if [ "$EXTRACT_ERROR" == "true" ] || echo "$DATA_VALUE" | jq -e '.has_error == true' > /dev/null 2>&1; then
+            echo "Error detected in data generation or test field extraction."
+            echo "has_error=true" >> $GITHUB_OUTPUT
+          else
+            echo "Data generated successfully."
+            echo "has_error=false" >> $GITHUB_OUTPUT
+          fi
 
+  create-gist:
+    needs: [generate-data]
+    runs-on: ubuntu-latest
+    outputs:
+      gist_url: ${{ steps.create-update-gist.outputs.gist_url }}
+      has_error: ${{ needs.generate-data.outputs.has_error }}
+    steps:
+      - name: Create or update gist
+        id: create-update-gist
+        if: needs.generate-data.outputs.has_error != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
+          DATA_VALUE: ${{ needs.generate-data.outputs.data_value }}
+          ISSUE_ID: ${{ github.event.inputs.issue_id }}
+        run: |
+          echo "Creating or updating gist with JSON data..."
+          
+          # Create a temporary file with the JSON data
+          GIST_FILENAME="${ISSUE_ID}.json"
+          echo "$DATA_VALUE" > "$GIST_FILENAME"
+          
+          echo "Creating or updating secret gist with filename: $GIST_FILENAME"
+          
+          # Check if gist already exists for this issue
+          EXISTING_GISTS=$(gh gist list --limit 100 | grep "$GIST_FILENAME" || true)
+          
+          if [ -n "$EXISTING_GISTS" ]; then
+            # Extract gist ID from the list
+            GIST_ID=$(echo "$EXISTING_GISTS" | awk '{print $1}')
+            echo "Found existing gist with ID: $GIST_ID, updating it..."
+            
+            # Update the existing gist
+            GIST_URL=$(gh gist edit "$GIST_ID" "$GIST_FILENAME" | grep -o 'https://gist.github.com/[^ ]*')
+          else
+            echo "No existing gist found, creating a new one..."
+            
+            # Create a new secret gist
+            GIST_URL=$(gh gist create "$GIST_FILENAME" | grep -o 'https://gist.github.com/[^ ]*')
+          fi
+          
+          echo "Gist URL: $GIST_URL"
+          echo "gist_url=$GIST_URL" >> $GITHUB_OUTPUT
+          
+          # Clean up temporary file
+          rm "$GIST_FILENAME"
+
+  update-data-field:
+    needs: [get-project-data, add-to-project, create-gist]
+    runs-on: ubuntu-latest
+    outputs:
+      has_error: ${{ needs.create-gist.outputs.has_error }}
+    steps:
       - name: Update Data field
-        id: update-data
         env:
           GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
           PROJECT_ID: ${{ needs.get-project-data.outputs.project_id }}
           ITEM_ID: ${{ needs.add-to-project.outputs.item_id }}
           DATA_FIELD_ID: ${{ needs.get-project-data.outputs.data_field_id }}
-          DATA_VALUE: ${{ steps.generate-data.outputs.data_value }}
-          EXTRACT_ERROR: ${{ needs.extract-test-fields.outputs.has_error }}
-          ISSUE_ID: ${{ github.event.inputs.issue_id }}
+          GIST_URL: ${{ needs.create-gist.outputs.gist_url }}
+          HAS_ERROR: ${{ needs.create-gist.outputs.has_error }}
         run: |
-          echo "Setting Data field value from Python script..."
+          echo "Setting Data field value..."
 
-          # Check if data generation or extraction encountered an error
-          if [ "$EXTRACT_ERROR" == "true" ] || echo "$DATA_VALUE" | jq -e '.has_error == true' > /dev/null 2>&1; then
+          # Set the value based on whether there was an error
+          if [ "$HAS_ERROR" == "true" ]; then
             echo "Error detected in data generation or test field extraction. Setting empty Data field."
             VALUE_TO_SET=""
-            echo "has_error=true" >> $GITHUB_OUTPUT
           else
-            echo "Data value: $DATA_VALUE"
-            
-            # Create a temporary file with the JSON data
-            GIST_FILENAME="${ISSUE_ID}.json"
-            echo "$DATA_VALUE" > "$GIST_FILENAME"
-            
-            echo "Creating or updating secret gist with filename: $GIST_FILENAME"
-            
-            # Check if gist already exists for this issue
-            EXISTING_GISTS=$(gh gist list --limit 100 | grep "$GIST_FILENAME" || true)
-            
-            if [ -n "$EXISTING_GISTS" ]; then
-              # Extract gist ID from the list
-              GIST_ID=$(echo "$EXISTING_GISTS" | awk '{print $1}')
-              echo "Found existing gist with ID: $GIST_ID, updating it..."
-              
-              # Update the existing gist
-              GIST_URL=$(gh gist edit "$GIST_ID" "$GIST_FILENAME" | grep -o 'https://gist.github.com/[^ ]*')
-            else
-              echo "No existing gist found, creating a new one..."
-              
-              # Create a new secret gist
-              GIST_URL=$(gh gist create --secret "$GIST_FILENAME" | grep -o 'https://gist.github.com/[^ ]*')
-            fi
-            
-            echo "Gist URL: $GIST_URL"
+            echo "Using gist URL: $GIST_URL"
             VALUE_TO_SET="$GIST_URL"
-            echo "has_error=false" >> $GITHUB_OUTPUT
-            
-            # Clean up temporary file
-            rm "$GIST_FILENAME"
           fi
 
           gh api graphql -f query='
@@ -346,7 +381,7 @@ jobs:
           fi
 
   update-status-field:
-    needs: [get-project-data, add-to-project, update-data-field]
+    needs: [get-project-data, add-to-project, create-gist]
     runs-on: ubuntu-latest
     steps:
       - name: Update Status field based on result
@@ -355,7 +390,7 @@ jobs:
           PROJECT_ID: ${{ needs.get-project-data.outputs.project_id }}
           ITEM_ID: ${{ needs.add-to-project.outputs.item_id }}
           STATUS_FIELD_ID: ${{ needs.get-project-data.outputs.status_field_id }}
-          HAS_ERROR: ${{ needs.update-data-field.outputs.has_error }}
+          HAS_ERROR: ${{ needs.create-gist.outputs.has_error }}
         run: |
           # Determine which status to set based on whether there was an error
           if [ "$HAS_ERROR" == "true" ]; then

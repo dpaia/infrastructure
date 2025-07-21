@@ -182,6 +182,15 @@ def fetch_linked_commit_messages():
                 # Print just the first line of the commit message (usually the subject)
                 first_line = message.split('\n')[0]
                 print(f"Commit {commit_id} message: {first_line[:50]}{'...' if len(first_line) > 50 else ''}", file=sys.stderr)
+
+                # Check if the message contains test fields and log them
+                if "FAIL_TO_PASS:" in message or "PASS_TO_PASS:" in message:
+                    print(f"!!! IMPORTANT: Found test fields in commit {commit_id}", file=sys.stderr)
+                    print(f"Full commit message:", file=sys.stderr)
+                    print(f"---BEGIN COMMIT MESSAGE---", file=sys.stderr)
+                    print(message, file=sys.stderr)
+                    print(f"---END COMMIT MESSAGE---", file=sys.stderr)
+
                 messages.append(message)
             else:
                 print(f"No message found for commit {commit_id}", file=sys.stderr)
@@ -246,16 +255,32 @@ for comment in reversed(comments):  # Start with the most recent comments
 if not fail_to_pass_value or pass_to_pass_value == "[]":
     print("Checking commit messages for test fields...", file=sys.stderr)
     commit_messages = fetch_linked_commit_messages()
-    for message in reversed(commit_messages):  # Start with the most recent commits
+
+    # Log how many messages we're processing
+    print(f"Processing {len(commit_messages)} commit messages for test fields", file=sys.stderr)
+
+    for index, message in enumerate(reversed(commit_messages)):  # Start with the most recent commits
+        print(f"Processing commit message {index+1}/{len(commit_messages)}", file=sys.stderr)
+
+        # Debug: Check if we're getting multiline messages
+        lines = message.split('\n')
+        print(f"Commit message has {len(lines)} lines", file=sys.stderr)
+
+        # Explicitly check for the patterns
+        if "FAIL_TO_PASS:" in message:
+            print(f"Found FAIL_TO_PASS pattern in message", file=sys.stderr)
+        if "PASS_TO_PASS:" in message:
+            print(f"Found PASS_TO_PASS pattern in message", file=sys.stderr)
+
         commit_fail, commit_pass = extract_test_fields(message)
 
         if not fail_to_pass_value and commit_fail:
             fail_to_pass_value = commit_fail
-            print(f"Found FAIL_TO_PASS in commit message: {fail_to_pass_value}", file=sys.stderr)
+            print(f"Extracted FAIL_TO_PASS in commit message: {fail_to_pass_value}", file=sys.stderr)
 
         if pass_to_pass_value == "[]" and commit_pass != "[]":
             pass_to_pass_value = commit_pass
-            print(f"Found PASS_TO_PASS in commit message: {pass_to_pass_value}", file=sys.stderr)
+            print(f"Extracted PASS_TO_PASS in commit message: {pass_to_pass_value}", file=sys.stderr)
 
         if fail_to_pass_value and pass_to_pass_value != "[]":
             break

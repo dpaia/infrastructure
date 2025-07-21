@@ -223,21 +223,16 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup Kotlin
-        uses: fwilhe2/setup-kotlin@v2
-        with:
-          kotlin-version: '1.8.0'
+      - name: Make Python script executable
+        run: chmod +x .github/scripts/generate_data_value.py
 
-      - name: Make script executable
-        run: chmod +x .github/scripts/generate-data-value.kts
-
-      - name: Generate data value with Kotlin script
+      - name: Generate data value with Python script
         id: generate-data
         env:
           ISSUE_NUMBER: ${{ github.event.inputs.issue_id }}
           REPOSITORY: ${{ github.event.inputs.repository }}
         run: |
-          echo "data_value=$(kotlin .github/scripts/generate-data-value.kts)" >> $GITHUB_OUTPUT
+          echo "data_value=$(.github/scripts/generate_data_value.py)" >> $GITHUB_OUTPUT
 
       - name: Update Data field
         env:
@@ -247,7 +242,7 @@ jobs:
           DATA_FIELD_ID: ${{ needs.get-project-data.outputs.data_field_id }}
           DATA_VALUE: ${{ steps.generate-data.outputs.data_value }}
         run: |
-          echo "Setting Data field value from Kotlin script..."
+          echo "Setting Data field value from Python script..."
           echo "Data value: $DATA_VALUE"
 
           gh api graphql -f query='
@@ -266,7 +261,7 @@ jobs:
             }
           }' -f projectId=$PROJECT_ID -f itemId=$ITEM_ID -f fieldId=$DATA_FIELD_ID -f value="$DATA_VALUE"
 
-          echo "✅ Data field updated with Kotlin-generated value!"
+          echo "✅ Data field updated with Python-generated value!"
 
   update-status-field:
     needs: [get-project-data, add-to-project]
@@ -284,28 +279,35 @@ jobs:
           # First, we need to get the option ID for "Done" in the Status field
           echo "Fetching option ID for 'Done' status..."
           status_options=$(gh api graphql -f query='
-          query($project:ID!, $field:ID!) {
+          query($project:ID!) {
             node(id: $project) {
               ... on ProjectV2 {
-                field(id: $field) {
-                  ... on ProjectV2SingleSelectField {
-                    options {
+                fields(first: 100) {
+                  nodes {
+                    ... on ProjectV2SingleSelectField {
                       id
                       name
+                      options {
+                        id
+                        name
+                      }
                     }
                   }
                 }
               }
             }
-          }' -f project=$PROJECT_ID -f field=$STATUS_FIELD_ID)
+          }' -f project=$PROJECT_ID)
 
-          done_option_id=$(echo "$status_options" | jq -r '.data.node.field.options[] | select(.name == "Done") | .id')
+          # Extract options for the Status field
+          status_field_options=$(echo "$status_options" | jq -r '.data.node.fields.nodes[] | select(.id == "'$STATUS_FIELD_ID'") | .options')
+
+          done_option_id=$(echo "$status_field_options" | jq -r '.[] | select(.name == "Done") | .id')
 
           if [ -z "$done_option_id" ]; then
             echo "Warning: 'Done' option not found in Status field. Available options:"
-            echo "$status_options" | jq -r '.data.node.field.options[].name'
+            echo "$status_field_options" | jq -r '.[].name'
             echo "Using first available option as fallback"
-            done_option_id=$(echo "$status_options" | jq -r '.data.node.field.options[0].id')
+            done_option_id=$(echo "$status_field_options" | jq -r '.[0].id')
           fi
 
           echo "Done option ID: $done_option_id"

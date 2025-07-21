@@ -1,10 +1,11 @@
 name: Sync Labels to Repositories
+run-name: "[${{ github.event.inputs.labels_file }}] Sync labels to repositories with topics ${{ github.event.inputs.topics }}"
 
 on:
   workflow_dispatch:
     inputs:
       labels_file:
-        description: 'Path to the labels JSON file'
+        description: 'Profile'
         required: true
         default: 'java-spring'
       topics:

@@ -1,10 +1,11 @@
 name: Update Issue SWE Data
+run-name: "[${{ github.event.inputs.organization }}/${{ github.event.inputs.repository }}][${{ github.event.inputs.generator }}] Update SWE Data for issue #${{ github.event.inputs.issue_id }}"
 
 on:
   workflow_dispatch:
     inputs:
       generator:
-        description: 'Dataset Generator'
+        description: 'Profile'
         required: true
         default: 'java'
         type: string

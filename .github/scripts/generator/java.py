@@ -2,7 +2,7 @@
 
 import datetime
 
-from generate_data import *
+from ..generate_data import *
 
 
 # Get required input parameters from environment variables

@@ -5,7 +5,7 @@ on:
     inputs:
       organization:
         description: 'GitHub organization name'
-        required: false
+        required: true
         default: 'jetbrains-eval-lab'
         type: string
       repository:

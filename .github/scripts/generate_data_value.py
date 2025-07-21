@@ -59,7 +59,8 @@ def extract_test_fields(text):
         # Find FAIL_TO_PASS pattern
         fail_matches = re.search(r'FAIL_TO_PASS:\s*(.+?)(?:\n|$)', text)
         if fail_matches:
-            fail_to_pass = fail_matches.group(1).strip()
+            fail_to_pass_value = fail_matches.group(1).strip()
+            fail_to_pass = to_json_array(fail_to_pass_value) if fail_to_pass_value else "[]"
 
         # Find PASS_TO_PASS pattern
         pass_matches = re.search(r'PASS_TO_PASS:\s*(.+?)(?:\n|$)', text)
@@ -92,7 +93,10 @@ def fetch_issue_comments():
 def fetch_linked_commit_messages():
     try:
         if issue_number == 'unknown' or not gh_token:
+            print("Missing issue number or GitHub token, skipping commit message fetch", file=sys.stderr)
             return []
+
+        print(f"Fetching linked commits for issue #{issue_number} in {full_repository}...", file=sys.stderr)
 
         # First, get linked commit IDs
         cmd = [
@@ -101,11 +105,16 @@ def fetch_linked_commit_messages():
             '--jq', '.[] | select(.event == "referenced" and .commit_id != null) | .commit_id'
         ]
 
+        print(f"Executing command: {' '.join(cmd)}", file=sys.stderr)
         result = subprocess.run(cmd, capture_output=True, text=True, check=True)
         commit_ids = result.stdout.strip().split('\n')
         commit_ids = [commit_id for commit_id in commit_ids if commit_id]
 
-        if not commit_ids:
+        if commit_ids:
+            print(f"Found {len(commit_ids)} directly linked commits: {', '.join(commit_ids)}", file=sys.stderr)
+        else:
+            print("No directly linked commits found, checking PRs...", file=sys.stderr)
+
             # Try to get commits from PRs
             cmd = [
                 'gh', 'api',
@@ -113,24 +122,44 @@ def fetch_linked_commit_messages():
                 '--jq', '.[] | select(.event == "cross-referenced" and .source.issue.pull_request != null) | .source.issue.number'
             ]
 
+            print(f"Executing command: {' '.join(cmd)}", file=sys.stderr)
             result = subprocess.run(cmd, capture_output=True, text=True, check=True)
             pr_numbers = result.stdout.strip().split('\n')
             pr_numbers = [pr for pr in pr_numbers if pr]
 
-            for pr in pr_numbers:
-                cmd = [
-                    'gh', 'api',
-                    f'repos/{full_repository}/pulls/{pr}/commits',
-                    '--jq', '.[].sha'
-                ]
+            if pr_numbers:
+                print(f"Found {len(pr_numbers)} related PRs: {', '.join(pr_numbers)}", file=sys.stderr)
 
-                result = subprocess.run(cmd, capture_output=True, text=True, check=True)
-                pr_commits = result.stdout.strip().split('\n')
-                commit_ids.extend([commit for commit in pr_commits if commit])
+                for pr in pr_numbers:
+                    print(f"Fetching commits from PR #{pr}...", file=sys.stderr)
+                    cmd = [
+                        'gh', 'api',
+                        f'repos/{full_repository}/pulls/{pr}/commits',
+                        '--jq', '.[].sha'
+                    ]
+
+                    print(f"Executing command: {' '.join(cmd)}", file=sys.stderr)
+                    result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+                    pr_commits = result.stdout.strip().split('\n')
+                    new_commits = [commit for commit in pr_commits if commit]
+
+                    if new_commits:
+                        print(f"Added {len(new_commits)} commits from PR #{pr}: {', '.join(new_commits)}", file=sys.stderr)
+                        commit_ids.extend(new_commits)
+                    else:
+                        print(f"No commits found in PR #{pr}", file=sys.stderr)
+            else:
+                print("No related PRs found", file=sys.stderr)
+
+        if not commit_ids:
+            print("No linked commits found at all", file=sys.stderr)
+            return []
 
         # Now fetch commit messages for each commit
+        print(f"Fetching messages for {len(commit_ids)} commits...", file=sys.stderr)
         messages = []
-        for commit_id in commit_ids:
+        for i, commit_id in enumerate(commit_ids):
+            print(f"Fetching message for commit {i+1}/{len(commit_ids)}: {commit_id}", file=sys.stderr)
             cmd = [
                 'gh', 'api',
                 f'repos/{full_repository}/commits/{commit_id}',
@@ -140,11 +169,19 @@ def fetch_linked_commit_messages():
             result = subprocess.run(cmd, capture_output=True, text=True, check=True)
             message = result.stdout.strip()
             if message:
+                # Print just the first line of the commit message (usually the subject)
+                first_line = message.split('\n')[0]
+                print(f"Commit {commit_id} message: {first_line[:50]}{'...' if len(first_line) > 50 else ''}", file=sys.stderr)
                 messages.append(message)
+            else:
+                print(f"No message found for commit {commit_id}", file=sys.stderr)
 
+        print(f"Retrieved {len(messages)} commit messages in total", file=sys.stderr)
         return messages
     except Exception as e:
         print(f"Error fetching commit messages: {e}", file=sys.stderr)
+        if hasattr(e, 'stderr'):
+            print(f"Command stderr: {e.stderr}", file=sys.stderr)
         return []
 
 # Default problem statement is empty
@@ -199,6 +236,8 @@ for comment in reversed(comments):  # Start with the most recent comments
 if not fail_to_pass_value or pass_to_pass_value == "[]":
     print("Checking commit messages for test fields...", file=sys.stderr)
     commit_messages = fetch_linked_commit_messages()
+    commits_size = len(commit_messages)
+    print("Found {commits_size} commits", file=sys.stderr)
     for message in reversed(commit_messages):  # Start with the most recent commits
         commit_fail, commit_pass = extract_test_fields(message)
 
@@ -216,6 +255,8 @@ if not fail_to_pass_value or pass_to_pass_value == "[]":
 # Convert FAIL_TO_PASS to JSON array if it has a value
 if fail_to_pass_value:
     fail_to_pass_json = to_json_array(fail_to_pass_value)
+if pass_to_pass_value:
+    pass_to_pass_json = to_json_array(pass_to_pass_value)
 else:
     fail_to_pass_json = ""
 
@@ -226,7 +267,7 @@ data = {
     "repo": repo_with_git,
     "patch": "",
     "FAIL_TO_PASS": fail_to_pass_json,
-    "PASS_TO_PASS": pass_to_pass_value,
+    "PASS_TO_PASS": pass_to_pass_json,
     "created_at": current_time,
     "base_commit": base_commit,
     "problem_statement": problem_statement,

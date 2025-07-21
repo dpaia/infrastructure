@@ -73,7 +73,7 @@ try:
         "base_commit": os.environ.get('BASE_COMMIT', ''),
         "problem_statement": fetch_problem_statement(organization, repository, issue_number),
         "version": "0.1",
-        "is_maven": build_system == "maven",
+        "is_maven": f"{build_system == "maven"}",
         "build_system": build_system
     }
 

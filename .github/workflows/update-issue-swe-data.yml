@@ -206,6 +206,74 @@ jobs:
 
           echo "✅ Issue added to project!"
 
+  update-status-field:
+    needs: [get-project-data, add-to-project]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Update Status field to Done
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
+          PROJECT_ID: ${{ needs.get-project-data.outputs.project_id }}
+          ITEM_ID: ${{ needs.add-to-project.outputs.item_id }}
+          STATUS_FIELD_ID: ${{ needs.get-project-data.outputs.status_field_id }}
+        run: |
+          echo "Setting Status field to Done..."
+
+          # First, we need to get the option ID for "Done" in the Status field
+          echo "Fetching option ID for 'Done' status..."
+          status_options=$(gh api graphql -f query='
+          query($project:ID!) {
+            node(id: $project) {
+              ... on ProjectV2 {
+                fields(first: 100) {
+                  nodes {
+                    ... on ProjectV2SingleSelectField {
+                      id
+                      name
+                      options {
+                        id
+                        name
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }' -f project=$PROJECT_ID)
+
+          # Extract options for the Status field
+          status_field_options=$(echo "$status_options" | jq -r '.data.node.fields.nodes[] | select(.id == "'$STATUS_FIELD_ID'") | .options')
+
+          done_option_id=$(echo "$status_field_options" | jq -r '.[] | select(.name == "Done") | .id')
+
+          if [ -z "$done_option_id" ]; then
+            echo "Warning: 'Done' option not found in Status field. Available options:"
+            echo "$status_field_options" | jq -r '.[].name'
+            echo "Using first available option as fallback"
+            done_option_id=$(echo "$status_field_options" | jq -r '.[0].id')
+          fi
+
+          echo "Done option ID: $done_option_id"
+
+          # Update the Status field with the "Done" option
+          gh api graphql -f query='
+          mutation($projectId:ID!, $itemId:ID!, $fieldId:ID!, $optionId:String!) {
+            updateProjectV2ItemFieldValue(input: {
+              projectId: $projectId,
+              itemId: $itemId,
+              fieldId: $fieldId,
+              value: {
+                singleSelectOptionId: $optionId
+              }
+            }) {
+              projectV2Item {
+                id
+              }
+            }
+          }' -f projectId=$PROJECT_ID -f itemId=$ITEM_ID -f fieldId=$STATUS_FIELD_ID -f optionId="$done_option_id"
+
+          echo "✅ Status field updated to Done!"          
+
   update-commit-field:
     needs: [get-latest-commit, get-project-data, add-to-project]
     runs-on: ubuntu-latest
@@ -289,71 +357,3 @@ jobs:
           }' -f projectId=$PROJECT_ID -f itemId=$ITEM_ID -f fieldId=$DATA_FIELD_ID -f value="$DATA_VALUE"
 
           echo "✅ Data field updated with Python-generated value!"
-
-  update-status-field:
-    needs: [get-project-data, add-to-project]
-    runs-on: ubuntu-latest
-    steps:
-      - name: Update Status field to Done
-        env:
-          GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
-          PROJECT_ID: ${{ needs.get-project-data.outputs.project_id }}
-          ITEM_ID: ${{ needs.add-to-project.outputs.item_id }}
-          STATUS_FIELD_ID: ${{ needs.get-project-data.outputs.status_field_id }}
-        run: |
-          echo "Setting Status field to Done..."
-
-          # First, we need to get the option ID for "Done" in the Status field
-          echo "Fetching option ID for 'Done' status..."
-          status_options=$(gh api graphql -f query='
-          query($project:ID!) {
-            node(id: $project) {
-              ... on ProjectV2 {
-                fields(first: 100) {
-                  nodes {
-                    ... on ProjectV2SingleSelectField {
-                      id
-                      name
-                      options {
-                        id
-                        name
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          }' -f project=$PROJECT_ID)
-
-          # Extract options for the Status field
-          status_field_options=$(echo "$status_options" | jq -r '.data.node.fields.nodes[] | select(.id == "'$STATUS_FIELD_ID'") | .options')
-
-          done_option_id=$(echo "$status_field_options" | jq -r '.[] | select(.name == "Done") | .id')
-
-          if [ -z "$done_option_id" ]; then
-            echo "Warning: 'Done' option not found in Status field. Available options:"
-            echo "$status_field_options" | jq -r '.[].name'
-            echo "Using first available option as fallback"
-            done_option_id=$(echo "$status_field_options" | jq -r '.[0].id')
-          fi
-
-          echo "Done option ID: $done_option_id"
-
-          # Update the Status field with the "Done" option
-          gh api graphql -f query='
-          mutation($projectId:ID!, $itemId:ID!, $fieldId:ID!, $optionId:String!) {
-            updateProjectV2ItemFieldValue(input: {
-              projectId: $projectId,
-              itemId: $itemId,
-              fieldId: $fieldId,
-              value: {
-                singleSelectOptionId: $optionId
-              }
-            }) {
-              projectV2Item {
-                id
-              }
-            }
-          }' -f projectId=$PROJECT_ID -f itemId=$ITEM_ID -f fieldId=$STATUS_FIELD_ID -f optionId="$done_option_id"
-
-          echo "✅ Status field updated to Done!"

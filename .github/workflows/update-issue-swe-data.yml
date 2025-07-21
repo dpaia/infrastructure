@@ -280,6 +280,7 @@ jobs:
           DATA_FIELD_ID: ${{ needs.get-project-data.outputs.data_field_id }}
           DATA_VALUE: ${{ steps.generate-data.outputs.data_value }}
           EXTRACT_ERROR: ${{ needs.extract-test-fields.outputs.has_error }}
+          ISSUE_ID: ${{ github.event.inputs.issue_id }}
         run: |
           echo "Setting Data field value from Python script..."
 
@@ -290,8 +291,36 @@ jobs:
             echo "has_error=true" >> $GITHUB_OUTPUT
           else
             echo "Data value: $DATA_VALUE"
-            VALUE_TO_SET="$DATA_VALUE"
+            
+            # Create a temporary file with the JSON data
+            GIST_FILENAME="${ISSUE_ID}.json"
+            echo "$DATA_VALUE" > "$GIST_FILENAME"
+            
+            echo "Creating or updating secret gist with filename: $GIST_FILENAME"
+            
+            # Check if gist already exists for this issue
+            EXISTING_GISTS=$(gh gist list --limit 100 | grep "$GIST_FILENAME" || true)
+            
+            if [ -n "$EXISTING_GISTS" ]; then
+              # Extract gist ID from the list
+              GIST_ID=$(echo "$EXISTING_GISTS" | awk '{print $1}')
+              echo "Found existing gist with ID: $GIST_ID, updating it..."
+              
+              # Update the existing gist
+              GIST_URL=$(gh gist edit "$GIST_ID" "$GIST_FILENAME" | grep -o 'https://gist.github.com/[^ ]*')
+            else
+              echo "No existing gist found, creating a new one..."
+              
+              # Create a new secret gist
+              GIST_URL=$(gh gist create --secret "$GIST_FILENAME" | grep -o 'https://gist.github.com/[^ ]*')
+            fi
+            
+            echo "Gist URL: $GIST_URL"
+            VALUE_TO_SET="$GIST_URL"
             echo "has_error=false" >> $GITHUB_OUTPUT
+            
+            # Clean up temporary file
+            rm "$GIST_FILENAME"
           fi
 
           gh api graphql -f query='
@@ -313,7 +342,7 @@ jobs:
           if [ "$VALUE_TO_SET" == "" ]; then
             echo "✅ Data field updated with empty value due to error!"
           else
-            echo "✅ Data field updated with Python-generated value!"
+            echo "✅ Data field updated with gist URL: $VALUE_TO_SET"
           fi
 
   update-status-field:

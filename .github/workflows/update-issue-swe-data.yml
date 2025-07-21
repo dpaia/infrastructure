@@ -3,6 +3,11 @@ name: Update Issue SWE Data
 on:
   workflow_dispatch:
     inputs:
+      generator:
+        description: 'Dataset Generator'
+        required: true
+        default: 'java'
+        type: string
       organization:
         description: 'GitHub organization name'
         required: true
@@ -339,7 +344,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Make Python script executable
-        run: chmod +x .github/scripts/generate_data_value.py
+        run: chmod +x .github/scripts/${{ github.event.inputs.generator }}_dataset_generator.py
 
       - name: Generate data value with Python script
         id: generate-data
@@ -352,7 +357,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           echo "data_value<<EOF" >> $GITHUB_OUTPUT
-          .github/scripts/generate_data_value.py >> $GITHUB_OUTPUT
+          .github/scripts/${{ github.event.inputs.generator }}_dataset_generator.py >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
 
       - name: Update Data field

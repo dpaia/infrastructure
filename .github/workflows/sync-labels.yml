@@ -3,10 +3,18 @@ name: Sync Labels to Repositories
 on:
   workflow_dispatch:
     inputs:
-      repositories:
-        description: 'Comma-separated list of target repositories (repo1,repo2)'
+      labels_file:
+        description: 'Path to the labels JSON file'
         required: true
-        default: 'ee-swe-java-spring-benchmark,spring-petclinic-rest,feature-service,piggymetrics,train-ticket,spring-petclinic-microservices,realworld-java21-springboot3,jhipster-sample-app,spring-petclinic,spring-modular-monolith,empty-maven-springboot3'
+        default: 'java-spring'
+      topics:
+        description: 'Comma-separated list of repository topics to filter by'
+        required: true
+        default: 'java,spring-boot'
+      repositories:
+        description: 'Comma-separated list of target repositories (repo1,repo2). If provided, topics will be ignored.'
+        required: false
+        default: ''
 
 jobs:
   sync-labels:
@@ -22,16 +30,57 @@ jobs:
       - name: Install github-label-sync
         run: npm install -g github-label-sync
 
+      - name: Fetch repositories by topics
+        if: ${{ github.event.inputs.repositories == '' }}
+        id: fetch-repos
+        env:
+          GITHUB_TOKEN: ${{ secrets.PAT_LABEL_SYNC }}
+        run: |
+          IFS=',' read -ra TOPICS <<< "${{ github.event.inputs.topics }}"
+          REPOS=""
+          
+          for TOPIC in "${TOPICS[@]}"; do
+            echo "Fetching repositories with topic: $TOPIC"
+            TOPIC_REPOS=$(curl -s -H "Authorization: token $GITHUB_TOKEN" \
+              "https://api.github.com/search/repositories?q=org:jetbrains-eval-lab+topic:$TOPIC" | \
+              jq -r '.items[].name' | tr '\n' ',' | sed 's/,$//')
+            
+            if [ -n "$TOPIC_REPOS" ]; then
+              if [ -n "$REPOS" ]; then
+                REPOS="$REPOS,$TOPIC_REPOS"
+              else
+                REPOS="$TOPIC_REPOS"
+              fi
+            fi
+          done
+          
+          # Remove duplicates
+          UNIQUE_REPOS=$(echo "$REPOS" | tr ',' '\n' | sort -u | tr '\n' ',' | sed 's/,$//')
+          echo "Found repositories: $UNIQUE_REPOS"
+          echo "repos=$UNIQUE_REPOS" >> $GITHUB_OUTPUT
+
       - name: Sync labels (add / update only)
         env:
           GITHUB_TOKEN: ${{ secrets.PAT_LABEL_SYNC }}
         run: |
-          IFS=',' read -ra REPOS <<< "${{ github.event.inputs.repositories }}"
-          for REPO in "${REPOS[@]}"; do
+          # Use provided repositories if available, otherwise use repositories fetched by topics
+          if [ -n "${{ github.event.inputs.repositories }}" ]; then
+            REPOS="${{ github.event.inputs.repositories }}"
+          else
+            REPOS="${{ steps.fetch-repos.outputs.repos }}"
+          fi
+          
+          if [ -z "$REPOS" ]; then
+            echo "No repositories found. Exiting."
+            exit 0
+          fi
+          
+          IFS=',' read -ra REPO_ARRAY <<< "$REPOS"
+          for REPO in "${REPO_ARRAY[@]}"; do
             echo "➡️  Syncing labels to jetbrains-eval-lab/$REPO"
             github-label-sync \
               --access-token "$GITHUB_TOKEN" \
-              --labels .github/labels.json \
+              --labels ".github/${{ github.event.inputs.labels_file }}-labels.json" \
               --allow-added-labels \
               "jetbrains-eval-lab/$REPO"
           done

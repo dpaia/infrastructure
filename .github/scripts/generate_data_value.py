@@ -251,8 +251,8 @@ try:
         print("Using empty problem statement", file=sys.stderr)
 
     # Fetch and parse test fields
-    fail_to_pass_value = "[]"
-    pass_to_pass_value = "[]"
+    fail_to_pass_value = ""
+    pass_to_pass_value = ""
 
     # Check for direct test environment variables first
     test_fail_to_pass = os.environ.get('TEST_FAIL_TO_PASS', '')
@@ -281,11 +281,11 @@ try:
                 pass_to_pass_value = comment_pass
                 print(f"Found PASS_TO_PASS in issue comment: {pass_to_pass_value}", file=sys.stderr)
 
-            if fail_to_pass_value and pass_to_pass_value != "":
+            if fail_to_pass_value or pass_to_pass_value:
                 break
 
         # If not found in comments, check commit messages
-        if not fail_to_pass_value or pass_to_pass_value == "":
+        if not fail_to_pass_value or not pass_to_pass_value:
             print("Checking commit messages for test fields...", file=sys.stderr)
             commit_messages = fetch_linked_commit_messages()
 
@@ -318,11 +318,11 @@ try:
                     fail_to_pass_value = commit_fail
                     print(f"Updated FAIL_TO_PASS from commit message to: '{fail_to_pass_value}'", file=sys.stderr)
 
-                if commit_pass != "":
+                if commit_pass:
                     pass_to_pass_value = commit_pass
                     print(f"Updated PASS_TO_PASS from commit message to: '{pass_to_pass_value}'", file=sys.stderr)
 
-                if fail_to_pass_value and pass_to_pass_value != "":
+                if fail_to_pass_value or pass_to_pass_value:
                     break
 
     # Convert values to JSON arrays
@@ -349,6 +349,9 @@ try:
 except Exception as e:
     # If any error occurs, still output valid JSON with error information
     print(f"Error in script execution: {e}", file=sys.stderr)
+    if hasattr(e, 'traceback'):
+        print(f"Traceback: {e.traceback}", file=sys.stderr)
+
     error_data = {
         "instance_id": instance_id,
         "issue_numbers": f"[\"{issue_number}\"]",
@@ -361,6 +364,10 @@ except Exception as e:
         "problem_statement": "",
         "version": "0.1",
         "is_maven": "true",
-        "error": str(e)
+        "error": str(e),
+        "has_error": True  # Flag to indicate error
     }
+
+    # Output the error data as JSON
+    print(json.dumps(error_data))
     print(json.dumps(error_data))

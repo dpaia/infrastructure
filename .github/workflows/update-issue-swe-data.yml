@@ -207,20 +207,28 @@ jobs:
           echo "✅ Issue added to project!"
 
   update-status-field:
-    needs: [get-project-data, add-to-project]
+    needs: [get-project-data, add-to-project, update-data-field]
     runs-on: ubuntu-latest
     steps:
-      - name: Update Status field to Done
+      - name: Update Status field based on result
         env:
           GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
           PROJECT_ID: ${{ needs.get-project-data.outputs.project_id }}
           ITEM_ID: ${{ needs.add-to-project.outputs.item_id }}
           STATUS_FIELD_ID: ${{ needs.get-project-data.outputs.status_field_id }}
+          HAS_ERROR: ${{ needs.update-data-field.outputs.has_error }}
         run: |
-          echo "Setting Status field to Done..."
+          # Determine which status to set based on whether there was an error
+          if [ "$HAS_ERROR" == "true" ]; then
+            TARGET_STATUS="Failed"
+            echo "Setting Status field to Failed due to error in data generation..."
+          else
+            TARGET_STATUS="Done"
+            echo "Setting Status field to Done..."
+          fi
 
-          # First, we need to get the option ID for "Done" in the Status field
-          echo "Fetching option ID for 'Done' status..."
+          # First, we need to get the option ID for the target status in the Status field
+          echo "Fetching option ID for '$TARGET_STATUS' status..."
           status_options=$(gh api graphql -f query='
           query($project:ID!) {
             node(id: $project) {
@@ -244,18 +252,34 @@ jobs:
           # Extract options for the Status field
           status_field_options=$(echo "$status_options" | jq -r '.data.node.fields.nodes[] | select(.id == "'$STATUS_FIELD_ID'") | .options')
 
-          done_option_id=$(echo "$status_field_options" | jq -r '.[] | select(.name == "Done") | .id')
+          # Try to find the target status option
+          target_option_id=$(echo "$status_field_options" | jq -r '.[] | select(.name == "'$TARGET_STATUS'") | .id')
 
-          if [ -z "$done_option_id" ]; then
-            echo "Warning: 'Done' option not found in Status field. Available options:"
+          if [ -z "$target_option_id" ]; then
+            echo "Warning: '$TARGET_STATUS' option not found in Status field. Available options:"
             echo "$status_field_options" | jq -r '.[].name'
-            echo "Using first available option as fallback"
-            done_option_id=$(echo "$status_field_options" | jq -r '.[0].id')
+
+            # If target was Failed but not found, try to find Error, Failed, or Failure
+            if [ "$TARGET_STATUS" == "Failed" ]; then
+              for fallback in "Error" "Failed" "Failure" "Bug"; do
+                target_option_id=$(echo "$status_field_options" | jq -r '.[] | select(.name == "'$fallback'") | .id')
+                if [ -n "$target_option_id" ]; then
+                  echo "Using '$fallback' as fallback for Failed status"
+                  break
+                fi
+              done
+            fi
+
+            # If still not found or target was Done, use first option
+            if [ -z "$target_option_id" ]; then
+              echo "Using first available option as fallback"
+              target_option_id=$(echo "$status_field_options" | jq -r '.[0].id')
+            fi
           fi
 
-          echo "Done option ID: $done_option_id"
+          echo "$TARGET_STATUS option ID: $target_option_id"
 
-          # Update the Status field with the "Done" option
+          # Update the Status field with the target option
           gh api graphql -f query='
           mutation($projectId:ID!, $itemId:ID!, $fieldId:ID!, $optionId:String!) {
             updateProjectV2ItemFieldValue(input: {
@@ -270,9 +294,9 @@ jobs:
                 id
               }
             }
-          }' -f projectId=$PROJECT_ID -f itemId=$ITEM_ID -f fieldId=$STATUS_FIELD_ID -f optionId="$done_option_id"
+          }' -f projectId=$PROJECT_ID -f itemId=$ITEM_ID -f fieldId=$STATUS_FIELD_ID -f optionId="$target_option_id"
 
-          echo "✅ Status field updated to Done!"          
+          echo "✅ Status field updated to $TARGET_STATUS!"
 
   update-commit-field:
     needs: [get-latest-commit, get-project-data, add-to-project]
@@ -308,6 +332,8 @@ jobs:
   update-data-field:
     needs: [get-project-data, add-to-project, get-latest-commit]
     runs-on: ubuntu-latest
+    outputs:
+      has_error: ${{ steps.update-data.outputs.has_error }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -330,6 +356,7 @@ jobs:
           echo "EOF" >> $GITHUB_OUTPUT
 
       - name: Update Data field
+        id: update-data
         env:
           GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
           PROJECT_ID: ${{ needs.get-project-data.outputs.project_id }}
@@ -338,7 +365,17 @@ jobs:
           DATA_VALUE: ${{ steps.generate-data.outputs.data_value }}
         run: |
           echo "Setting Data field value from Python script..."
-          echo "Data value: $DATA_VALUE"
+
+          # Check if data generation encountered an error
+          if echo "$DATA_VALUE" | jq -e '.has_error == true' > /dev/null 2>&1; then
+            echo "Error detected in data generation. Setting empty Data field."
+            VALUE_TO_SET=""
+            echo "has_error=true" >> $GITHUB_OUTPUT
+          else
+            echo "Data value: $DATA_VALUE"
+            VALUE_TO_SET="$DATA_VALUE"
+            echo "has_error=false" >> $GITHUB_OUTPUT
+          fi
 
           gh api graphql -f query='
           mutation($projectId:ID!, $itemId:ID!, $fieldId:ID!, $value:String!) {
@@ -354,6 +391,10 @@ jobs:
                 id
               }
             }
-          }' -f projectId=$PROJECT_ID -f itemId=$ITEM_ID -f fieldId=$DATA_FIELD_ID -f value="$DATA_VALUE"
+          }' -f projectId=$PROJECT_ID -f itemId=$ITEM_ID -f fieldId=$DATA_FIELD_ID -f value="$VALUE_TO_SET"
 
-          echo "✅ Data field updated with Python-generated value!"
+          if [ "$VALUE_TO_SET" == "" ]; then
+            echo "✅ Data field updated with empty value due to error!"
+          else
+            echo "✅ Data field updated with Python-generated value!"
+          fi

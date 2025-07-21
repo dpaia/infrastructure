@@ -10,7 +10,7 @@ on:
       topics:
         description: 'Comma-separated list of repository topics to filter by'
         required: true
-        default: 'java,spring-boot'
+        default: 'java'
       repositories:
         description: 'Comma-separated list of target repositories (repo1,repo2). If provided, topics will be ignored.'
         required: false

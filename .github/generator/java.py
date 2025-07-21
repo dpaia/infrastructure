@@ -18,36 +18,49 @@ if not current_time.endswith('+0000'):
 
 
 # Function to detect the build system in a project
-def detect_build_system():
-    """
-    Detects the build system used in the project and returns a dictionary with the following keys:
-    - is_maven: "true" if Maven build system is detected (pom.xml exists), "false" otherwise
-    - gradle: "groovy" if Gradle with Groovy DSL is detected, "kotlin" if Gradle with Kotlin DSL is detected, not present if Gradle is not detected
+def detect_build_system(organization, repository):
+    # Use GitHub API to find build files
+    try:
+        # Find all pom.xml files
+        maven_files = _find_files_with_github_api(organization, repository, "pom.xml")
+        if maven_files:
+            return "maven"
+        
+        # Find all build.gradle files
+        gradle_groovy_files = _find_files_with_github_api(organization, repository, "build.gradle")
+        
+        # Find all build.gradle.kts files
+        gradle_kotlin_files = _find_files_with_github_api(organization, repository, "build.gradle.kts")
+        
+        # If Gradle is detected, determine the type
+        if gradle_groovy_files or gradle_kotlin_files:
+            # If both types exist, prioritize the one with more files
+            # If equal, prioritize Kotlin as it's newer
+            if len(gradle_kotlin_files) >= len(gradle_groovy_files):
+                return "gradle-kotlin"
+            else:
+                return "gradle"
+        
+        return ""
+    except Exception as e:
+        print(f"Error using GitHub API to detect build system: {e}", file=sys.stderr)
+        # Fall back to local detection
+        return ""
 
-    Returns:
-        dict: A dictionary containing build system information
-    """
-    result = ""
-
-    # Check for Maven (pom.xml)
-    maven_files = glob.glob("**/pom.xml", recursive=True)
-    if maven_files:
-        return "maven"
-
-    # Check for Gradle (build.gradle or build.gradle.kts)
-    gradle_groovy_files = glob.glob("**/build.gradle", recursive=True)
-    gradle_kotlin_files = glob.glob("**/build.gradle.kts", recursive=True)
-
-    # If Gradle is detected, determine the type
-    if gradle_groovy_files or gradle_kotlin_files:
-        # If both types exist, prioritize the one with more files
-        # If equal, prioritize Kotlin as it's newer
-        if len(gradle_kotlin_files) >= len(gradle_groovy_files):
-            return "gradle-kotlin"
-        else:
-            return "gradle"
-
-    return result
+def _find_files_with_github_api(organization, repository, filename):
+    cmd = [
+        'gh', 'api',
+        f'search/code?q=filename:{filename}+repo:{organization}/{repository}',
+        '--jq', '.items[].path'
+    ]
+    
+    try:
+        result = run_subprocess(cmd, capture_output=True, text=True, check=True)
+        files = result.stdout.strip().split('\n')
+        return [file for file in files if file]
+    except Exception as e:
+        print(f"Error searching for {filename}: {e}", file=sys.stderr)
+        return []
 
 # Wrap the main part of the script in a try-except block to ensure we always output valid JSON
 try:
@@ -58,7 +71,7 @@ try:
     source_patch, test_patch = generate_patches(organization, repository, issue_number, is_test_file)
     
     # Detect build system
-    build_system = detect_build_system()
+    build_system = detect_build_system(organization, repository)
     
     # Create the JSON structure
     data = {

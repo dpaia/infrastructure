@@ -1,0 +1,96 @@
+name: 'Get Latest Commit'
+description: 'Fetches the latest commit related to a GitHub issue'
+author: 'JetBrains'
+
+inputs:
+  organization:
+    description: 'GitHub organization name'
+    required: true
+  repository:
+    description: 'Repository name'
+    required: true
+  issue_id:
+    description: 'Issue number'
+    required: true
+  github_token:
+    description: 'GitHub token for API access'
+    required: true
+
+outputs:
+  commit_hash:
+    description: 'The hash of the latest commit related to the issue'
+    value: ${{ steps.fetch-commit.outputs.commit_hash }}
+  base_commit_hash:
+    description: 'The hash of the parent commit (base commit)'
+    value: ${{ steps.fetch-commit.outputs.base_commit_hash }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Fetch latest commit related to issue
+      id: fetch-commit
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github_token }}
+      run: |
+        repo="${{ inputs.organization }}/${{ inputs.repository }}"
+        issue_number="${{ inputs.issue_id }}"
+        owner="${repo%/*}"
+        repo_name="${repo##*/}"
+
+        echo "Fetching commits linked to issue #${issue_number}..."
+
+        # Use GitHub's Timeline API to find linked commits
+        linked_commits=$(gh api repos/${owner}/${repo_name}/issues/${issue_number}/timeline \
+          --jq '.[] | select(.event == "referenced" and .commit_id != null) | .commit_id')
+
+        # Get the most recent linked commit
+        if [ -n "$linked_commits" ]; then
+          latest_commit=$(echo "$linked_commits" | head -n 1)
+          echo "Found linked commits: $linked_commits"
+          echo "Using most recent linked commit: $latest_commit"
+        else
+          echo "No commits found linked to issue #${issue_number} through GitHub references"
+
+          # Try to check for cross-referenced PRs that might contain commits
+          echo "Checking for related pull requests..."
+          related_prs=$(gh api repos/${owner}/${repo_name}/issues/${issue_number}/timeline \
+            --jq '.[] | select(.event == "cross-referenced" and .source.issue.pull_request != null) | .source.issue.number')
+
+          if [ -n "$related_prs" ]; then
+            echo "Found related PRs: $related_prs"
+            # Get the most recent PR
+            recent_pr=$(echo "$related_prs" | head -n 1)
+            echo "Checking commits from PR #${recent_pr}..."
+
+            pr_commits=$(gh api repos/${owner}/${repo_name}/pulls/${recent_pr}/commits --jq '.[].sha')
+            if [ -n "$pr_commits" ]; then
+              latest_commit=$(echo "$pr_commits" | tail -n 1)
+              echo "Using most recent commit from PR #${recent_pr}: $latest_commit"
+            fi
+          fi
+
+          # If still no commit found, use the latest repository commit
+          if [ -z "$latest_commit" ]; then
+            echo "Falling back to latest repository commit"
+            latest_commit=$(gh api repos/${owner}/${repo_name}/commits --jq '.[0].sha')
+            echo "Using latest repository commit: $latest_commit"
+          fi
+        fi
+
+        echo "commit_hash=$latest_commit" >> $GITHUB_OUTPUT
+
+        # Get the commit before the latest commit (base commit)
+        if [ -n "$latest_commit" ]; then
+          echo "Fetching base commit (parent of latest commit)..."
+          base_commit=$(gh api repos/${owner}/${repo_name}/commits/${latest_commit} --jq '.parents[0].sha')
+          if [ -n "$base_commit" ]; then
+            echo "Base commit: $base_commit"
+            echo "base_commit_hash=$base_commit" >> $GITHUB_OUTPUT
+          else
+            echo "No parent commit found, using older repository commit"
+            base_commit=$(gh api repos/${owner}/${repo_name}/commits --jq '.[1].sha')
+            echo "Older repository commit: $base_commit"
+            echo "base_commit_hash=$base_commit" >> $GITHUB_OUTPUT
+          fi
+        fi

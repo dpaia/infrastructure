@@ -2,9 +2,10 @@
 
 import os
 import sys
-import json
-import requests
 from datetime import datetime
+
+# Import fetch_problem_statement from generate_data
+from generate_data import fetch_problem_statement
 
 # Fetch environment variables
 issue_id = os.environ.get('ISSUE_ID')
@@ -19,19 +20,12 @@ if not all([issue_id, repository, organization, github_token]):
     print("Error: Missing required environment variables", file=sys.stderr)
     sys.exit(1)
 
-# Set up GitHub API request headers
-headers = {
-    'Authorization': f'token {github_token}',
-    'Accept': 'application/vnd.github.v3+json'
-}
-
-# Fetch issue details from GitHub API
-url = f'https://api.github.com/repos/{organization}/{repository}/issues/{issue_id}'
+# Fetch issue details using fetch_problem_statement function
 try:
-    response = requests.get(url, headers=headers)
-    response.raise_for_status()
-    issue_data = response.json()
-
+    # Get issue title and body using fetch_problem_statement
+    issue_data = fetch_problem_statement(organization, repository, issue_id)
+    
+    # Extract title and body from the returned dictionary
     issue_title = issue_data.get('title', '')
     issue_body = issue_data.get('body', '')
 

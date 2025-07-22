@@ -122,7 +122,7 @@ try:
         "PASS_TO_PASS": pass_to_pass_json,
         "created_at": current_time,
         "base_commit": os.environ.get('BASE_COMMIT', ''),
-        "problem_statement": fetch_problem_statement(organization, repository, issue_number),
+        "problem_statement": fetch_problem_statement(organization, repository, issue_number).get('body', ''),
         "version": "0.1",
         "is_maven": f"{build_system == "maven"}",
         "build_system": build_system
@@ -161,7 +161,7 @@ except Exception as e:
         "PASS_TO_PASS": "[]",
         "created_at": current_time,
         "base_commit": os.environ.get('BASE_COMMIT', ''),
-        "problem_statement": "",
+        "problem_statement": "",  # Already an empty string, no need to change
         "version": "0.1",
         "is_maven": build_system == "maven",
         "build_system": build_system,

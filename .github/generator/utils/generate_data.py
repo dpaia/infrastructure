@@ -231,33 +231,48 @@ def fetch_linked_commit_messages(organization, repository, issue_number):
 
 # Function to fetch problem statement from GitHub issue
 def fetch_problem_statement(organization, repository, issue_number):
-    default_problem_statement = ""
+    default_title = ""
+    default_body = ""
 
     try:
         if issue_number != 'unknown' and os.environ.get('GH_TOKEN', ''):
-            # Use GitHub CLI to fetch issue description
+            # Use GitHub CLI to fetch issue title and body
             cmd = [
                 'gh', 'api', 
                 f'repos/{organization}/{repository}/issues/{issue_number}',
-                '--jq', '.body'
+                '--jq', '{title: .title, body: .body}'
             ]
 
             result = run_subprocess(cmd, capture_output=True, text=True, check=True)
-            issue_description = result.stdout.strip()
+            issue_data = json.loads(result.stdout.strip())
+            issue_title = issue_data.get('title', '').strip()
+            issue_body = issue_data.get('body', '').strip()
 
-            if issue_description:
-                print(f"Successfully fetched issue description for issue #{issue_number}", file=sys.stderr)
-                return issue_description
+            if issue_title or issue_body:
+                print(f"Successfully fetched issue title and body for issue #{issue_number}", file=sys.stderr)
+                return {
+                    'title': issue_title,
+                    'body': issue_body
+                }
             else:
-                print(f"Issue #{issue_number} has no description, using empty problem statement", file=sys.stderr)
-                return default_problem_statement
+                print(f"Issue #{issue_number} has no title or body, using empty problem statement", file=sys.stderr)
+                return {
+                    'title': default_title,
+                    'body': default_body
+                }
         else:
             print("Missing issue number or GitHub token, using empty problem statement", file=sys.stderr)
-            return default_problem_statement
+            return {
+                'title': default_title,
+                'body': default_body
+            }
     except Exception as e:
-        print(f"Error fetching issue description: {e}", file=sys.stderr)
+        print(f"Error fetching issue title and body: {e}", file=sys.stderr)
         print("Using empty problem statement", file=sys.stderr)
-        return default_problem_statement
+        return {
+            'title': default_title,
+            'body': default_body
+        }
 
 # Function to process test fields from various sources
 def process_test_fields(organization, repository, issue_number):

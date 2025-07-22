@@ -88,7 +88,7 @@ jobs:
     if: always()
     runs-on: ubuntu-latest
     outputs:
-      has_gist: ${{ steps.check_gist_links.outputs.has_gist }}
+      has_content: ${{ steps.check_data_links.outputs.has_content }}
     strategy:
       matrix:
         issue: ${{ fromJson(needs.find-issues.outputs.issue-matrix) }}
@@ -114,29 +114,29 @@ jobs:
           field_name: "Data"
           github_token: ${{ secrets.PROJECT_TOKEN }}
           
-      - name: Check for GIST links
-        id: check_gist_links
+      - name: Check for links
+        id: check_data_links
         env:
           DATA_VALUE: ${{ steps.get-data-value.outputs.field_value }}
         run: |
           # Check if DATA_VALUE is null, empty, or doesn't exist
           if [ -z "$DATA_VALUE" ] || [ "$DATA_VALUE" = "null" ]; then
-            echo "DATA_VALUE is empty or null, no GIST links found"
-            echo "has_gist=false" >> $GITHUB_OUTPUT
+            echo "DATA_VALUE is empty or null, no links found"
+            echo "has_content=false" >> $GITHUB_OUTPUT
           else
-            # Check if DATA_VALUE contains any GIST links
-            GIST_LINKS=$(echo "$DATA_VALUE" | grep -o 'https://gist\.github\.com/[a-zA-Z0-9/]*')
-            if [ -n "$GIST_LINKS" ]; then
-              echo "GIST links found in DATA_VALUE"
-              echo "has_gist=true" >> $GITHUB_OUTPUT
+            # Check if DATA_VALUE contains any links
+            LINKS=$(echo "$DATA_VALUE" | grep -o 'https://gist\.github\.com/[a-zA-Z0-9/]*')
+            if [ -n "$LINKS" ]; then
+              echo "Links found in DATA_VALUE"
+              echo "has_content=true" >> $GITHUB_OUTPUT
             else
-              echo "No GIST links found in DATA_VALUE"
-              echo "has_gist=false" >> $GITHUB_OUTPUT
+              echo "No links found in DATA_VALUE"
+              echo "has_content=false" >> $GITHUB_OUTPUT
             fi
           fi
           
-      - name: Process gist data immediately
-        if: steps.check_gist_links.outputs.has_gist == 'true'
+      - name: Download content
+        if: steps.check_data_links.outputs.has_content == 'true'
         env:
           ISSUE_ID: ${{ matrix.issue.issue_id }}
           REPO_NAME: ${{ matrix.issue.repo_name }}
@@ -146,27 +146,43 @@ jobs:
           # Install required tools
           sudo apt-get update && sudo apt-get -y install jq curl
           
-          # Extract GIST links directly from DATA_VALUE
+          # Extract links directly from DATA_VALUE
           echo "DATA VALUE: $DATA_VALUE"
           
           if [ -n "$DATA_VALUE" ] && [ "$DATA_VALUE" != "null" ]; then
-            # Fetch the raw GIST content
-            mkdir -p ./gist_content
-            curl -s "$DATA_VALUE" > "./gist_content/${ORG_NAME}_${REPO_NAME}_${ISSUE_ID}.json"
-          
-            # Upload GIST content as artifact immediately
-            echo "gist_processed=true" >> $GITHUB_OUTPUT
+            # Extract the gist URL
+            GIST_URL=$(echo "$DATA_VALUE" | grep -o 'https://gist\.github\.com/[a-zA-Z0-9/]*')
+            
+            if [ -n "$GIST_URL" ]; then
+              echo "Found gist URL: $GIST_URL"
+              
+              # Convert to raw content URL
+              # Format: https://gist.githubusercontent.com/username/gistid/raw
+              RAW_URL=$(echo "$GIST_URL" | sed 's|https://gist.github.com/|https://gist.githubusercontent.com/|')/raw
+              
+              echo "Raw content URL: $RAW_URL"
+              
+              # Fetch the raw content
+              mkdir -p ./_content
+              curl -s "$RAW_URL" > "./_content/${ORG_NAME}_${REPO_NAME}_${ISSUE_ID}.json"
+              
+              # Upload content as artifact immediately
+              echo "content_processed=true" >> $GITHUB_OUTPUT
+            else
+              echo "No valid gist URL found in DATA_VALUE"
+              echo "content_processed=false" >> $GITHUB_OUTPUT
+            fi
           else
-            echo "No valid GIST URL found for issue #$ISSUE_ID"
-            echo "gist_processed=false" >> $GITHUB_OUTPUT
+            echo "No valid URL found for issue #$ISSUE_ID"
+            echo "content_processed=false" >> $GITHUB_OUTPUT
           fi
           
-      - name: Upload processed gist content
-        if: steps.check_gist_links.outputs.has_gist == 'true'
+      - name: Upload processed content
+        if: steps.check_data_links.outputs.has_content == 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: gist-content-${{ matrix.issue.org_name }}-${{ matrix.issue.repo_name }}-${{ matrix.issue.issue_id }}
-          path: ./gist_content/${{ matrix.issue.org_name }}_${{ matrix.issue.repo_name }}_${{ matrix.issue.issue_id }}.json
+          name: data-${{ matrix.issue.org_name }}-${{ matrix.issue.repo_name }}-${{ matrix.issue.issue_id }}
+          path: ./_content/${{ matrix.issue.org_name }}_${{ matrix.issue.repo_name }}_${{ matrix.issue.issue_id }}.json
           retention-days: 1
 
   collect-exists-data:

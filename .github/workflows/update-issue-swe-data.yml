@@ -323,8 +323,70 @@ jobs:
             GIST_ID=$(echo "$EXISTING_GISTS" | awk '{print $1}')
             echo "Found existing gist with ID: $GIST_ID, updating it..."
             
-            # Update the existing gist
-            GIST_URL=$(gh gist edit "$GIST_ID" "$LOCAL_FILENAME" -f "$GIST_FILENAME" | grep -o 'https://gist.github.com/[^ ]*')
+            # Debug information before running the command
+            echo "DEBUG: GitHub CLI version:"
+            gh --version
+            
+            echo "DEBUG: Environment information:"
+            echo "DEBUG: GIST_ID=$GIST_ID"
+            echo "DEBUG: GIST_FILENAME=$GIST_FILENAME"
+            echo "DEBUG: LOCAL_FILENAME=$LOCAL_FILENAME"
+            
+            echo "DEBUG: Local file information:"
+            ls -la "$LOCAL_FILENAME"
+            echo "DEBUG: Local file content (first 50 chars):"
+            head -c 50 "$LOCAL_FILENAME"
+            echo "..."
+            
+            echo "DEBUG: Gist information before update:"
+            gh gist view "$GIST_ID" --raw || echo "DEBUG: Could not view gist content"
+            
+            echo "DEBUG: Command to be executed:"
+            echo "gh gist edit \"$GIST_ID\" \"$LOCAL_FILENAME\" -f \"$GIST_FILENAME\""
+            
+            # Try listing available commands and help
+            echo "DEBUG: Available gh gist commands:"
+            gh gist --help
+            
+            # Try with verbose flag if available
+            echo "DEBUG: Trying to run command with verbose logging..."
+            echo "DEBUG: Running: gh gist edit --verbose \"$GIST_ID\" \"$LOCAL_FILENAME\" -f \"$GIST_FILENAME\""
+            VERBOSE_OUTPUT=$(gh gist edit --verbose "$GIST_ID" "$LOCAL_FILENAME" -f "$GIST_FILENAME" 2>&1 || echo "Verbose flag not supported")
+            echo "DEBUG: Verbose output (if supported):"
+            echo "$VERBOSE_OUTPUT"
+            
+            # Try with different syntax variations
+            echo "DEBUG: Trying alternative command syntax variations..."
+            
+            echo "DEBUG: Trying syntax variation 1: gh gist edit \"$GIST_ID\" -F \"$LOCAL_FILENAME\" -f \"$GIST_FILENAME\""
+            SYNTAX_VAR1=$(gh gist edit "$GIST_ID" -F "$LOCAL_FILENAME" -f "$GIST_FILENAME" 2>&1 || echo "Syntax variation 1 failed")
+            echo "DEBUG: Syntax variation 1 output:"
+            echo "$SYNTAX_VAR1"
+            
+            echo "DEBUG: Trying syntax variation 2: gh gist edit \"$GIST_ID\" -f \"$GIST_FILENAME\"=\"$LOCAL_FILENAME\""
+            SYNTAX_VAR2=$(gh gist edit "$GIST_ID" -f "$GIST_FILENAME"="$LOCAL_FILENAME" 2>&1 || echo "Syntax variation 2 failed")
+            echo "DEBUG: Syntax variation 2 output:"
+            echo "$SYNTAX_VAR2"
+            
+            # Run the command with full output capture
+            echo "DEBUG: Running original gist edit command..."
+            echo "DEBUG: Running: gh gist edit \"$GIST_ID\" \"$LOCAL_FILENAME\" -f \"$GIST_FILENAME\""
+            FULL_OUTPUT=$(gh gist edit "$GIST_ID" "$LOCAL_FILENAME" -f "$GIST_FILENAME" 2>&1)
+            COMMAND_EXIT_CODE=$?
+            
+            echo "DEBUG: Command exit code: $COMMAND_EXIT_CODE"
+            echo "DEBUG: Command full output:"
+            echo "$FULL_OUTPUT"
+            
+            if [ $COMMAND_EXIT_CODE -eq 0 ]; then
+              echo "DEBUG: Command succeeded, extracting URL..."
+              GIST_URL=$(echo "$FULL_OUTPUT" | grep -o 'https://gist.github.com/[^ ]*')
+              echo "DEBUG: Extracted URL: $GIST_URL"
+            else
+              echo "ERROR: Failed to update gist. Exit code: $COMMAND_EXIT_CODE"
+              echo "ERROR: Full error output: $FULL_OUTPUT"
+              exit 1
+            fi
           else
             echo "No existing gist found, creating a new one..."
             

@@ -207,6 +207,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       has_content: ${{ steps.check_data_links.outputs.has_content }}
+      filtered_matrix: ${{ steps.set-filtered-matrix.outputs.filtered_matrix }}
     strategy:
       matrix:
         issue: ${{ fromJson(needs.find-issues.outputs.issue-matrix) }}
@@ -272,6 +273,36 @@ jobs:
           path: ./_content/${{ matrix.issue.org_name }}_${{ matrix.issue.repo_name }}_${{ matrix.issue.issue_id }}.json
           retention-days: 1
 
+      - name: Collect issues with content
+        if: steps.check_data_links.outputs.has_content == 'true'
+        run: |
+          echo "${{ matrix.issue.org_name }},${{ matrix.issue.repo_name }},${{ matrix.issue.issue_id }}" >> issues_with_content.txt
+
+      - name: Set filtered matrix
+        id: set-filtered-matrix
+        if: always()
+        run: |
+          # Create file if it doesn't exist
+          touch issues_with_content.txt
+
+          # Create an array of issues with content
+          echo "Collecting issues with content..."
+          issues_array="[]"
+
+          while IFS=, read -r org_name repo_name issue_id || [ -n "$org_name" ]; do
+            if [ -n "$org_name" ]; then
+              issue_json="{\"org_name\":\"$org_name\",\"repo_name\":\"$repo_name\",\"issue_id\":\"$issue_id\"}"
+
+              if [ "$issues_array" = "[]" ]; then
+                issues_array="[$issue_json]"
+              else
+                issues_array="${issues_array%]},$issue_json]"
+              fi
+            fi
+          done < issues_with_content.txt
+
+          echo "filtered_matrix=$issues_array" >> $GITHUB_OUTPUT
+          echo "Filtered matrix: $issues_array"
 
   aggregate-results:
     needs: get-data-field

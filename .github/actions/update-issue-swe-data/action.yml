@@ -190,12 +190,15 @@ runs:
         ISSUE_BODY=$(echo "$ISSUE_DETAILS" | jq -r '.body')
         
         # Format the commit message
-        COMMIT_MESSAGE="${ISSUE_TITLE} #${ISSUE_ID}
+        COMMIT_MESSAGE=$(cat << EOF
+${ISSUE_TITLE} #${ISSUE_ID}
 
 ${ISSUE_BODY}
 
 FAIL_TO_PASS: ${FAIL_TO_PASS}
-PASS_TO_PASS: ${PASS_TO_PASS}"
+PASS_TO_PASS: ${PASS_TO_PASS}
+EOF
+)
         
         # Add, commit, and push the changes
         git add "$FILE_PATH"

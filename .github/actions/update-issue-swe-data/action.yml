@@ -107,7 +107,7 @@ runs:
         .github/generator/utils/extract_test_fields.py >> $GITHUB_OUTPUT
         echo "EOF" >> $GITHUB_OUTPUT
 
-    - name: Generate data value with Python script
+    - name: Generate data
       id: generate-data
       shell: bash
       env:
@@ -117,8 +117,8 @@ runs:
         LATEST_COMMIT: ${{ steps.get-latest-commit.outputs.commit_hash }}
         BASE_COMMIT: ${{ steps.get-latest-commit.outputs.base_commit_hash || '' }}
         GH_TOKEN: ${{ inputs.github_token }}
-        TEST_FAIL_TO_PASS: ${{ steps.extract-fields.outputs.fail_to_pass }}
-        TEST_PASS_TO_PASS: ${{ steps.extract-fields.outputs.pass_to_pass }}
+        FAIL_TO_PASS: ${{ steps.extract-fields.outputs.fail_to_pass }}
+        PASS_TO_PASS: ${{ steps.extract-fields.outputs.pass_to_pass }}
       run: |
         chmod +x .github/generator/${{ inputs.generator }}.py
         echo "data_value<<EOF" >> $GITHUB_OUTPUT

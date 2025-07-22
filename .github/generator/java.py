@@ -10,6 +10,8 @@ issue_number = os.environ.get('ISSUE_NUMBER', 'unknown')
 repository = os.environ.get('REPOSITORY', 'unknown')
 organization = os.environ.get('ORGANIZATION', 'jetbrains-eval-lab')
 latest_commit = os.environ.get('LATEST_COMMIT', '')
+fail_to_pass = os.environ.get('FAIL_TO_PASS', '')
+pass_to_pass = os.environ.get('PASS_TO_PASS', '')
 
 # Generate current timestamp in ISO format
 current_time = datetime.datetime.now().strftime('%Y-%m-%dT%H:%M:%S%z')
@@ -99,9 +101,6 @@ def _find_files_with_github_api(organization, repository, filename, commit=None)
 
 # Wrap the main part of the script in a try-except block to ensure we always output valid JSON
 try:
-    # Process test fields
-    fail_to_pass_json, pass_to_pass_json = process_test_fields(organization, repository, issue_number)
-
     # Generate source and test patches
     source_patch, test_patch = generate_patches(organization, repository, issue_number, is_test_file)
     
@@ -118,8 +117,8 @@ try:
         "repo": f"{organization}/{repository}.git",
         "patch": f"{source_patch}",
         "test_patch": f"{test_patch}",
-        "FAIL_TO_PASS": fail_to_pass_json,
-        "PASS_TO_PASS": pass_to_pass_json,
+        "FAIL_TO_PASS": fail_to_pass,
+        "PASS_TO_PASS": pass_to_pass,
         "created_at": current_time,
         "base_commit": os.environ.get('BASE_COMMIT', ''),
         "problem_statement": fetch_problem_statement(organization, repository, issue_number).get('body', ''),

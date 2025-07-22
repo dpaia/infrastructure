@@ -243,7 +243,7 @@ jobs:
             echo "has_content=false" >> $GITHUB_OUTPUT
           else
             # Check if DATA_VALUE contains any links
-            LINKS=$(echo "$DATA_VALUE" | grep -o 'https://gist\.github\.com/[a-zA-Z0-9/]*')
+            LINKS=$(echo "$DATA_VALUE" | grep -o 'https://')
             if [ -n "$LINKS" ]; then
               echo "Links found in DATA_VALUE"
               echo "has_content=true" >> $GITHUB_OUTPUT

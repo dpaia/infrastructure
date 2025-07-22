@@ -84,7 +84,14 @@ jobs:
           echo "matrix=$MATRIX_JSON" >> $GITHUB_OUTPUT
 
   get-data-field:
-    needs: [get-project-data, find-issues]
+    needs: [get-project-data, find-issues, collect-exists-data, update-data, update-issue-swe-data]
+    if: |
+      always() && 
+      (
+        (inputs.update == 'none' && (needs.collect-exists-data.result == 'success' || needs.collect-exists-data.result == 'skipped')) || 
+        (inputs.update == 'update' && (needs.update-data.result == 'success' || needs.update-data.result == 'skipped')) || 
+        (inputs.update == 'force-update' && (needs.update-issue-swe-data.result == 'success' || needs.update-issue-swe-data.result == 'skipped'))
+      )
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -93,7 +100,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Get GitHub issue ID (GraphQL node ID)
+      - name: Get GitHub issue ID
         id: get-issue-node-id
         uses: ./.github/actions/get-issue-node-id
         with:
@@ -166,6 +173,27 @@ jobs:
         issue: ${{ fromJson(needs.find-issues.outputs.issue-matrix) }}
       fail-fast: false
 
+  update-issue-swe-data:
+    needs: force-update-data
+    if: inputs.update == 'force-update'
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        issue: ${{ fromJson(needs.find-issues.outputs.issue-matrix) }}
+      fail-fast: false
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Update Issue SWE Data
+        uses: ./.github/actions/update-issue-swe-data
+        with:
+          generator: 'java'
+          organization: ${{ matrix.issue.org_name }}
+          repository: ${{ matrix.issue.repo_name }}
+          issue_id: ${{ matrix.issue.issue_id }}
+          github_token: ${{ secrets.PROJECT_TOKEN }}
+          gist_token: ${{ secrets.GIST_TOKEN }}
+          update_status: 'false'
 
   fetch-gist-data:
     needs: [get-data-field, find-issues]

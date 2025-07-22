@@ -44,6 +44,5 @@ jobs:
           repository: ${{ github.event.inputs.repository }}
           issue_id: ${{ github.event.inputs.issue_id }}
           github_token: ${{ secrets.PROJECT_TOKEN }}
-          gist_token: ${{ secrets.GIST_TOKEN }}
           dataset_repo: ${{ secrets.DATASET_REPO }}
           update_status: 'true'

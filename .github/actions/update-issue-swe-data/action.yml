@@ -19,9 +19,6 @@ inputs:
   github_token:
     description: 'GitHub token for API access'
     required: true
-  gist_token:
-    description: 'GitHub token for gist operations'
-    required: true
   dataset_repo:
     description: 'Repository for storing dataset files'
     required: true
@@ -148,7 +145,7 @@ runs:
       if: steps.check-error.outputs.has_error != 'true'
       shell: bash
       env:
-        GH_TOKEN: ${{ inputs.gist_token }}
+        GH_TOKEN: ${{ inputs.github_token }}
         DATA_VALUE: ${{ steps.generate-data.outputs.data_value }}
         ISSUE_ID: ${{ inputs.issue_id }}
         REPOSITORY: ${{ inputs.repository }}

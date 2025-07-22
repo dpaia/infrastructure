@@ -1,0 +1,371 @@
+name: 'Update Issue SWE Data'
+description: 'Updates Software Engineering data for a GitHub issue'
+author: 'JetBrains'
+
+inputs:
+  generator:
+    description: 'Profile for data generation'
+    required: true
+    default: 'java'
+  organization:
+    description: 'GitHub organization name'
+    required: true
+  repository:
+    description: 'Repository name'
+    required: true
+  issue_id:
+    description: 'Issue number'
+    required: true
+  github_token:
+    description: 'GitHub token for API access'
+    required: true
+  gist_token:
+    description: 'GitHub token for gist operations'
+    required: true
+  update_status:
+    description: 'Whether to update the Status field in the project'
+    required: false
+    default: 'true'
+
+outputs:
+  gist_url:
+    description: 'The URL of the created or updated gist'
+    value: ${{ steps.create-update-gist.outputs.gist_url }}
+  has_error:
+    description: 'Whether there was an error during the process'
+    value: ${{ steps.check-error.outputs.has_error }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Get latest commit
+      id: get-latest-commit
+      uses: ./.github/actions/get-latest-commit
+      with:
+        organization: ${{ inputs.organization }}
+        repository: ${{ inputs.repository }}
+        issue_id: ${{ inputs.issue_id }}
+        github_token: ${{ inputs.github_token }}
+
+    - name: Fetch GitHub issue ID
+      id: fetch-issue-id
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github_token }}
+      run: |
+        repo="${{ inputs.organization }}/${{ inputs.repository }}"
+        issue_number="${{ inputs.issue_id }}"
+        owner="${repo%/*}"
+        repo_name="${repo##*/}"
+
+        echo "Fetching Issue ID..."
+        issue_id=$(gh api graphql -f query='
+        query($repo:String!, $owner:String!, $number:Int!) {
+          repository(name: $repo, owner: $owner) {
+            issue(number: $number) {
+              id
+            }
+          }
+        }' -f repo="$repo_name" -f owner="$owner" -F number=$issue_number --jq '.data.repository.issue.id')
+
+        echo "Issue ID: $issue_id"
+        echo "issue_id=$issue_id" >> $GITHUB_OUTPUT
+
+    - name: Get project data
+      id: get-project-data
+      uses: ./.github/actions/get-project-data
+      with:
+        organization: ${{ inputs.organization }}
+        project_number: 3
+        github_token: ${{ inputs.github_token }}
+        fetch_status_field: ${{ inputs.update_status }}
+
+    - name: Add Issue to Project
+      id: add-to-project
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github_token }}
+        PROJECT_ID: ${{ steps.get-project-data.outputs.project_id }}
+        ISSUE_ID: ${{ steps.fetch-issue-id.outputs.issue_id }}
+      run: |
+        echo "Adding Issue to Project..."
+        item_id=$(gh api graphql -f query='
+        mutation($projectId:ID!, $contentId:ID!) {
+          addProjectV2ItemById(input: {projectId: $projectId, contentId: $contentId}) {
+            item {
+              id
+            }
+          }
+        }' -f projectId=$PROJECT_ID -f contentId=$ISSUE_ID --jq '.data.addProjectV2ItemById.item.id')
+
+        echo "Item ID: $item_id"
+        echo "item_id=$item_id" >> $GITHUB_OUTPUT
+
+        echo "✅ Issue added to project!"
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.x'
+
+    - name: Extract FAIL_TO_PASS and PASS_TO_PASS
+      id: extract-fields
+      shell: bash
+      env:
+        ISSUE_NUMBER: ${{ inputs.issue_id }}
+        REPOSITORY: ${{ inputs.repository }}
+        ORGANIZATION: ${{ inputs.organization }}
+        GH_TOKEN: ${{ inputs.github_token }}
+      run: |
+        chmod +x .github/generator/utils/extract_test_fields.py
+        echo "data_value<<EOF" >> $GITHUB_OUTPUT
+        .github/generator/utils/extract_test_fields.py >> $GITHUB_OUTPUT
+        echo "EOF" >> $GITHUB_OUTPUT
+
+    - name: Generate data value with Python script
+      id: generate-data
+      shell: bash
+      env:
+        ISSUE_NUMBER: ${{ inputs.issue_id }}
+        REPOSITORY: ${{ inputs.repository }}
+        ORGANIZATION: ${{ inputs.organization }}
+        LATEST_COMMIT: ${{ steps.get-latest-commit.outputs.commit_hash }}
+        BASE_COMMIT: ${{ steps.get-latest-commit.outputs.base_commit_hash || '' }}
+        GH_TOKEN: ${{ inputs.github_token }}
+        TEST_FAIL_TO_PASS: ${{ steps.extract-fields.outputs.fail_to_pass }}
+        TEST_PASS_TO_PASS: ${{ steps.extract-fields.outputs.pass_to_pass }}
+      run: |
+        chmod +x .github/generator/${{ inputs.generator }}.py
+        echo "data_value<<EOF" >> $GITHUB_OUTPUT
+        .github/generator/${{ inputs.generator }}.py >> $GITHUB_OUTPUT
+        echo "EOF" >> $GITHUB_OUTPUT
+
+    - name: Check for errors
+      id: check-error
+      shell: bash
+      env:
+        DATA_VALUE: ${{ steps.generate-data.outputs.data_value }}
+        EXTRACT_ERROR: ${{ steps.extract-fields.outputs.has_error }}
+      run: |
+        if [ "$EXTRACT_ERROR" == "true" ] || echo "$DATA_VALUE" | jq -e '.has_error == true' > /dev/null 2>&1; then
+          echo "Error detected in data generation or test field extraction."
+          echo "has_error=true" >> $GITHUB_OUTPUT
+        else
+          echo "Data generated successfully."
+          echo "has_error=false" >> $GITHUB_OUTPUT
+        fi
+
+    - name: Create or update gist
+      id: create-update-gist
+      if: steps.check-error.outputs.has_error != 'true'
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.gist_token }}
+        DATA_VALUE: ${{ steps.generate-data.outputs.data_value }}
+        ISSUE_ID: ${{ inputs.issue_id }}
+      run: |
+        echo "Creating or updating gist with JSON data..."
+        
+        # Extract instance_id from the JSON data
+        INSTANCE_ID=$(echo "$DATA_VALUE" | jq -r '.instance_id')
+        
+        # Create a temporary file with the JSON data
+        GIST_FILENAME="${INSTANCE_ID}.json"
+        
+        # Replace slashes with underscores for the local filename to avoid directory issues
+        LOCAL_FILENAME="${GIST_FILENAME//\//__}"
+        echo "$DATA_VALUE" > "$LOCAL_FILENAME"
+        
+        echo "Creating or updating secret gist with filename: $GIST_FILENAME"
+        
+        # Check if gist already exists for this issue
+        echo "Running command: gh gist list --filter \"$GIST_FILENAME\""
+        EXISTING_GISTS=$(gh gist list --filter "$GIST_FILENAME" || true)
+        
+        if [ -n "$EXISTING_GISTS" ]; then
+          # Extract gist ID from the list
+          GIST_ID=$(echo "$EXISTING_GISTS" | awk '{print $1}')
+          echo "Found existing gist with ID: $GIST_ID, updating it..."
+          
+          # Update the existing gist
+          GIST_RESULT=$(gh gist edit "$GIST_ID" -f "$GIST_FILENAME" "$LOCAL_FILENAME")
+          
+          # Get the owner of the GIST_TOKEN
+          GIST_OWNER=$(gh api user --jq '.login')
+          
+          # Construct the URL in the required format
+          GIST_URL="https://gist.github.com/$GIST_OWNER/$GIST_ID"
+        else
+          echo "No existing gist found, creating a new one..."
+          
+          # Create a new secret gist
+          GIST_RESULT=$(gh gist create "$LOCAL_FILENAME" --filename="$GIST_FILENAME")
+          GIST_URL=$(echo "$GIST_RESULT" | grep -o 'https://gist.github.com/[^ ]*')
+        fi
+        
+        echo "Gist URL: $GIST_URL"
+        echo "gist_url=$GIST_URL" >> $GITHUB_OUTPUT
+        
+        # Clean up temporary file
+        rm "$LOCAL_FILENAME"
+
+    - name: Update Data field
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github_token }}
+        PROJECT_ID: ${{ steps.get-project-data.outputs.project_id }}
+        ITEM_ID: ${{ steps.add-to-project.outputs.item_id }}
+        DATA_FIELD_ID: ${{ steps.get-project-data.outputs.data_field_id }}
+        GIST_URL: ${{ steps.create-update-gist.outputs.gist_url }}
+        HAS_ERROR: ${{ steps.check-error.outputs.has_error }}
+      run: |
+        echo "Setting Data field value..."
+
+        # Set the value based on whether there was an error
+        if [ "$HAS_ERROR" == "true" ]; then
+          echo "Error detected in data generation or test field extraction. Setting empty Data field."
+          VALUE_TO_SET=""
+        else
+          echo "Using gist URL: $GIST_URL"
+          VALUE_TO_SET="$GIST_URL"
+        fi
+
+        gh api graphql -f query='
+        mutation($projectId:ID!, $itemId:ID!, $fieldId:ID!, $value:String!) {
+          updateProjectV2ItemFieldValue(input: {
+            projectId: $projectId,
+            itemId: $itemId,
+            fieldId: $fieldId,
+            value: {
+              text: $value
+            }
+          }) {
+            projectV2Item {
+              id
+            }
+          }
+        }' -f projectId=$PROJECT_ID -f itemId=$ITEM_ID -f fieldId=$DATA_FIELD_ID -f value="$VALUE_TO_SET"
+
+        if [ "$VALUE_TO_SET" == "" ]; then
+          echo "✅ Data field updated with empty value due to error!"
+        else
+          echo "✅ Data field updated with gist URL: $VALUE_TO_SET"
+        fi
+
+    - name: Update Status field
+      if: inputs.update_status == 'true'
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github_token }}
+        PROJECT_ID: ${{ steps.get-project-data.outputs.project_id }}
+        ITEM_ID: ${{ steps.add-to-project.outputs.item_id }}
+        STATUS_FIELD_ID: ${{ steps.get-project-data.outputs.status_field_id }}
+        HAS_ERROR: ${{ steps.check-error.outputs.has_error }}
+      run: |
+        # Check if there was an error
+        if [ "$HAS_ERROR" == "true" ]; then
+          TARGET_STATUS="Failed"
+          echo "Setting Status field to Failed due to error in workflow..."
+        else
+          TARGET_STATUS="Done"
+          echo "Setting Status field to Done..."
+        fi
+
+        # First, we need to get the option ID for the target status in the Status field
+        echo "Fetching option ID for '$TARGET_STATUS' status..."
+        status_options=$(gh api graphql -f query='
+        query($project:ID!) {
+          node(id: $project) {
+            ... on ProjectV2 {
+              fields(first: 100) {
+                nodes {
+                  ... on ProjectV2SingleSelectField {
+                    id
+                    name
+                    options {
+                      id
+                      name
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }' -f project=$PROJECT_ID)
+
+        # Extract options for the Status field
+        status_field_options=$(echo "$status_options" | jq -r '.data.node.fields.nodes[] | select(.id == "'$STATUS_FIELD_ID'") | .options')
+
+        # Try to find the target status option
+        target_option_id=$(echo "$status_field_options" | jq -r '.[] | select(.name == "'$TARGET_STATUS'") | .id')
+
+        if [ -z "$target_option_id" ]; then
+          echo "Warning: '$TARGET_STATUS' option not found in Status field. Available options:"
+          echo "$status_field_options" | jq -r '.[].name'
+
+          # If target was Failed but not found, try to find Error, Failed, or Failure
+          if [ "$TARGET_STATUS" == "Failed" ]; then
+            for fallback in "Error" "Failed" "Failure" "Bug"; do
+              target_option_id=$(echo "$status_field_options" | jq -r '.[] | select(.name == "'$fallback'") | .id')
+              if [ -n "$target_option_id" ]; then
+                echo "Using '$fallback' as fallback for Failed status"
+                break
+              fi
+            done
+          fi
+
+          # If still not found or target was Done, use first option
+          if [ -z "$target_option_id" ]; then
+            echo "Using first available option as fallback"
+            target_option_id=$(echo "$status_field_options" | jq -r '.[0].id')
+          fi
+        fi
+
+        echo "$TARGET_STATUS option ID: $target_option_id"
+
+        # Update the Status field with the target option
+        gh api graphql -f query='
+        mutation($projectId:ID!, $itemId:ID!, $fieldId:ID!, $optionId:String!) {
+          updateProjectV2ItemFieldValue(input: {
+            projectId: $projectId,
+            itemId: $itemId,
+            fieldId: $fieldId,
+            value: {
+              singleSelectOptionId: $optionId
+            }
+          }) {
+            projectV2Item {
+              id
+            }
+          }
+        }' -f projectId=$PROJECT_ID -f itemId=$ITEM_ID -f fieldId=$STATUS_FIELD_ID -f optionId="$target_option_id"
+
+        echo "✅ Status field updated to $TARGET_STATUS!"
+
+    - name: Update Commit field
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github_token }}
+        PROJECT_ID: ${{ steps.get-project-data.outputs.project_id }}
+        ITEM_ID: ${{ steps.add-to-project.outputs.item_id }}
+        COMMIT_FIELD_ID: ${{ steps.get-project-data.outputs.commit_field_id }}
+        LATEST_COMMIT: ${{ steps.get-latest-commit.outputs.commit_hash }}
+      run: |
+        echo "Setting Commit field value..."
+        gh api graphql -f query='
+        mutation($projectId:ID!, $itemId:ID!, $fieldId:ID!, $value:String!) {
+          updateProjectV2ItemFieldValue(input: {
+            projectId: $projectId,
+            itemId: $itemId,
+            fieldId: $fieldId,
+            value: {
+              text: $value
+            }
+          }) {
+            projectV2Item {
+              id
+            }
+          }
+        }' -f projectId=$PROJECT_ID -f itemId=$ITEM_ID -f fieldId=$COMMIT_FIELD_ID -f value="$LATEST_COMMIT"
+
+        echo "✅ Commit field updated with latest commit hash: $LATEST_COMMIT"

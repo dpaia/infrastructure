@@ -32,7 +32,7 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-        
+
       - name: Get latest commit
         id: get-commit
         uses: ./.github/actions/get-latest-commit
@@ -73,61 +73,22 @@ jobs:
   get-project-data:
     runs-on: ubuntu-latest
     outputs:
-      project_id: ${{ steps.fetch-project-data.outputs.project_id }}
-      commit_field_id: ${{ steps.fetch-project-data.outputs.commit_field_id }}
-      data_field_id: ${{ steps.fetch-project-data.outputs.data_field_id }}
-      status_field_id: ${{ steps.fetch-project-data.outputs.status_field_id }}
+      project_id: ${{ steps.get-project-data.outputs.project_id }}
+      commit_field_id: ${{ steps.get-project-data.outputs.commit_field_id }}
+      data_field_id: ${{ steps.get-project-data.outputs.data_field_id }}
+      status_field_id: ${{ steps.get-project-data.outputs.status_field_id }}
     steps:
-      - name: Fetch project and field IDs
-        id: fetch-project-data
-        env:
-          GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
-          PROJECT_NUMBER: 3
-          ORG_NAME: ${{ github.event.inputs.organization }}
-        run: |
-          gh auth status
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-          echo "Fetching project ID..."
-          project_id=$(gh api graphql -f query='
-          query($org:String!, $number:Int!) {
-            organization(login: $org) {
-              projectV2(number: $number) {
-                id
-              }
-            }
-          }' -f org="$ORG_NAME" -F number=$PROJECT_NUMBER --jq '.data.organization.projectV2.id')
-
-          echo "Project ID: $project_id"
-          echo "project_id=$project_id" >> $GITHUB_OUTPUT
-
-          echo "Fetching Field IDs..."
-          fields_query=$(gh api graphql -f query='
-          query($project:ID!) {
-            node(id: $project) {
-              ... on ProjectV2 {
-                fields(first: 100) {
-                  nodes {
-                    ... on ProjectV2FieldCommon {
-                      id
-                      name
-                    }
-                  }
-                }
-              }
-            }
-          }' -f project=$project_id)
-
-          commit_field_id=$(echo "$fields_query" | jq -r '.data.node.fields.nodes[] | select(.name == "Commit") | .id')
-          data_field_id=$(echo "$fields_query" | jq -r '.data.node.fields.nodes[] | select(.name == "Data") | .id')
-          status_field_id=$(echo "$fields_query" | jq -r '.data.node.fields.nodes[] | select(.name == "Status") | .id')
-
-          echo "Commit Field ID: $commit_field_id"
-          echo "Data Field ID: $data_field_id"
-          echo "Status Field ID: $status_field_id"
-
-          echo "commit_field_id=$commit_field_id" >> $GITHUB_OUTPUT
-          echo "data_field_id=$data_field_id" >> $GITHUB_OUTPUT
-          echo "status_field_id=$status_field_id" >> $GITHUB_OUTPUT
+      - name: Get project data
+        id: get-project-data
+        uses: ./.github/actions/get-project-data
+        with:
+          organization: ${{ github.event.inputs.organization }}
+          project_number: 3
+          github_token: ${{ secrets.PROJECT_TOKEN }}
+          fetch_status_field: 'true'
 
   add-to-project:
     needs: [get-issue-id, get-project-data]
@@ -167,7 +128,7 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-        
+
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
@@ -216,7 +177,7 @@ jobs:
           echo "data_value<<EOF" >> $GITHUB_OUTPUT
           .github/generator/${{ github.event.inputs.generator }}.py >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
-      
+
       - name: Check for errors
         id: check-error
         env:

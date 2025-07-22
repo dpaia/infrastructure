@@ -22,7 +22,26 @@ on:
         default: "none"
 
 jobs:
+  get-project-data:
+    runs-on: ubuntu-latest
+    outputs:
+      project_id: ${{ steps.get-project-data.outputs.project_id }}
+      commit_field_id: ${{ steps.get-project-data.outputs.commit_field_id }}
+      data_field_id: ${{ steps.get-project-data.outputs.data_field_id }}
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Get project data
+        id: get-project-data
+        uses: ./.github/actions/get-project-data
+        with:
+          organization: ${{ github.repository_owner }}
+          project_number: 3
+          github_token: ${{ secrets.PROJECT_TOKEN }}
+          fetch_status_field: 'false'
+
   find-issues:
+    needs: get-project-data
     runs-on: ubuntu-latest
     outputs:
       issue-matrix: ${{ steps.set-matrix.outputs.matrix }}
@@ -64,38 +83,98 @@ jobs:
           MATRIX_JSON=$(jq -c '.' issue_ids.json)
           echo "matrix=$MATRIX_JSON" >> $GITHUB_OUTPUT
 
-  process-issues:
-    needs: find-issues
+  get-data-field:
+    needs: [find-issues, get-project-data]
     runs-on: ubuntu-latest
     strategy:
       matrix:
         issue: ${{ fromJson(needs.find-issues.outputs.issue-matrix) }}
       fail-fast: false
     steps:
-      - name: Get issue data
+      - uses: actions/checkout@v4
+      
+      - name: Get Data field value
+        id: get-data-value
         env:
           GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
           ISSUE_ID: ${{ matrix.issue.issue_id }}
           REPO_NAME: ${{ matrix.issue.repo_name }}
           ORG_NAME: ${{ matrix.issue.org_name }}
+          PROJECT_ID: ${{ needs.get-project-data.outputs.project_id }}
+          DATA_FIELD_ID: ${{ needs.get-project-data.outputs.data_field_id }}
         run: |
-          mkdir -p ./issue_data
+          echo "Getting Data field value for issue #$ISSUE_ID from $ORG_NAME/$REPO_NAME"
           
-          # Get detailed data for this specific issue
-          gh api -X GET repos/$ORG_NAME/$REPO_NAME/issues/$ISSUE_ID |
-          jq -c '{id: .number, title: .title, repo: $REPO_NAME, org: $ORG_NAME}' --arg REPO_NAME "$REPO_NAME" --arg ORG_NAME "$ORG_NAME" > ./issue_data/issue_${ORG_NAME}_${REPO_NAME}_${ISSUE_ID}.json
+          # Get GitHub issue ID (GraphQL node ID)
+          ISSUE_NODE_ID=$(gh api graphql -f query='
+          query($repo:String!, $owner:String!, $number:Int!) {
+            repository(name: $repo, owner: $owner) {
+              issue(number: $number) {
+                id
+              }
+            }
+          }' -f repo="$REPO_NAME" -f owner="$ORG_NAME" -F number=$ISSUE_ID --jq '.data.repository.issue.id')
           
-          echo "Processed issue #$ISSUE_ID from $ORG_NAME/$REPO_NAME"
-      
-      - name: Upload individual issue data
+          echo "Issue Node ID: $ISSUE_NODE_ID"
+          
+          # Get project item for this issue
+          ITEM_QUERY=$(gh api graphql -f query='
+          query($project:ID!, $issue:ID!) {
+            node(id: $project) {
+              ... on ProjectV2 {
+                items(first: 100) {
+                  nodes {
+                    id
+                    content {
+                      ... on Issue {
+                        id
+                      }
+                    }
+                    fieldValues(first: 100) {
+                      nodes {
+                        ... on ProjectV2ItemFieldTextValue {
+                          field {
+                            ... on ProjectV2FieldCommon {
+                              id
+                              name
+                            }
+                          }
+                          text
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }' -f project=$PROJECT_ID -f issue=$ISSUE_NODE_ID)
+          
+          # Find the item for this issue and extract field values
+          ITEM_DATA=$(echo "$ITEM_QUERY" | jq -c '.data.node.items.nodes[] | select(.content.id == "'$ISSUE_NODE_ID'")')
+          
+          DATA_VALUE=""
+          if [ -n "$ITEM_DATA" ]; then
+            echo "Found project item for issue #$ISSUE_ID"
+            
+            # Extract Data field value (GIST URL)
+            DATA_VALUE=$(echo "$ITEM_DATA" | jq -r '.fieldValues.nodes[] | select(.field.id == "'$DATA_FIELD_ID'") | .text')
+            echo "Data field value: $DATA_VALUE"
+          else
+            echo "Issue #$ISSUE_ID not found in project"
+          fi
+          
+          # Create a JSON file with the issue info and data value
+          mkdir -p ./data_values
+          echo "{\"issue_id\": \"$ISSUE_ID\", \"repo_name\": \"$REPO_NAME\", \"org_name\": \"$ORG_NAME\", \"data_value\": \"$DATA_VALUE\"}" > ./data_values/${ORG_NAME}_${REPO_NAME}_${ISSUE_ID}.json
+
+      - name: Upload data value
         uses: actions/upload-artifact@v4
         with:
-          name: issue-${{ matrix.issue.org_name }}-${{ matrix.issue.repo_name }}-${{ matrix.issue.issue_id }}-data
-          path: ./issue_data/issue_${{ matrix.issue.org_name }}_${{ matrix.issue.repo_name }}_${{ matrix.issue.issue_id }}.json
+          name: data-value-${{ matrix.issue.org_name }}-${{ matrix.issue.repo_name }}-${{ matrix.issue.issue_id }}
+          path: ./data_values/${{ matrix.issue.org_name }}_${{ matrix.issue.repo_name }}_${{ matrix.issue.issue_id }}.json
           retention-days: 1
-
   aggregate-results:
-    needs: process-issues
+    needs: get-data-field
     runs-on: ubuntu-latest
     steps:
       - name: Download all issue data

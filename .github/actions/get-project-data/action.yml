@@ -1,0 +1,93 @@
+name: 'Get Project Data'
+description: 'Fetches GitHub Project V2 data and field IDs'
+author: 'JetBrains'
+
+inputs:
+  organization:
+    description: 'GitHub organization name'
+    required: true
+  project_number:
+    description: 'Project number'
+    required: true
+    default: '3'
+  github_token:
+    description: 'GitHub token for API access'
+    required: true
+  fetch_status_field:
+    description: 'Whether to fetch the Status field ID'
+    required: false
+    default: 'true'
+
+outputs:
+  project_id:
+    description: 'The ID of the GitHub Project'
+    value: ${{ steps.fetch-project-data.outputs.project_id }}
+  commit_field_id:
+    description: 'The ID of the Commit field in the project'
+    value: ${{ steps.fetch-project-data.outputs.commit_field_id }}
+  data_field_id:
+    description: 'The ID of the Data field in the project'
+    value: ${{ steps.fetch-project-data.outputs.data_field_id }}
+  status_field_id:
+    description: 'The ID of the Status field in the project (if fetch_status_field is true)'
+    value: ${{ steps.fetch-project-data.outputs.status_field_id }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Fetch project and field IDs
+      id: fetch-project-data
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github_token }}
+        ORG_NAME: ${{ inputs.organization }}
+        PROJECT_NUMBER: ${{ inputs.project_number }}
+        FETCH_STATUS: ${{ inputs.fetch_status_field }}
+      run: |
+        gh auth status
+
+        echo "Fetching project ID..."
+        project_id=$(gh api graphql -f query='
+        query($org:String!, $number:Int!) {
+          organization(login: $org) {
+            projectV2(number: $number) {
+              id
+            }
+          }
+        }' -f org="$ORG_NAME" -F number=$PROJECT_NUMBER --jq '.data.organization.projectV2.id')
+
+        echo "Project ID: $project_id"
+        echo "project_id=$project_id" >> $GITHUB_OUTPUT
+
+        echo "Fetching Field IDs..."
+        fields_query=$(gh api graphql -f query='
+        query($project:ID!) {
+          node(id: $project) {
+            ... on ProjectV2 {
+              fields(first: 100) {
+                nodes {
+                  ... on ProjectV2FieldCommon {
+                    id
+                    name
+                  }
+                }
+              }
+            }
+          }
+        }' -f project=$project_id)
+
+        commit_field_id=$(echo "$fields_query" | jq -r '.data.node.fields.nodes[] | select(.name == "Commit") | .id')
+        data_field_id=$(echo "$fields_query" | jq -r '.data.node.fields.nodes[] | select(.name == "Data") | .id')
+        
+        echo "Commit Field ID: $commit_field_id"
+        echo "Data Field ID: $data_field_id"
+        
+        echo "commit_field_id=$commit_field_id" >> $GITHUB_OUTPUT
+        echo "data_field_id=$data_field_id" >> $GITHUB_OUTPUT
+        
+        # Only fetch Status field if requested
+        if [ "$FETCH_STATUS" == "true" ]; then
+          status_field_id=$(echo "$fields_query" | jq -r '.data.node.fields.nodes[] | select(.name == "Status") | .id')
+          echo "Status Field ID: $status_field_id"
+          echo "status_field_id=$status_field_id" >> $GITHUB_OUTPUT
+        fi

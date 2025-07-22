@@ -181,12 +181,12 @@ jobs:
           dataset_repo: ${{ secrets.DATASET_REPO }}
           update_status: 'false'
 
-  filter-issues-with-data:
+  get-data-field:
     needs: [get-project-data, find-issues, update-outdated-data, update-issue-swe-data]
     if: always()
     runs-on: ubuntu-latest
     outputs:
-      filtered-matrix: ${{ steps.set-filtered-matrix.outputs.matrix }}
+      has_content: ${{ steps.check_data_links.outputs.has_content }}
     strategy:
       matrix:
         issue: ${{ fromJson(needs.find-issues.outputs.issue-matrix) }}
@@ -212,101 +212,10 @@ jobs:
           field_name: "Data"
           github_token: ${{ secrets.PROJECT_TOKEN }}
 
-      - name: Check for non-empty data field
-        id: check_data_field
-        env:
-          DATA_VALUE: ${{ steps.get-data-value.outputs.field_value }}
-        run: |
-          # Check if DATA_VALUE is null, empty, or doesn't exist
-          if [ -z "$DATA_VALUE" ] || [ "$DATA_VALUE" = "null" ]; then
-            echo "DATA_VALUE is empty or null"
-            echo "has_content=false" >> $GITHUB_OUTPUT
-          else
-            echo "DATA_VALUE has content"
-            echo "has_content=true" >> $GITHUB_OUTPUT
-            # Create a JSON file with issue details and data field value
-            # Escape the DATA_VALUE for JSON
-            ESCAPED_DATA_VALUE=$(echo "$DATA_VALUE" | jq -R -s '.')
-            echo "{
-              \"issue_id\": \"${{ matrix.issue.issue_id }}\",
-              \"repo_name\": \"${{ matrix.issue.repo_name }}\",
-              \"org_name\": \"${{ matrix.issue.org_name }}\",
-              \"data_value\": $ESCAPED_DATA_VALUE
-            }" > issue_with_data.json
-          fi
-
-      - name: Upload issue with data
-        if: steps.check_data_field.outputs.has_content == 'true'
-        uses: actions/upload-artifact@v4
-        with:
-          name: issue-with-data-${{ matrix.issue.org_name }}-${{ matrix.issue.repo_name }}-${{ matrix.issue.issue_id }}
-          path: issue_with_data.json
-          retention-days: 1
-
-  collect-filtered-issues:
-    needs: filter-issues-with-data
-    if: always()
-    runs-on: ubuntu-latest
-    outputs:
-      filtered-matrix: ${{ steps.set-filtered-matrix.outputs.matrix }}
-    steps:
-      - name: Download all issues with data
-        uses: actions/download-artifact@v4
-        with:
-          pattern: issue-with-data-*-*-*
-          path: ./issues_with_data
-          merge-multiple: true
-
-      - name: Install jq
-        run: sudo apt-get update && sudo apt-get -y install jq
-
-      - name: Combine filtered issues
-        id: set-filtered-matrix
-        run: |
-          mkdir -p ./issues_with_data
-          
-          # Find all JSON files recursively in the issues_with_data directory
-          echo "Searching for JSON files in ./issues_with_data directory..."
-          JSON_FILES=$(find ./issues_with_data -type f -name "*.json" 2>/dev/null | sort)
-          
-          if [ -z "$JSON_FILES" ]; then
-            echo "Warning: No JSON files found in ./issues_with_data directory"
-            echo "matrix=[]" >> $GITHUB_OUTPUT
-          else
-            echo "Found $(echo "$JSON_FILES" | wc -l) JSON files"
-            # Combine all individual JSON files into one JSON array
-            cat $JSON_FILES | jq -s '.' > filtered_issues.json
-            MATRIX_JSON=$(jq -c '.' filtered_issues.json)
-            echo "matrix=$MATRIX_JSON" >> $GITHUB_OUTPUT
-            echo "Filtered $(jq length filtered_issues.json) issues with non-empty data fields"
-          fi
-
-  get-data-field:
-    needs: [get-project-data, collect-filtered-issues]
-    if: always()
-    runs-on: ubuntu-latest
-    outputs:
-      has_content: ${{ steps.check_data_links.outputs.has_content }}
-    strategy:
-      matrix:
-        issue: ${{ fromJson(needs.collect-filtered-issues.outputs.filtered-matrix) }}
-      fail-fast: false
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Get GitHub issue ID
-        id: get-issue-node-id
-        uses: ./.github/actions/get-issue-node-id
-        with:
-          repository: ${{ matrix.issue.repo_name }}
-          organization: ${{ matrix.issue.org_name }}
-          issue_number: ${{ matrix.issue.issue_id }}
-          github_token: ${{ secrets.PROJECT_TOKEN }}
-
       - name: Check for links
         id: check_data_links
         env:
-          DATA_VALUE: ${{ matrix.issue.data_value }}
+          DATA_VALUE: ${{ steps.get-data-value.outputs.field_value }}
         run: |
           # Check if DATA_VALUE is null, empty, or doesn't exist
           if [ -z "$DATA_VALUE" ] || [ "$DATA_VALUE" = "null" ]; then
@@ -329,7 +238,7 @@ jobs:
         id: download-content
         uses: ./.github/actions/download-content
         with:
-          data_value: ${{ matrix.issue.data_value }}
+          data_value: ${{ steps.get-data-value.outputs.field_value }}
           org_name: ${{ matrix.issue.org_name }}
           repo_name: ${{ matrix.issue.repo_name }}
           issue_id: ${{ matrix.issue.issue_id }}

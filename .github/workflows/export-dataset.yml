@@ -90,26 +90,6 @@ jobs:
           MATRIX_JSON=$(jq -c '.' issue_ids.json)
           echo "matrix=$MATRIX_JSON" >> $GITHUB_OUTPUT
 
-  collect-exists-data:
-    needs: [find-issues]
-    if: inputs.update == 'none'
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        issue: ${{ fromJson(needs.find-issues.outputs.issue-matrix) }}
-      fail-fast: false
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Get GitHub issue ID
-        id: get-issue-node-id
-        uses: ./.github/actions/get-issue-node-id
-        with:
-          repository: ${{ matrix.issue.repo_name }}
-          organization: ${{ matrix.issue.org_name }}
-          issue_number: ${{ matrix.issue.issue_id }}
-          github_token: ${{ secrets.PROJECT_TOKEN }}
-
   update-outdated-data:
     needs: [find-issues, get-project-data]
     if: inputs.update == 'update'
@@ -202,7 +182,7 @@ jobs:
           update_status: 'false'
 
   filter-issues-with-data:
-    needs: [get-project-data, find-issues, collect-exists-data, update-outdated-data, update-issue-swe-data]
+    needs: [get-project-data, find-issues, update-outdated-data, update-issue-swe-data]
     if: always()
     runs-on: ubuntu-latest
     outputs:

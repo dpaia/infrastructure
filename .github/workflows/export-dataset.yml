@@ -83,110 +83,6 @@ jobs:
           MATRIX_JSON=$(jq -c '.' issue_ids.json)
           echo "matrix=$MATRIX_JSON" >> $GITHUB_OUTPUT
 
-  get-data-field:
-    needs: [get-project-data, find-issues, collect-exists-data, update-issue-swe-data]
-    if: always()
-    runs-on: ubuntu-latest
-    outputs:
-      has_content: ${{ steps.check_data_links.outputs.has_content }}
-    strategy:
-      matrix:
-        issue: ${{ fromJson(needs.find-issues.outputs.issue-matrix) }}
-      fail-fast: false
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Get GitHub issue ID
-        id: get-issue-node-id
-        uses: ./.github/actions/get-issue-node-id
-        with:
-          repository: ${{ matrix.issue.repo_name }}
-          organization: ${{ matrix.issue.org_name }}
-          issue_number: ${{ matrix.issue.issue_id }}
-          github_token: ${{ secrets.PROJECT_TOKEN }}
-
-      - name: Get Data field value
-        id: get-data-value
-        uses: ./.github/actions/get-project-field-value
-        with:
-          project_id: ${{ needs.get-project-data.outputs.project_id }}
-          issue_node_id: ${{ steps.get-issue-node-id.outputs.issue_node_id }}
-          field_name: "Data"
-          github_token: ${{ secrets.PROJECT_TOKEN }}
-          
-      - name: Check for links
-        id: check_data_links
-        env:
-          DATA_VALUE: ${{ steps.get-data-value.outputs.field_value }}
-        run: |
-          # Check if DATA_VALUE is null, empty, or doesn't exist
-          if [ -z "$DATA_VALUE" ] || [ "$DATA_VALUE" = "null" ]; then
-            echo "DATA_VALUE is empty or null, no links found"
-            echo "has_content=false" >> $GITHUB_OUTPUT
-          else
-            # Check if DATA_VALUE contains any links
-            LINKS=$(echo "$DATA_VALUE" | grep -o 'https://gist\.github\.com/[a-zA-Z0-9/]*')
-            if [ -n "$LINKS" ]; then
-              echo "Links found in DATA_VALUE"
-              echo "has_content=true" >> $GITHUB_OUTPUT
-            else
-              echo "No links found in DATA_VALUE"
-              echo "has_content=false" >> $GITHUB_OUTPUT
-            fi
-          fi
-          
-      - name: Download content
-        if: steps.check_data_links.outputs.has_content == 'true'
-        env:
-          ISSUE_ID: ${{ matrix.issue.issue_id }}
-          REPO_NAME: ${{ matrix.issue.repo_name }}
-          ORG_NAME: ${{ matrix.issue.org_name }}
-          DATA_VALUE: ${{ steps.get-data-value.outputs.field_value }}
-        run: |
-          # Install required tools
-          sudo apt-get update && sudo apt-get -y install curl
-          
-          # Extract links directly from DATA_VALUE
-          echo "DATA VALUE: $DATA_VALUE"
-          
-          if [ -n "$DATA_VALUE" ] && [ "$DATA_VALUE" != "null" ]; then
-            # Use the full DATA_VALUE as the gist URL if it's a valid gist URL
-            if [[ "$DATA_VALUE" == https://gist.github.com/* ]]; then
-              GIST_URL="$DATA_VALUE"
-              echo "Found gist URL: $GIST_URL"
-              
-              # Convert to raw content URL
-              # Format: https://gist.githubusercontent.com/username/gistid/raw
-              # Extract the path part after github.com
-              GIST_PATH=${GIST_URL#*github.com}
-              # Construct the raw URL directly
-              RAW_URL="https://gist.githubusercontent.com${GIST_PATH}/raw"
-              
-              echo "Raw content URL: $RAW_URL"
-              
-              # Fetch the raw content
-              mkdir -p ./_content
-              curl -s "$RAW_URL" > "./_content/${ORG_NAME}_${REPO_NAME}_${ISSUE_ID}.json"
-              
-              # Upload content as artifact immediately
-              echo "content_processed=true" >> $GITHUB_OUTPUT
-            else
-              echo "No valid gist URL found in DATA_VALUE"
-              echo "content_processed=false" >> $GITHUB_OUTPUT
-            fi
-          else
-            echo "No valid URL found for issue #$ISSUE_ID"
-            echo "content_processed=false" >> $GITHUB_OUTPUT
-          fi
-          
-      - name: Upload processed content
-        if: steps.check_data_links.outputs.has_content == 'true'
-        uses: actions/upload-artifact@v4
-        with:
-          name: data-${{ matrix.issue.org_name }}-${{ matrix.issue.repo_name }}-${{ matrix.issue.issue_id }}
-          path: ./_content/${{ matrix.issue.org_name }}_${{ matrix.issue.repo_name }}_${{ matrix.issue.issue_id }}.json
-          retention-days: 1
-
   collect-exists-data:
     needs: [find-issues]
     if: inputs.update == 'none'
@@ -336,15 +232,83 @@ jobs:
           gist_token: ${{ secrets.GIST_TOKEN }}
           update_status: 'false'
 
+  get-data-field:
+    needs: [get-project-data, find-issues, collect-exists-data, update-issue-swe-data]
+    if: always()
+    runs-on: ubuntu-latest
+    outputs:
+      has_content: ${{ steps.check_data_links.outputs.has_content }}
+    strategy:
+      matrix:
+        issue: ${{ fromJson(needs.find-issues.outputs.issue-matrix) }}
+      fail-fast: false
+    steps:
+      - uses: actions/checkout@v4
 
-  # The fetch-gist-data job has been integrated directly into the get-data-field job
-  # to ensure immediate processing of gist URLs when they are found
+      - name: Get GitHub issue ID
+        id: get-issue-node-id
+        uses: ./.github/actions/get-issue-node-id
+        with:
+          repository: ${{ matrix.issue.repo_name }}
+          organization: ${{ matrix.issue.org_name }}
+          issue_number: ${{ matrix.issue.issue_id }}
+          github_token: ${{ secrets.PROJECT_TOKEN }}
+
+      - name: Get Data field value
+        id: get-data-value
+        uses: ./.github/actions/get-project-field-value
+        with:
+          project_id: ${{ needs.get-project-data.outputs.project_id }}
+          issue_node_id: ${{ steps.get-issue-node-id.outputs.issue_node_id }}
+          field_name: "Data"
+          github_token: ${{ secrets.PROJECT_TOKEN }}
+
+      - name: Check for links
+        id: check_data_links
+        env:
+          DATA_VALUE: ${{ steps.get-data-value.outputs.field_value }}
+        run: |
+          # Check if DATA_VALUE is null, empty, or doesn't exist
+          if [ -z "$DATA_VALUE" ] || [ "$DATA_VALUE" = "null" ]; then
+            echo "DATA_VALUE is empty or null, no links found"
+            echo "has_content=false" >> $GITHUB_OUTPUT
+          else
+            # Check if DATA_VALUE contains any links
+            LINKS=$(echo "$DATA_VALUE" | grep -o 'https://gist\.github\.com/[a-zA-Z0-9/]*')
+            if [ -n "$LINKS" ]; then
+              echo "Links found in DATA_VALUE"
+              echo "has_content=true" >> $GITHUB_OUTPUT
+            else
+              echo "No links found in DATA_VALUE"
+              echo "has_content=false" >> $GITHUB_OUTPUT
+            fi
+          fi
+
+      - name: Download content
+        if: steps.check_data_links.outputs.has_content == 'true'
+        id: download-content
+        uses: ./.github/actions/download-gist-content
+        with:
+          data_value: ${{ steps.get-data-value.outputs.field_value }}
+          org_name: ${{ matrix.issue.org_name }}
+          repo_name: ${{ matrix.issue.repo_name }}
+          issue_id: ${{ matrix.issue.issue_id }}
+
+      - name: Upload processed content
+        if: steps.check_data_links.outputs.has_content == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: data-${{ matrix.issue.org_name }}-${{ matrix.issue.repo_name }}-${{ matrix.issue.issue_id }}
+          path: ./_content/${{ matrix.issue.org_name }}_${{ matrix.issue.repo_name }}_${{ matrix.issue.issue_id }}.json
+          retention-days: 1
+
 
   aggregate-results:
     needs: get-data-field
+    if: always()
     runs-on: ubuntu-latest
     steps:
-      - name: Download all GIST content
+      - name: Download all content
         uses: actions/download-artifact@v4
         with:
           pattern: data-*-*-*
@@ -360,10 +324,11 @@ jobs:
         run: |
           # Create directory for output file if it doesn't exist
           mkdir -p $(dirname "$OUT")
-          
-          # Find all JSON files recursively in the all_gists directory
+          mkdir -p ./_content
+
+          # Find all JSON files recursively in the _content directory
           echo "Searching for JSON files in ./_content directory..."
-          JSON_FILES=$(find ./_content -type f -name "*.json" | sort)
+          JSON_FILES=$(find ./_content -type f -name "*.json" 2>/dev/null | sort)
           
           if [ -z "$JSON_FILES" ]; then
             echo "Warning: No JSON files found in ./_content directory"

@@ -1,0 +1,70 @@
+name: 'Download Gist Content'
+description: 'Downloads content from a GitHub Gist URL'
+author: 'JetBrains'
+
+inputs:
+  data_value:
+    description: 'The value containing the Gist URL'
+    required: true
+  org_name:
+    description: 'The organization name'
+    required: true
+  repo_name:
+    description: 'The repository name'
+    required: true
+  issue_id:
+    description: 'The issue ID'
+    required: true
+
+outputs:
+  content_processed:
+    description: 'Whether the content was successfully processed'
+    value: ${{ steps.download-content.outputs.content_processed }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Download content
+      id: download-content
+      shell: bash
+      env:
+        DATA_VALUE: ${{ inputs.data_value }}
+        ORG_NAME: ${{ inputs.org_name }}
+        REPO_NAME: ${{ inputs.repo_name }}
+        ISSUE_ID: ${{ inputs.issue_id }}
+      run: |
+        # Install required tools
+        sudo apt-get update && sudo apt-get -y install curl
+        
+        # Extract links directly from DATA_VALUE
+        echo "DATA VALUE: $DATA_VALUE"
+        
+        if [ -n "$DATA_VALUE" ] && [ "$DATA_VALUE" != "null" ]; then
+          # Use the full DATA_VALUE as the gist URL if it's a valid gist URL
+          if [[ "$DATA_VALUE" == https://gist.github.com/* ]]; then
+            GIST_URL="$DATA_VALUE"
+            echo "Found gist URL: $GIST_URL"
+        
+            # Convert to raw content URL
+            # Format: https://gist.githubusercontent.com/username/gistid/raw
+            # Extract the path part after github.com
+            GIST_PATH=${GIST_URL#*github.com}
+            # Construct the raw URL directly
+            RAW_URL="https://gist.githubusercontent.com${GIST_PATH}/raw"
+        
+            echo "Raw content URL: $RAW_URL"
+        
+            # Fetch the raw content
+            mkdir -p ./_content
+            curl -s "$RAW_URL" > "./_content/${ORG_NAME}_${REPO_NAME}_${ISSUE_ID}.json"
+        
+            # Set output
+            echo "content_processed=true" >> $GITHUB_OUTPUT
+          else
+            echo "No valid gist URL found in DATA_VALUE"
+            echo "content_processed=false" >> $GITHUB_OUTPUT
+          fi
+        else
+          echo "No valid URL found for issue #$ISSUE_ID"
+          echo "content_processed=false" >> $GITHUB_OUTPUT
+        fi

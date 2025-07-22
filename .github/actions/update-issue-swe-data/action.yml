@@ -22,6 +22,9 @@ inputs:
   gist_token:
     description: 'GitHub token for gist operations'
     required: true
+  dataset_repo:
+    description: 'Repository for storing dataset files'
+    required: true
   update_status:
     description: 'Whether to update the Status field in the project'
     required: false
@@ -29,7 +32,7 @@ inputs:
 
 outputs:
   gist_url:
-    description: 'The URL of the created or updated gist'
+    description: 'The URL of the created or updated file in the repository'
     value: ${{ steps.create-update-gist.outputs.gist_url }}
   has_error:
     description: 'Whether there was an error during the process'
@@ -140,7 +143,7 @@ runs:
           echo "has_error=false" >> $GITHUB_OUTPUT
         fi
 
-    - name: Create or update gist
+    - name: Create or update repository file
       id: create-update-gist
       if: steps.check-error.outputs.has_error != 'true'
       shell: bash
@@ -148,51 +151,73 @@ runs:
         GH_TOKEN: ${{ inputs.gist_token }}
         DATA_VALUE: ${{ steps.generate-data.outputs.data_value }}
         ISSUE_ID: ${{ inputs.issue_id }}
+        REPOSITORY: ${{ inputs.repository }}
+        DATASET_REPO: ${{ inputs.dataset_repo }}
+        ORGANIZATION: ${{ inputs.organization }}
+        FAIL_TO_PASS: ${{ steps.extract-fields.outputs.fail_to_pass }}
+        PASS_TO_PASS: ${{ steps.extract-fields.outputs.pass_to_pass }}
       run: |
-        echo "Creating or updating gist with JSON data..."
+        echo "Creating or updating repository file with JSON data..."
         
         # Extract instance_id from the JSON data
         INSTANCE_ID=$(echo "$DATA_VALUE" | jq -r '.instance_id')
         
         # Create a temporary file with the JSON data
-        GIST_FILENAME="${INSTANCE_ID}.json"
+        FILE_PATH="${REPOSITORY}/${INSTANCE_ID}.json"
         
         # Replace slashes with underscores for the local filename to avoid directory issues
-        LOCAL_FILENAME="${GIST_FILENAME//\//__}"
+        LOCAL_FILENAME="${FILE_PATH//\//__}"
         echo "$DATA_VALUE" > "$LOCAL_FILENAME"
         
-        echo "Creating or updating secret gist with filename: $GIST_FILENAME"
+        # Create a temporary directory for the repository
+        TEMP_DIR=$(mktemp -d)
+        cd "$TEMP_DIR"
         
-        # Check if gist already exists for this issue
-        echo "Running command: gh gist list --filter \"$GIST_FILENAME\""
-        EXISTING_GISTS=$(gh gist list --filter "$GIST_FILENAME" || true)
+        # Clone the repository
+        echo "Cloning repository: $DATASET_REPO"
+        git clone "https://x-access-token:${GH_TOKEN}@github.com/${ORGANIZATION}/${DATASET_REPO}.git" .
         
-        if [ -n "$EXISTING_GISTS" ]; then
-          # Extract gist ID from the list
-          GIST_ID=$(echo "$EXISTING_GISTS" | awk '{print $1}')
-          echo "Found existing gist with ID: $GIST_ID, updating it..."
-          
-          # Update the existing gist
-          GIST_RESULT=$(gh gist edit "$GIST_ID" -f "$GIST_FILENAME" "$LOCAL_FILENAME")
-          
-          # Get the owner of the GIST_TOKEN
-          GIST_OWNER=$(gh api user --jq '.login')
-          
-          # Construct the URL in the required format
-          GIST_URL="https://gist.github.com/$GIST_OWNER/$GIST_ID"
-        else
-          echo "No existing gist found, creating a new one..."
-          
-          # Create a new secret gist
-          GIST_RESULT=$(gh gist create "$LOCAL_FILENAME" --filename="$GIST_FILENAME")
-          GIST_URL=$(echo "$GIST_RESULT" | grep -o 'https://gist.github.com/[^ ]*')
-        fi
+        # Create directory structure if it doesn't exist
+        mkdir -p "$(dirname "$FILE_PATH")"
         
-        echo "Gist URL: $GIST_URL"
-        echo "gist_url=$GIST_URL" >> $GITHUB_OUTPUT
+        # Copy the file to the repository
+        cp "$GITHUB_WORKSPACE/$LOCAL_FILENAME" "$FILE_PATH"
         
-        # Clean up temporary file
+        # Get the issue title and body for the commit message
+        echo "Fetching issue details..."
+        ISSUE_DETAILS=$(gh api repos/${ORGANIZATION}/${REPOSITORY}/issues/${ISSUE_ID})
+        ISSUE_TITLE=$(echo "$ISSUE_DETAILS" | jq -r '.title')
+        ISSUE_BODY=$(echo "$ISSUE_DETAILS" | jq -r '.body')
+        
+        # Format the commit message
+        COMMIT_MESSAGE="${ISSUE_TITLE} #${ISSUE_ID}
+
+${ISSUE_BODY}
+
+FAIL_TO_PASS: ${FAIL_TO_PASS}
+PASS_TO_PASS: ${PASS_TO_PASS}"
+        
+        # Add, commit, and push the changes
+        git add "$FILE_PATH"
+        git config --global user.email "action@github.com"
+        git config --global user.name "GitHub Action"
+        git commit -m "$COMMIT_MESSAGE"
+        git push
+        
+        # Get the URL to the file in the repository
+        REPO_PARTS=(${DATASET_REPO//\// })
+        REPO_OWNER=${REPO_PARTS[0]}
+        REPO_NAME=${REPO_PARTS[1]}
+        BRANCH=$(git rev-parse --abbrev-ref HEAD)
+        FILE_URL="https://github.com/${DATASET_REPO}/blob/${BRANCH}/${FILE_PATH}"
+        
+        echo "File URL: $FILE_URL"
+        echo "gist_url=$FILE_URL" >> $GITHUB_OUTPUT
+        
+        # Clean up temporary files and directory
+        cd "$GITHUB_WORKSPACE"
         rm "$LOCAL_FILENAME"
+        rm -rf "$TEMP_DIR"
 
     - name: Update Data field
       shell: bash

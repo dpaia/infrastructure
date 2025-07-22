@@ -149,7 +149,7 @@ jobs:
         profile: ${{ fromJson(needs.sync-labels-setup.outputs.profiles) }}
         repository: ${{ fromJson(needs.search-repositories.outputs.repositories_json) }}
       fail-fast: false
-    name: sync-labels-${{ matrix.profile }}
+    name: sync-labels-${{ matrix.repository }}-${{ matrix.profile }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

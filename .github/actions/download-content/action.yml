@@ -1,5 +1,5 @@
 name: 'Download Content'
-description: 'Downloads content from a GitHub URL (supports both GitHub repository files and Gists)'
+description: 'Downloads content from a GitHub URL'
 author: 'JetBrains'
 
 inputs:
@@ -32,49 +32,43 @@ runs:
         ORG_NAME: ${{ inputs.org_name }}
         REPO_NAME: ${{ inputs.repo_name }}
         ISSUE_ID: ${{ inputs.issue_id }}
-      run: |
-        # Install required tools
-        sudo apt-get update && sudo apt-get -y install curl
-        
+      run: |              
         # Extract links directly from DATA_VALUE
         echo "DATA VALUE: $DATA_VALUE"
         
-        if [ -n "$DATA_VALUE" ] && [ "$DATA_VALUE" != "null" ]; then
-          # Use the full DATA_VALUE as the gist URL if it's a valid gist URL
-          if [[ "$DATA_VALUE" == https://gist.github.com/* ]]; then
-            GIST_URL="$DATA_VALUE"
-            echo "Found gist URL: $GIST_URL"
-        
-            # Convert to raw content URL
-            # Format: https://gist.githubusercontent.com/username/gistid/raw
-            # Extract the path part after github.com
-            GIST_PATH=${GIST_URL#*github.com}
-            # Construct the raw URL directly
-            RAW_URL="https://gist.githubusercontent.com${GIST_PATH}/raw"
-        
-            echo "Raw content URL: $RAW_URL"
-        
-            # Fetch the raw content
-            mkdir -p ./_content
-            curl -s "$RAW_URL" > "./_content/${ORG_NAME}_${REPO_NAME}_${ISSUE_ID}.json"
-        
-            # Set output
-            echo "content_processed=true" >> $GITHUB_OUTPUT
-          # Handle GitHub repository URLs (e.g., https://github.com/org/repo/blob/branch/path/to/file)
-          elif [[ "$DATA_VALUE" == https://github.com/*/blob/* ]]; then
+        if [ -n "$DATA_VALUE" ] && [ "$DATA_VALUE" != "null" ]; then          
+          if [[ "$DATA_VALUE" == https://github.com/*/blob/* ]]; then
             GITHUB_URL="$DATA_VALUE"
             echo "Found GitHub repository URL: $GITHUB_URL"
-        
-            # Convert to raw content URL
-            # Format: https://raw.githubusercontent.com/org/repo/branch/path/to/file
-            # Replace 'github.com' with 'raw.githubusercontent.com' and replace '/blob/' with '/refs/heads/'
-            RAW_URL=$(echo "$GITHUB_URL" | sed 's/github.com/raw.githubusercontent.com/g' | sed 's/\/blob\//\/refs\/heads\//g')
-        
-            echo "Raw content URL: $RAW_URL"
-        
-            # Fetch the raw content
+            
+            # Parse GitHub URL to extract owner, repo, branch, and path
+            # Format: https://github.com/{owner}/{repo}/blob/{branch}/{path}
+            URL_PATH=${GITHUB_URL#https://github.com/}
+            OWNER=$(echo $URL_PATH | cut -d'/' -f1)
+            REPO=$(echo $URL_PATH | cut -d'/' -f2)
+            BRANCH=$(echo $URL_PATH | cut -d'/' -f4)
+            FILE_PATH=$(echo $URL_PATH | cut -d'/' -f5-)
+            
+            echo "Owner: $OWNER"
+            echo "Repo: $REPO"
+            echo "Branch: $BRANCH"
+            echo "File path: $FILE_PATH"
+            
+            # Create directory for content
             mkdir -p ./_content
-            curl -s "$RAW_URL" > "./_content/${ORG_NAME}_${REPO_NAME}_${ISSUE_ID}.json"
+            
+            # Use GitHub API to fetch file content
+            echo "Fetching file content using GitHub API..."
+            if ! gh api repos/$OWNER/$REPO/contents/$FILE_PATH?ref=$BRANCH \
+              --jq '.content' 2>/dev/null | base64 -d > "./_content/${ORG_NAME}_${REPO_NAME}_${ISSUE_ID}.json"; then
+              echo "Error: Failed to fetch file content from GitHub API"
+              echo "This could be due to:"
+              echo "- The file does not exist at the specified path"
+              echo "- The repository is private and requires authentication"
+              echo "- GitHub API rate limits"
+              echo "content_processed=false" >> $GITHUB_OUTPUT
+              exit 1
+            fi
         
             # Set output
             echo "content_processed=true" >> $GITHUB_OUTPUT

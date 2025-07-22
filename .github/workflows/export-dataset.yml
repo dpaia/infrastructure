@@ -147,30 +147,20 @@ jobs:
           sudo apt-get update && sudo apt-get -y install jq curl
           
           # Extract GIST links directly from DATA_VALUE
-          GIST_LINKS=$(echo "$DATA_VALUE" | grep -o 'https://gist\.github\.com/[a-zA-Z0-9/]*')
+          GIST_LINKS=$(echo "$DATA_VALUE" | grep -o 'https://gist\.github\.com/[a-zA-Z0-9/]/[a-zA-Z0-9/]*')
           
           # Get the first GIST URL from the extracted links
           GIST_URL=$(echo "$GIST_LINKS" | head -n 1)
           echo "GIST URL: $GIST_URL"
           
           if [ -n "$GIST_URL" ] && [ "$GIST_URL" != "null" ]; then
-            # Extract GIST ID from URL
-            GIST_ID=$(echo "$GIST_URL" | sed -E 's|.*/([a-f0-9]+)$|\1|')
-            
-            if [ -n "$GIST_ID" ]; then
-              echo "Fetching GIST content for ID: $GIST_ID"
-              
-              # Fetch the raw GIST content
-              mkdir -p ./gist_content
-              RAW_URL="https://gist.githubusercontent.com/raw/$GIST_ID"
-              curl -s "$RAW_URL" > "./gist_content/${ORG_NAME}_${REPO_NAME}_${ISSUE_ID}.json"
-              
-              # Upload GIST content as artifact immediately
-              echo "gist_processed=true" >> $GITHUB_OUTPUT
-            else
-              echo "Could not extract GIST ID from URL: $GIST_URL"
-              echo "gist_processed=false" >> $GITHUB_OUTPUT
-            fi
+            # Fetch the raw GIST content
+            mkdir -p ./gist_content
+            RAW_URL="https://gist.githubusercontent.com/raw/$GIST_ID"
+            curl -s "$RAW_URL" > "./gist_content/${ORG_NAME}_${REPO_NAME}_${ISSUE_ID}.json"
+          
+            # Upload GIST content as artifact immediately
+            echo "gist_processed=true" >> $GITHUB_OUTPUT
           else
             echo "No valid GIST URL found for issue #$ISSUE_ID"
             echo "gist_processed=false" >> $GITHUB_OUTPUT

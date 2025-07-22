@@ -18,18 +18,12 @@ on:
         default: ''
 
 jobs:
-  sync-labels:
+  search-repositories:
     runs-on: ubuntu-latest
+    outputs:
+      repositories: ${{ steps.get-repos.outputs.repos }}
     steps:
       - uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-
-      - name: Install github-label-sync
-        run: npm install -g github-label-sync
 
       - name: Fetch repositories by topics
         if: ${{ github.event.inputs.repositories == '' }}
@@ -104,11 +98,9 @@ jobs:
           echo "Found repositories (total): $UNIQUE_REPOS"
           echo "repos=$UNIQUE_REPOS" >> $GITHUB_OUTPUT
 
-      - name: Sync labels (add / update only)
-        env:
-          GITHUB_TOKEN: ${{ secrets.PAT_LABEL_SYNC }}
+      - name: Get final repository list
+        id: get-repos
         run: |
-          # Use provided repositories if available, otherwise use repositories fetched by topics
           if [ -n "${{ github.event.inputs.repositories }}" ]; then
             REPOS="${{ github.event.inputs.repositories }}"
           else
@@ -117,25 +109,60 @@ jobs:
           
           if [ -z "$REPOS" ]; then
             echo "No repositories found. Exiting."
-            exit 0
+            echo "repos=" >> $GITHUB_OUTPUT
+          else
+            echo "repos=$REPOS" >> $GITHUB_OUTPUT
           fi
-          
-          # Split profiles by comma
-          IFS=',' read -ra PROFILE_ARRAY <<< "${{ github.event.inputs.profiles }}"
-          
-          # Split repositories by comma
-          IFS=',' read -ra REPO_ARRAY <<< "$REPOS"
-          
-          for REPO in "${REPO_ARRAY[@]}"; do
-            echo "➡️  Syncing labels to jetbrains-eval-lab/$REPO"
-            
-            # Process each profile
-            for PROFILE in "${PROFILE_ARRAY[@]}"; do
-              echo "  🏷️  Applying labels from profile: $PROFILE"
-              github-label-sync \
-                --access-token "$GITHUB_TOKEN" \
-                --labels ".github/labels/${PROFILE}.json" \
-                --allow-added-labels \
-                "jetbrains-eval-lab/$REPO"
-            done
-          done
+
+  # Dynamic jobs for each profile
+  sync-labels-setup:
+    needs: search-repositories
+    if: ${{ needs.search-repositories.outputs.repositories != '' }}
+    runs-on: ubuntu-latest
+    outputs:
+      profiles: ${{ steps.get-profiles.outputs.profiles_json }}
+    steps:
+      - name: Get profiles
+        id: get-profiles
+        run: |
+          # Convert comma-separated list to JSON array
+          PROFILES="${{ github.event.inputs.profiles }}"
+          # Replace commas with double-quotes,"," and double-quotes
+          PROFILES_JSON="[\"$(echo $PROFILES | sed 's/,/\",\"/g')\"]"
+          echo "profiles_json=$PROFILES_JSON" >> $GITHUB_OUTPUT
+          echo "Profiles to process: $PROFILES"
+          echo "Profiles JSON: $PROFILES_JSON"
+
+  # This is a template job that will be created for each profile
+  sync-labels-profile:
+    needs: [search-repositories, sync-labels-setup]
+    if: ${{ needs.search-repositories.outputs.repositories != '' }}
+    strategy:
+      matrix:
+        profile: ${{ fromJson(needs.sync-labels-setup.outputs.profiles) }}
+        repository: ${{ fromJson(format('[{0}]', needs.search-repositories.outputs.repositories)) }}
+      fail-fast: false
+    name: sync-labels-${{ matrix.profile }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install github-label-sync
+        run: npm install -g github-label-sync
+
+      - name: Sync labels for ${{ matrix.repository }} using profile ${{ matrix.profile }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.PAT_LABEL_SYNC }}
+        run: |
+          echo "➡️  Syncing labels to jetbrains-eval-lab/${{ matrix.repository }} using profile ${{ matrix.profile }}"
+          echo "  🏷️  Applying labels from profile: ${{ matrix.profile }}"
+          github-label-sync \
+            --access-token "$GITHUB_TOKEN" \
+            --labels ".github/labels/${{ matrix.profile }}.json" \
+            --allow-added-labels \
+            "jetbrains-eval-lab/${{ matrix.repository }}"

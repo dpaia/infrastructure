@@ -150,15 +150,17 @@ jobs:
           echo "DATA VALUE: $DATA_VALUE"
           
           if [ -n "$DATA_VALUE" ] && [ "$DATA_VALUE" != "null" ]; then
-            # Extract the gist URL
-            GIST_URL=$(echo "$DATA_VALUE" | grep -o 'https://gist\.github\.com/[a-zA-Z0-9/]*')
-            
-            if [ -n "$GIST_URL" ]; then
+            # Use the full DATA_VALUE as the gist URL if it's a valid gist URL
+            if [[ "$DATA_VALUE" == https://gist.github.com/* ]]; then
+              GIST_URL="$DATA_VALUE"
               echo "Found gist URL: $GIST_URL"
               
               # Convert to raw content URL
               # Format: https://gist.githubusercontent.com/username/gistid/raw
-              RAW_URL=$(echo "$GIST_URL" | sed 's|https://gist.github.com/|https://gist.githubusercontent.com/|')/raw
+              # Extract the path part after github.com
+              GIST_PATH=${GIST_URL#*github.com}
+              # Construct the raw URL directly
+              RAW_URL="https://gist.githubusercontent.com${GIST_PATH}/raw"
               
               echo "Raw content URL: $RAW_URL"
               

@@ -381,7 +381,16 @@ jobs:
             if [ $COMMAND_EXIT_CODE -eq 0 ]; then
               echo "DEBUG: Command succeeded, extracting URL..."
               GIST_URL=$(echo "$FULL_OUTPUT" | grep -o 'https://gist.github.com/[^ ]*')
-              echo "DEBUG: Extracted URL: $GIST_URL"
+              
+              # Check if URL was found in the output
+              if [ -z "$GIST_URL" ]; then
+                echo "DEBUG: No URL found in command output, constructing URL from GIST ID..."
+                # Construct the URL using the GIST ID
+                GIST_URL="https://gist.github.com/$GIST_ID"
+                echo "DEBUG: Constructed URL: $GIST_URL"
+              else
+                echo "DEBUG: Extracted URL: $GIST_URL"
+              fi
             else
               echo "ERROR: Failed to update gist. Exit code: $COMMAND_EXIT_CODE"
               echo "ERROR: Full error output: $FULL_OUTPUT"

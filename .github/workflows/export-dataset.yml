@@ -36,7 +36,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
           ORG:  ${{ github.repository_owner }}
-          QRAW: ${{ inputs.search_query }}
+          QRAW: is:issue ${{ inputs.search_query }}
         shell: bash
         run: |
           ME="${{ github.actor }}"

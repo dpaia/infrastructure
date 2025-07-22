@@ -209,7 +209,9 @@ runs:
         git config --global user.name "GitHub Action"
         echo "Using commit message from Python script"
         git commit -m "$COMMIT_MESSAGE"
-        git push
+        git fetch origin main
+        git rebase origin/main
+        git push origin main
         
         # Get the URL to the file in the repository
         REPO_PARTS=(${DATASET_REPO//\// })

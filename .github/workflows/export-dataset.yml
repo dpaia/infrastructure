@@ -120,7 +120,15 @@ jobs:
         run: |
           # Create a JSON file with the issue info and data value
           mkdir -p ./data_values
-          echo "{\"issue_id\": \"$ISSUE_ID\", \"repo_name\": \"$REPO_NAME\", \"org_name\": \"$ORG_NAME\", \"data_value\": \"$DATA_VALUE\"}" > ./data_values/${ORG_NAME}_${REPO_NAME}_${ISSUE_ID}.json
+          
+          # Check if DATA_VALUE is null, empty, or doesn't exist and set it to empty string if needed
+          if [ -z "$DATA_VALUE" ] || [ "$DATA_VALUE" = "null" ]; then
+            FINAL_VALUE=""
+          else
+            FINAL_VALUE="$DATA_VALUE"
+          fi
+          
+          echo "{\"issue_id\": \"$ISSUE_ID\", \"repo_name\": \"$REPO_NAME\", \"org_name\": \"$ORG_NAME\", \"data_value\": \"$FINAL_VALUE\"}" > ./data_values/${ORG_NAME}_${REPO_NAME}_${ISSUE_ID}.json
 
       - name: Upload data value
         uses: actions/upload-artifact@v4
@@ -130,50 +138,22 @@ jobs:
           retention-days: 1
 
   collect-exists-data:
-    needs: find-issues
+    needs: [find-issues]
     if: inputs.update == 'none'
     runs-on: ubuntu-latest
     strategy:
       matrix:
         issue: ${{ fromJson(needs.find-issues.outputs.issue-matrix) }}
       fail-fast: false
-    steps:
-      - uses: actions/checkout@v4
-      
-      - name: Collect exists SWE Data
-        id: update-java-data
-        uses: ./.github/actions/update-issue-swe-data
-        with:
-          generator: 'java'
-          organization: ${{ matrix.issue.org_name }}
-          repository: ${{ matrix.issue.repo_name }}
-          issue_id: ${{ matrix.issue.issue_id }}
-          github_token: ${{ secrets.PROJECT_TOKEN }}
-          gist_token: ${{ secrets.GIST_TOKEN }}
-          update_status: ${{ inputs.update == 'force-update' }}
 
   update-data:
-    needs: find-issues
+    needs: [find-issues]
     if: inputs.update == 'update'
     runs-on: ubuntu-latest
     strategy:
       matrix:
         issue: ${{ fromJson(needs.find-issues.outputs.issue-matrix) }}
       fail-fast: false
-    steps:
-      - uses: actions/checkout@v4
-      
-      - name: Update SWE Data
-        id: update-python-data
-        uses: ./.github/actions/update-issue-swe-data
-        with:
-          generator: 'python'
-          organization: ${{ matrix.issue.org_name }}
-          repository: ${{ matrix.issue.repo_name }}
-          issue_id: ${{ matrix.issue.issue_id }}
-          github_token: ${{ secrets.PROJECT_TOKEN }}
-          gist_token: ${{ secrets.GIST_TOKEN }}
-          update_status: ${{ inputs.update == 'force-update' }}
 
   force-update-data:
     needs: find-issues
@@ -183,28 +163,14 @@ jobs:
       matrix:
         issue: ${{ fromJson(needs.find-issues.outputs.issue-matrix) }}
       fail-fast: false
-    steps:
-      - uses: actions/checkout@v4
-      
-      - name: Force update SWE Data
-        id: update-kotlin-data
-        uses: ./.github/actions/update-issue-swe-data
-        with:
-          generator: 'kotlin'
-          organization: ${{ matrix.issue.org_name }}
-          repository: ${{ matrix.issue.repo_name }}
-          issue_id: ${{ matrix.issue.issue_id }}
-          github_token: ${{ secrets.PROJECT_TOKEN }}
-          gist_token: ${{ secrets.GIST_TOKEN }}
-          update_status: ${{ inputs.update == 'force-update' }}
 
 
   fetch-gist-data:
-    needs: [get-data-field]
+    needs: [get-data-field, find-issues]
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        issue: ${{ fromJson(needs.has-data-field.outputs.eligible-issues) }}
+        issue: ${{ fromJson(needs.find-issues.outputs.issue-matrix) }}
       fail-fast: false
     steps:
       - name: Download data value artifact
@@ -228,7 +194,7 @@ jobs:
             GIST_URL=$(jq -r '.data_value' "$DATA_FILE")
             echo "GIST URL: $GIST_URL"
             
-            if [ -n "$GIST_URL" ] && [ "$GIST_URL" != "null" ]; then
+            if [ -n "$GIST_URL" ]; then
               # Extract GIST ID from URL
               GIST_ID=$(echo "$GIST_URL" | sed -E 's|.*/([a-f0-9]+)$|\1|')
               

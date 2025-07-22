@@ -68,7 +68,7 @@ jobs:
         run: |
           ME="${{ github.actor }}"
           QFIXED=$(echo "$QRAW" | sed "s/@me/$ME/g")
-          QUERY="(project:$ORG/2 OR project:$ORG/3) is:issue $QFIXED"
+          QUERY="project:$ORG/2 is:issue $QFIXED"
 
           echo "🔎 GitHub search query: $QUERY"
 

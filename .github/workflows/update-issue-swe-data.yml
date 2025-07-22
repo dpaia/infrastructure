@@ -318,8 +318,6 @@ jobs:
           # Check if gist already exists for this issue
           echo "Running command: gh gist list --filter \"$GIST_FILENAME\""
           EXISTING_GISTS=$(gh gist list --filter "$GIST_FILENAME" || true)
-          echo "Result of gh gist list command:"
-          echo "$EXISTING_GISTS"
           
           if [ -n "$EXISTING_GISTS" ]; then
             # Extract gist ID from the list
@@ -328,12 +326,9 @@ jobs:
             
             # Update the existing gist
             GIST_RESULT=$(gh gist edit "$GIST_ID" -f "$GIST_FILENAME" "$LOCAL_FILENAME")
-            echo "Result of gh gist edit command:"
-            echo "$GIST_RESULT"
             
             # Get the owner of the GIST_TOKEN
             GIST_OWNER=$(gh api user --jq '.login')
-            echo "GIST_TOKEN owner: $GIST_OWNER"
             
             # Construct the URL in the required format
             GIST_URL="https://gist.github.com/$GIST_OWNER/$GIST_ID"
@@ -342,8 +337,6 @@ jobs:
             
             # Create a new secret gist
             GIST_RESULT=$(gh gist create "$LOCAL_FILENAME" --filename="$GIST_FILENAME")
-            echo "Result of gh gist create command:"
-            echo "$GIST_RESULT"
             GIST_URL=$(echo "$GIST_RESULT" | grep -o 'https://gist.github.com/[^ ]*')
           fi
           

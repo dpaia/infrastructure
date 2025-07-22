@@ -147,6 +147,7 @@ jobs:
           sudo apt-get update && sudo apt-get -y install jq curl
           
           # Extract GIST links directly from DATA_VALUE
+          echo "DATA VALUE: $DATA_VALUE"
           GIST_LINKS=$(echo "$DATA_VALUE" | grep -o 'https://gist\.github\.com/[a-zA-Z0-9/]/[a-zA-Z0-9/]*')
           
           # Get the first GIST URL from the extracted links

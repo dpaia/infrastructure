@@ -84,7 +84,7 @@ jobs:
           echo "matrix=$MATRIX_JSON" >> $GITHUB_OUTPUT
 
   get-data-field:
-    needs: [get-project-data, find-issues, collect-exists-data, update-data, check-commit, update-issue-swe-data]
+    needs: [get-project-data, find-issues, collect-exists-data, update-data, force-update-data]
     if: always()
     runs-on: ubuntu-latest
     strategy:
@@ -148,6 +148,17 @@ jobs:
       matrix:
         issue: ${{ fromJson(needs.find-issues.outputs.issue-matrix) }}
       fail-fast: false
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Get GitHub issue ID
+        id: get-issue-node-id
+        uses: ./.github/actions/get-issue-node-id
+        with:
+          repository: ${{ matrix.issue.repo_name }}
+          organization: ${{ matrix.issue.org_name }}
+          issue_number: ${{ matrix.issue.issue_id }}
+          github_token: ${{ secrets.PROJECT_TOKEN }}
 
   update-data:
     needs: [find-issues]
@@ -157,20 +168,9 @@ jobs:
       matrix:
         issue: ${{ fromJson(needs.find-issues.outputs.issue-matrix) }}
       fail-fast: false
-
-  check-commit:
-    needs: [get-project-data, find-issues, update-data]
-    if: inputs.update == 'update'
-    runs-on: ubuntu-latest
-    outputs:
-      commits-match: ${{ steps.check-all-commits.outputs.all_match }}
-    strategy:
-      matrix:
-        issue: ${{ fromJson(needs.find-issues.outputs.issue-matrix) }}
-      fail-fast: false
     steps:
       - uses: actions/checkout@v4
-      
+
       - name: Get GitHub issue ID
         id: get-issue-node-id
         uses: ./.github/actions/get-issue-node-id
@@ -179,7 +179,7 @@ jobs:
           organization: ${{ matrix.issue.org_name }}
           issue_number: ${{ matrix.issue.issue_id }}
           github_token: ${{ secrets.PROJECT_TOKEN }}
-      
+
       - name: Get Commit field value
         id: get-commit-value
         uses: ./.github/actions/get-project-field-value
@@ -188,7 +188,7 @@ jobs:
           issue_node_id: ${{ steps.get-issue-node-id.outputs.issue_node_id }}
           field_name: "Commit"
           github_token: ${{ secrets.PROJECT_TOKEN }}
-      
+
       - name: Get latest commit
         id: get-latest-commit
         uses: ./.github/actions/get-latest-commit
@@ -197,7 +197,7 @@ jobs:
           repository: ${{ matrix.issue.repo_name }}
           issue_id: ${{ matrix.issue.issue_id }}
           github_token: ${{ secrets.PROJECT_TOKEN }}
-      
+
       - name: Compare commits
         id: compare-commits
         env:
@@ -206,7 +206,7 @@ jobs:
         run: |
           echo "Commit field value: $COMMIT_FIELD_VALUE"
           echo "Latest commit: $LATEST_COMMIT"
-          
+
           if [ -z "$COMMIT_FIELD_VALUE" ] || [ "$COMMIT_FIELD_VALUE" = "null" ] || [ "$COMMIT_FIELD_VALUE" != "$LATEST_COMMIT" ]; then
             echo "Commits don't match or Commit field is empty"
             echo "match=false" >> $GITHUB_OUTPUT
@@ -214,7 +214,7 @@ jobs:
             echo "Commits match"
             echo "match=true" >> $GITHUB_OUTPUT
           fi
-      
+
       - name: Check all commits
         id: check-all-commits
         if: always()
@@ -223,7 +223,22 @@ jobs:
             echo "all_match=false" >> $GITHUB_OUTPUT
           else
             echo "all_match=true" >> $GITHUB_OUTPUT
-          fi
+          fi  
+          
+          steps:
+      - uses: actions/checkout@v4
+
+      - name: Update Issue SWE Data
+        if: needs.check-commit.outputs.commits-match == 'false'
+        uses: ./.github/actions/update-issue-swe-data
+        with:
+          generator: 'java'
+          organization: ${{ matrix.issue.org_name }}
+          repository: ${{ matrix.issue.repo_name }}
+          issue_id: ${{ matrix.issue.issue_id }}
+          github_token: ${{ secrets.PROJECT_TOKEN }}
+          gist_token: ${{ secrets.GIST_TOKEN }}
+          update_status: 'false'
 
   force-update-data:
     needs: find-issues
@@ -233,20 +248,9 @@ jobs:
       matrix:
         issue: ${{ fromJson(needs.find-issues.outputs.issue-matrix) }}
       fail-fast: false
-
-  update-issue-swe-data:
-    needs: [find-issues, force-update-data, check-commit]
-    if: |
-      inputs.update == 'force-update' || 
-      (inputs.update == 'update' && needs.check-commit.outputs.commits-match == 'false')
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        issue: ${{ fromJson(needs.find-issues.outputs.issue-matrix) }}
-      fail-fast: false
     steps:
       - uses: actions/checkout@v4
-      
+
       - name: Update Issue SWE Data
         uses: ./.github/actions/update-issue-swe-data
         with:

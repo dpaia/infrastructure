@@ -148,6 +148,7 @@ runs:
         ISSUE_ID: ${{ inputs.issue_id }}
         REPOSITORY: ${{ inputs.repository }}
         ORGANIZATION: ${{ inputs.organization }}
+        LATEST_COMMIT: ${{ steps.get-latest-commit.outputs.commit_hash }}
         FAIL_TO_PASS: ${{ steps.extract-fields.outputs.fail_to_pass }}
         PASS_TO_PASS: ${{ steps.extract-fields.outputs.pass_to_pass }}
       run: |

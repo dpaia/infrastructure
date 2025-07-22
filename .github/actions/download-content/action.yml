@@ -67,8 +67,8 @@ runs:
         
             # Convert to raw content URL
             # Format: https://raw.githubusercontent.com/org/repo/branch/path/to/file
-            # Replace 'github.com' with 'raw.githubusercontent.com' and remove '/blob/'
-            RAW_URL=$(echo "$GITHUB_URL" | sed 's/github.com/raw.githubusercontent.com/g' | sed 's/\/blob\//\//g')
+            # Replace 'github.com' with 'raw.githubusercontent.com' and replace '/blob/' with '/refs/heads/'
+            RAW_URL=$(echo "$GITHUB_URL" | sed 's/github.com/raw.githubusercontent.com/g' | sed 's/\/blob\//\/refs\/heads\//g')
         
             echo "Raw content URL: $RAW_URL"
         

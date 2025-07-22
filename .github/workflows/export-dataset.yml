@@ -84,12 +84,12 @@ jobs:
           echo "matrix=$MATRIX_JSON" >> $GITHUB_OUTPUT
 
   get-data-field:
-    needs: [get-project-data, find-issues, collect-exists-data, update-data, update-issue-swe-data]
+    needs: [get-project-data, find-issues, collect-exists-data, update-data, check-commit, update-issue-swe-data]
     if: |
       always() && 
       (
         (inputs.update == 'none' && (needs.collect-exists-data.result == 'success' || needs.collect-exists-data.result == 'skipped')) || 
-        (inputs.update == 'update' && (needs.update-data.result == 'success' || needs.update-data.result == 'skipped')) || 
+        (inputs.update == 'update' && (needs.check-commit.result == 'success' || needs.check-commit.result == 'skipped') && (needs.check-commit.outputs.commits-match == 'true' || (needs.update-issue-swe-data.result == 'success' || needs.update-issue-swe-data.result == 'skipped'))) || 
         (inputs.update == 'force-update' && (needs.update-issue-swe-data.result == 'success' || needs.update-issue-swe-data.result == 'skipped'))
       )
     runs-on: ubuntu-latest
@@ -164,6 +164,73 @@ jobs:
         issue: ${{ fromJson(needs.find-issues.outputs.issue-matrix) }}
       fail-fast: false
 
+  check-commit:
+    needs: [get-project-data, find-issues, update-data]
+    if: inputs.update == 'update'
+    runs-on: ubuntu-latest
+    outputs:
+      commits-match: ${{ steps.check-all-commits.outputs.all_match }}
+    strategy:
+      matrix:
+        issue: ${{ fromJson(needs.find-issues.outputs.issue-matrix) }}
+      fail-fast: false
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Get GitHub issue ID
+        id: get-issue-node-id
+        uses: ./.github/actions/get-issue-node-id
+        with:
+          repository: ${{ matrix.issue.repo_name }}
+          organization: ${{ matrix.issue.org_name }}
+          issue_number: ${{ matrix.issue.issue_id }}
+          github_token: ${{ secrets.PROJECT_TOKEN }}
+      
+      - name: Get Commit field value
+        id: get-commit-value
+        uses: ./.github/actions/get-project-field-value
+        with:
+          project_id: ${{ needs.get-project-data.outputs.project_id }}
+          issue_node_id: ${{ steps.get-issue-node-id.outputs.issue_node_id }}
+          field_name: "Commit"
+          github_token: ${{ secrets.PROJECT_TOKEN }}
+      
+      - name: Get latest commit
+        id: get-latest-commit
+        uses: ./.github/actions/get-latest-commit
+        with:
+          organization: ${{ matrix.issue.org_name }}
+          repository: ${{ matrix.issue.repo_name }}
+          issue_id: ${{ matrix.issue.issue_id }}
+          github_token: ${{ secrets.PROJECT_TOKEN }}
+      
+      - name: Compare commits
+        id: compare-commits
+        env:
+          COMMIT_FIELD_VALUE: ${{ steps.get-commit-value.outputs.field_value }}
+          LATEST_COMMIT: ${{ steps.get-latest-commit.outputs.commit_hash }}
+        run: |
+          echo "Commit field value: $COMMIT_FIELD_VALUE"
+          echo "Latest commit: $LATEST_COMMIT"
+          
+          if [ -z "$COMMIT_FIELD_VALUE" ] || [ "$COMMIT_FIELD_VALUE" = "null" ] || [ "$COMMIT_FIELD_VALUE" != "$LATEST_COMMIT" ]; then
+            echo "Commits don't match or Commit field is empty"
+            echo "match=false" >> $GITHUB_OUTPUT
+          else
+            echo "Commits match"
+            echo "match=true" >> $GITHUB_OUTPUT
+          fi
+      
+      - name: Check all commits
+        id: check-all-commits
+        if: always()
+        run: |
+          if [ "${{ steps.compare-commits.outputs.match }}" == "false" ]; then
+            echo "all_match=false" >> $GITHUB_OUTPUT
+          else
+            echo "all_match=true" >> $GITHUB_OUTPUT
+          fi
+
   force-update-data:
     needs: find-issues
     if: inputs.update == 'force-update'
@@ -174,8 +241,10 @@ jobs:
       fail-fast: false
 
   update-issue-swe-data:
-    needs: force-update-data
-    if: inputs.update == 'force-update'
+    needs: [find-issues, force-update-data, check-commit]
+    if: |
+      inputs.update == 'force-update' || 
+      (inputs.update == 'update' && needs.check-commit.outputs.commits-match == 'false')
     runs-on: ubuntu-latest
     strategy:
       matrix:

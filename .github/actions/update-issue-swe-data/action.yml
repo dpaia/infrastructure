@@ -103,13 +103,8 @@ runs:
         GH_TOKEN: ${{ inputs.github_token }}
       run: |
         chmod +x .github/generator/utils/extract_test_fields.py
-        echo "Running extract_test_fields.py and logging output..."
-        echo "=== extract_test_fields.py output start ==="
-        .github/generator/utils/extract_test_fields.py | tee /tmp/extract_output.log
-        echo "=== extract_test_fields.py output end ==="
-        echo "data_value<<EOF" >> $GITHUB_OUTPUT
+        # Run the script and let it output directly to GITHUB_OUTPUT
         .github/generator/utils/extract_test_fields.py >> $GITHUB_OUTPUT
-        echo "EOF" >> $GITHUB_OUTPUT
 
     - name: Generate data
       id: generate-data

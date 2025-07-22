@@ -1,5 +1,5 @@
 name: 'Download Content'
-description: 'Downloads content from a GitHub URL'
+description: 'Downloads content from a GitHub URL (supports authentication for private repositories)'
 author: 'JetBrains'
 
 inputs:
@@ -15,6 +15,10 @@ inputs:
   issue_id:
     description: 'The issue ID'
     required: true
+  github_token:
+    description: 'GitHub token for authentication with private repositories'
+    required: false
+    default: ''
 
 outputs:
   content_processed:
@@ -32,6 +36,7 @@ runs:
         ORG_NAME: ${{ inputs.org_name }}
         REPO_NAME: ${{ inputs.repo_name }}
         ISSUE_ID: ${{ inputs.issue_id }}
+        GITHUB_TOKEN: ${{ inputs.github_token }}
       run: |              
         # Extract links directly from DATA_VALUE
         echo "DATA VALUE: $DATA_VALUE"
@@ -64,8 +69,9 @@ runs:
               echo "Error: Failed to fetch file content from GitHub API"
               echo "This could be due to:"
               echo "- The file does not exist at the specified path"
-              echo "- The repository is private and requires authentication"
+              echo "- The repository is private and requires authentication (use github_token input parameter)"
               echo "- GitHub API rate limits"
+              echo "- Insufficient permissions for the provided token"
               echo "content_processed=false" >> $GITHUB_OUTPUT
               exit 1
             fi

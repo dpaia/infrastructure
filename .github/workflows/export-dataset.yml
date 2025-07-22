@@ -262,6 +262,7 @@ jobs:
           org_name: ${{ matrix.issue.org_name }}
           repo_name: ${{ matrix.issue.repo_name }}
           issue_id: ${{ matrix.issue.issue_id }}
+          github_token: ${{ secrets.PROJECT_TOKEN }}
 
       - name: Upload processed content
         if: steps.check_data_links.outputs.has_content == 'true'

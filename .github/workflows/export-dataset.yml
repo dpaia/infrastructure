@@ -1,9 +1,16 @@
 name: Export SWE Dataset
-run-name: "Export SWE Dataset: ${{ inputs.search_query }} -> ${{ inputs.output_file }}"
+run-name: "${{inputs.generator}} Export SWE Dataset: ${{ inputs.search_query }} -> ${{ inputs.output_file }}"
 
 on:
   workflow_dispatch:
     inputs:
+      generator:
+        description: 'Profile'
+        required: true
+        default: 'java'
+        type: choice
+        options:
+          - java
       search_query:
         description: >
           GitHub issue search
@@ -224,7 +231,7 @@ jobs:
         if: inputs.update == 'force-update' || (inputs.update == 'update' && steps.check-update.outputs.match == 'true')
         uses: ./.github/actions/update-issue-swe-data
         with:
-          generator: 'java'
+          generator: ${{inputs.generator}}
           organization: ${{ matrix.issue.org_name }}
           repository: ${{ matrix.issue.repo_name }}
           issue_id: ${{ matrix.issue.issue_id }}
@@ -344,5 +351,5 @@ jobs:
       - name: Upload final artifact
         uses: actions/upload-artifact@v4
         with:
-          name: project-tasks
+          name: ${{ inputs.output_file }}
           path: ${{ inputs.output_file }}

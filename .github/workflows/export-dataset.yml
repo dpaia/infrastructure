@@ -87,6 +87,8 @@ jobs:
     needs: [get-project-data, find-issues, collect-exists-data, update-issue-swe-data]
     if: always()
     runs-on: ubuntu-latest
+    outputs:
+      has_gist: ${{ steps.check_gist_links.outputs.has_gist }}
     strategy:
       matrix:
         issue: ${{ fromJson(needs.find-issues.outputs.issue-matrix) }}
@@ -111,33 +113,75 @@ jobs:
           issue_node_id: ${{ steps.get-issue-node-id.outputs.issue_node_id }}
           field_name: "Data"
           github_token: ${{ secrets.PROJECT_TOKEN }}
-
-      - name: Create data value file
-        id: create_data_file
+          
+      - name: Check for GIST links
+        id: check_gist_links
+        env:
+          DATA_VALUE: ${{ steps.get-data-value.outputs.field_value }}
+        run: |
+          # Check if DATA_VALUE is null, empty, or doesn't exist
+          if [ -z "$DATA_VALUE" ] || [ "$DATA_VALUE" = "null" ]; then
+            echo "DATA_VALUE is empty or null, no GIST links found"
+            echo "has_gist=false" >> $GITHUB_OUTPUT
+          else
+            # Check if DATA_VALUE contains any GIST links
+            GIST_LINKS=$(echo "$DATA_VALUE" | grep -o 'https://gist\.github\.com/[a-zA-Z0-9/]*')
+            if [ -n "$GIST_LINKS" ]; then
+              echo "GIST links found in DATA_VALUE"
+              echo "has_gist=true" >> $GITHUB_OUTPUT
+            else
+              echo "No GIST links found in DATA_VALUE"
+              echo "has_gist=false" >> $GITHUB_OUTPUT
+            fi
+          fi
+          
+      - name: Process gist data immediately
+        if: steps.check_gist_links.outputs.has_gist == 'true'
         env:
           ISSUE_ID: ${{ matrix.issue.issue_id }}
           REPO_NAME: ${{ matrix.issue.repo_name }}
           ORG_NAME: ${{ matrix.issue.org_name }}
           DATA_VALUE: ${{ steps.get-data-value.outputs.field_value }}
         run: |
-          # Create a JSON file with the issue info and data value only if DATA_VALUE is not empty
-          mkdir -p ./data_values
+          # Install required tools
+          sudo apt-get update && sudo apt-get -y install jq curl
           
-          # Check if DATA_VALUE is null, empty, or doesn't exist
-          if [ -z "$DATA_VALUE" ] || [ "$DATA_VALUE" = "null" ]; then
-            echo "DATA_VALUE is empty or null, skipping file creation"
-            echo "file_created=false" >> $GITHUB_OUTPUT
+          # Extract GIST links directly from DATA_VALUE
+          GIST_LINKS=$(echo "$DATA_VALUE" | grep -o 'https://gist\.github\.com/[a-zA-Z0-9/]*')
+          
+          # Get the first GIST URL from the extracted links
+          GIST_URL=$(echo "$GIST_LINKS" | head -n 1)
+          echo "GIST URL: $GIST_URL"
+          
+          if [ -n "$GIST_URL" ] && [ "$GIST_URL" != "null" ]; then
+            # Extract GIST ID from URL
+            GIST_ID=$(echo "$GIST_URL" | sed -E 's|.*/([a-f0-9]+)$|\1|')
+            
+            if [ -n "$GIST_ID" ]; then
+              echo "Fetching GIST content for ID: $GIST_ID"
+              
+              # Fetch the raw GIST content
+              mkdir -p ./gist_content
+              RAW_URL="https://gist.githubusercontent.com/raw/$GIST_ID"
+              curl -s "$RAW_URL" > "./gist_content/${ORG_NAME}_${REPO_NAME}_${ISSUE_ID}.json"
+              
+              # Upload GIST content as artifact immediately
+              echo "gist_processed=true" >> $GITHUB_OUTPUT
+            else
+              echo "Could not extract GIST ID from URL: $GIST_URL"
+              echo "gist_processed=false" >> $GITHUB_OUTPUT
+            fi
           else
-            echo "{\"issue_id\": \"$ISSUE_ID\", \"repo_name\": \"$REPO_NAME\", \"org_name\": \"$ORG_NAME\", \"data_value\": \"$DATA_VALUE\"}" > ./data_values/${ORG_NAME}_${REPO_NAME}_${ISSUE_ID}.json
-            echo "file_created=true" >> $GITHUB_OUTPUT
+            echo "No valid GIST URL found for issue #$ISSUE_ID"
+            echo "gist_processed=false" >> $GITHUB_OUTPUT
           fi
-
-      - name: Upload data value
-        if: steps.create_data_file.outputs.file_created == 'true'
+          
+      - name: Upload processed gist content
+        if: steps.check_gist_links.outputs.has_gist == 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: data-value-${{ matrix.issue.org_name }}-${{ matrix.issue.repo_name }}-${{ matrix.issue.issue_id }}
-          path: ./data_values/${{ matrix.issue.org_name }}_${{ matrix.issue.repo_name }}_${{ matrix.issue.issue_id }}.json
+          name: gist-content-${{ matrix.issue.org_name }}-${{ matrix.issue.repo_name }}-${{ matrix.issue.issue_id }}
+          path: ./gist_content/${{ matrix.issue.org_name }}_${{ matrix.issue.repo_name }}_${{ matrix.issue.issue_id }}.json
           retention-days: 1
 
   collect-exists-data:
@@ -290,73 +334,11 @@ jobs:
           update_status: 'false'
 
 
-  fetch-gist-data:
-    needs: [get-data-field]
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        issue: ${{ fromJson(needs.find-issues.outputs.issue-matrix) }}
-      fail-fast: false
-    steps:
-      - name: Download data value artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: data-value-${{ matrix.issue.org_name }}-${{ matrix.issue.repo_name }}-${{ matrix.issue.issue_id }}
-          path: ./data_values
-
-      - name: Install jq and curl
-        run: sudo apt-get update && sudo apt-get -y install jq curl
-
-      - name: Fetch GIST JSON content
-        env:
-          ISSUE_ID: ${{ matrix.issue.issue_id }}
-          REPO_NAME: ${{ matrix.issue.repo_name }}
-          ORG_NAME: ${{ matrix.issue.org_name }}
-        run: |
-          # Extract GIST URL from the data value file
-          DATA_FILE="./data_values/${ORG_NAME}_${REPO_NAME}_${ISSUE_ID}.json"
-          if [ -f "$DATA_FILE" ]; then
-            GIST_URL=$(jq -r '.data_value' "$DATA_FILE")
-            echo "GIST URL: $GIST_URL"
-            
-            if [ -n "$GIST_URL" ]; then
-              # Extract GIST ID from URL
-              GIST_ID=$(echo "$GIST_URL" | sed -E 's|.*/([a-f0-9]+)$|\1|')
-              
-              if [ -n "$GIST_ID" ]; then
-                echo "Fetching GIST content for ID: $GIST_ID"
-                
-                # Fetch the raw GIST content
-                mkdir -p ./gist_content
-                RAW_URL="https://gist.githubusercontent.com/raw/$GIST_ID"
-                curl -s "$RAW_URL" > "./gist_content/${ORG_NAME}_${REPO_NAME}_${ISSUE_ID}_gist.json"
-                
-                # Create a combined JSON with issue info and GIST content
-                GIST_CONTENT=$(cat "./gist_content/${ORG_NAME}_${REPO_NAME}_${ISSUE_ID}_gist.json")
-                echo "{\"issue_id\": \"$ISSUE_ID\", \"repo_name\": \"$REPO_NAME\", \"org_name\": \"$ORG_NAME\", \"gist_url\": \"$GIST_URL\", \"gist_content\": $GIST_CONTENT}" > "./gist_content/${ORG_NAME}_${REPO_NAME}_${ISSUE_ID}_combined.json"
-              else
-                echo "Could not extract GIST ID from URL: $GIST_URL"
-                echo "{\"issue_id\": \"$ISSUE_ID\", \"repo_name\": \"$REPO_NAME\", \"org_name\": \"$ORG_NAME\", \"gist_url\": \"$GIST_URL\", \"error\": \"Could not extract GIST ID\"}" > "./gist_content/${ORG_NAME}_${REPO_NAME}_${ISSUE_ID}_combined.json"
-              fi
-            else
-              echo "No valid GIST URL found for issue #$ISSUE_ID"
-              echo "{\"issue_id\": \"$ISSUE_ID\", \"repo_name\": \"$REPO_NAME\", \"org_name\": \"$ORG_NAME\", \"error\": \"No valid GIST URL found\"}" > "./gist_content/${ORG_NAME}_${REPO_NAME}_${ISSUE_ID}_combined.json"
-            fi
-          else
-            echo "Data file not found for issue #$ISSUE_ID"
-            mkdir -p ./gist_content
-            echo "{\"issue_id\": \"$ISSUE_ID\", \"repo_name\": \"$REPO_NAME\", \"org_name\": \"$ORG_NAME\", \"error\": \"Data file not found\"}" > "./gist_content/${ORG_NAME}_${REPO_NAME}_${ISSUE_ID}_combined.json"
-          fi
-
-      - name: Upload GIST content
-        uses: actions/upload-artifact@v4
-        with:
-          name: gist-content-${{ matrix.issue.org_name }}-${{ matrix.issue.repo_name }}-${{ matrix.issue.issue_id }}
-          path: ./gist_content/${{ matrix.issue.org_name }}_${{ matrix.issue.repo_name }}_${{ matrix.issue.issue_id }}_combined.json
-          retention-days: 1
+  # The fetch-gist-data job has been integrated directly into the get-data-field job
+  # to ensure immediate processing of gist URLs when they are found
 
   aggregate-results:
-    needs: fetch-gist-data
+    needs: get-data-field
     runs-on: ubuntu-latest
     steps:
       - name: Download all GIST content

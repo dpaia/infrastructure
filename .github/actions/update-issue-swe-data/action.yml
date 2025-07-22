@@ -140,6 +140,30 @@ runs:
           echo "has_error=false" >> $GITHUB_OUTPUT
         fi
 
+    - name: Generate commit message
+      id: generate-commit-message
+      if: steps.check-error.outputs.has_error != 'true'
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github_token }}
+        ISSUE_ID: ${{ inputs.issue_id }}
+        REPOSITORY: ${{ inputs.repository }}
+        ORGANIZATION: ${{ inputs.organization }}
+        FAIL_TO_PASS: ${{ steps.extract-fields.outputs.fail_to_pass }}
+        PASS_TO_PASS: ${{ steps.extract-fields.outputs.pass_to_pass }}
+      run: |
+        echo "Generating commit message using Python script..."
+
+        # Make the script executable
+        chmod +x .github/generator/utils/generate_commit_message.py
+
+        # Generate the commit message using Python script
+        echo "commit_message<<COMMIT_MESSAGE_DELIM" >> $GITHUB_OUTPUT
+        .github/generator/utils/generate_commit_message.py >> $GITHUB_OUTPUT
+        echo "COMMIT_MESSAGE_DELIM" >> $GITHUB_OUTPUT
+
+        echo "✅ Commit message generated successfully!"
+
     - name: Create or update repository file
       id: create-update-gist
       if: steps.check-error.outputs.has_error != 'true'
@@ -151,53 +175,39 @@ runs:
         REPOSITORY: ${{ inputs.repository }}
         DATASET_REPO: ${{ inputs.dataset_repo }}
         ORGANIZATION: ${{ inputs.organization }}
-        FAIL_TO_PASS: ${{ steps.extract-fields.outputs.fail_to_pass }}
-        PASS_TO_PASS: ${{ steps.extract-fields.outputs.pass_to_pass }}
+        COMMIT_MESSAGE: ${{ steps.generate-commit-message.outputs.commit_message }}
       run: |
         echo "Creating or updating repository file with JSON data..."
-        
+
         # Extract instance_id from the JSON data
         INSTANCE_ID=$(echo "$DATA_VALUE" | jq -r '.instance_id')
-        
+
         # Create a temporary file with the JSON data
         FILE_PATH="${REPOSITORY}/${INSTANCE_ID}.json"
-        
+
         # Replace slashes with underscores for the local filename to avoid directory issues
         LOCAL_FILENAME="${FILE_PATH//\//__}"
         echo "$DATA_VALUE" > "$LOCAL_FILENAME"
-        
+
         # Create a temporary directory for the repository
         TEMP_DIR=$(mktemp -d)
         cd "$TEMP_DIR"
-        
+
         # Clone the repository
         echo "Cloning repository: $DATASET_REPO"
         git clone "https://x-access-token:${GH_TOKEN}@github.com/${ORGANIZATION}/${DATASET_REPO}.git" .
-        
+
         # Create directory structure if it doesn't exist
         mkdir -p "$(dirname "$FILE_PATH")"
-        
+
         # Copy the file to the repository
         cp "$GITHUB_WORKSPACE/$LOCAL_FILENAME" "$FILE_PATH"
-        
-        # Get the issue title and body for the commit message
-        echo "Fetching issue details..."
-        ISSUE_DETAILS=$(gh api repos/${ORGANIZATION}/${REPOSITORY}/issues/${ISSUE_ID})
-        ISSUE_TITLE=$(echo "$ISSUE_DETAILS" | jq -r '.title')
-        ISSUE_BODY=$(echo "$ISSUE_DETAILS" | jq -r '.body')
-        
-        # Format the commit message
-        COMMIT_MESSAGE="${ISSUE_TITLE} #${ISSUE_ID}
-
-  ${ISSUE_BODY}
-
-FAIL_TO_PASS: ${FAIL_TO_PASS}
-PASS_TO_PASS: ${PASS_TO_PASS}"
         
         # Add, commit, and push the changes
         git add "$FILE_PATH"
         git config --global user.email "action@github.com"
         git config --global user.name "GitHub Action"
+        echo "Using commit message from Python script"
         git commit -m "$COMMIT_MESSAGE"
         git push
         

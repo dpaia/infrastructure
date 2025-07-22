@@ -18,19 +18,34 @@ if not current_time.endswith('+0000'):
 
 
 # Function to detect the build system in a project
-def detect_build_system(organization, repository):
+def detect_build_system(organization, repository, commit=None):
+    """
+    Detects the build system used in a project by searching for build files.
+    
+    Args:
+        organization (str): The GitHub organization name
+        repository (str): The GitHub repository name
+        commit (str, optional): The commit hash to check. If None, checks the current state.
+    
+    Returns:
+        str: A string indicating the detected build system:
+            - "maven" if Maven is detected (pom.xml exists)
+            - "gradle-kotlin" if Gradle with Kotlin DSL is detected (build.gradle.kts exists)
+            - "gradle" if Gradle with Groovy DSL is detected (build.gradle exists)
+            - "" (empty string) if no build system is detected
+    """
     # Use GitHub API to find build files
     try:
         # Find all pom.xml files
-        maven_files = _find_files_with_github_api(organization, repository, "pom.xml")
+        maven_files = _find_files_with_github_api(organization, repository, "pom.xml", commit)
         if maven_files:
             return "maven"
         
         # Find all build.gradle files
-        gradle_groovy_files = _find_files_with_github_api(organization, repository, "build.gradle")
+        gradle_groovy_files = _find_files_with_github_api(organization, repository, "build.gradle", commit)
         
         # Find all build.gradle.kts files
-        gradle_kotlin_files = _find_files_with_github_api(organization, repository, "build.gradle.kts")
+        gradle_kotlin_files = _find_files_with_github_api(organization, repository, "build.gradle.kts", commit)
         
         # If Gradle is detected, determine the type
         if gradle_groovy_files or gradle_kotlin_files:
@@ -44,13 +59,33 @@ def detect_build_system(organization, repository):
         return ""
     except Exception as e:
         print(f"Error using GitHub API to detect build system: {e}", file=sys.stderr)
-        # Fall back to local detection
+        # Return empty string when GitHub API fails
         return ""
 
-def _find_files_with_github_api(organization, repository, filename):
+def _find_files_with_github_api(organization, repository, filename, commit=None):
+    """
+    Uses GitHub API to find files with a specific name in the repository at a specific commit.
+    
+    Args:
+        organization (str): The GitHub organization name
+        repository (str): The GitHub repository name
+        filename (str): The filename to search for
+        commit (str, optional): The commit hash to check. If None, checks the current state.
+        
+    Returns:
+        list: A list of paths to the found files
+    """
+    # Base query
+    query = f'filename:{filename}+repo:{organization}/{repository}'
+    
+    # Add commit reference if provided
+    if commit:
+        # For specific commit, we need to use the ref parameter
+        query += f'+ref:{commit}'
+    
     cmd = [
         'gh', 'api',
-        f'search/code?q=filename:{filename}+repo:{organization}/{repository}',
+        f'search/code?q={query}',
         '--jq', '.items[].path'
     ]
     
@@ -70,8 +105,11 @@ try:
     # Generate source and test patches
     source_patch, test_patch = generate_patches(organization, repository, issue_number, is_test_file)
     
-    # Detect build system
-    build_system = detect_build_system(organization, repository)
+    # Get base commit from environment variables
+    base_commit = os.environ.get('BASE_COMMIT', '')
+
+    # Detect build system at base_commit if available, otherwise use current state
+    build_system = detect_build_system(organization, repository, base_commit if base_commit else None)
     
     # Create the JSON structure
     data = {
@@ -103,9 +141,14 @@ except Exception as e:
 
     # Try to detect build system even in error case
     try:
-        build_system = detect_build_system()
-    except:
+        # Get base commit from environment variables
+        base_commit = os.environ.get('BASE_COMMIT', '')
+        
+        # Detect build system at base_commit if available, otherwise use current state
+        build_system = detect_build_system(organization, repository, base_commit if base_commit else None)
+    except Exception as e:
         # Fallback to default if build system detection fails
+        print(f"Error detecting build system in error handler: {e}", file=sys.stderr)
         build_system = ""
         
     error_data = {

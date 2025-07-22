@@ -1,0 +1,37 @@
+[
+  {
+    "name": "Epic",
+    "color": "e3502f",
+    "description": ""
+  },
+  {
+    "name": "Review",
+    "color": "A619A6",
+    "description": ""
+  },
+  {
+    "name": "Invalid",
+    "color": "e4e669",
+    "description": "This doesn't seem right"
+  },
+  {
+    "name": "Wontfix",
+    "color": "ffffff",
+    "description": "This will not be worked on"
+  },
+  {
+    "name": "Verified",
+    "color": "0E8A16",
+    "description": ""
+  },
+  {
+    "name": "Bugfix",
+    "color": "d73a4a",
+    "description": "Something is not working"
+  },
+  {
+    "name": "Documentation",
+    "color": "0075ca",
+    "description": "Improvements or additions to documentation"
+  }
+]

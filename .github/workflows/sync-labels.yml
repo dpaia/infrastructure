@@ -1,13 +1,13 @@
 name: Sync Labels to Repositories
-run-name: "[${{ github.event.inputs.labels_file }}] Sync labels to repositories with topics ${{ github.event.inputs.topics }}"
+run-name: "[${{ github.event.inputs.profiles }}] Sync labels to repositories with topics ${{ github.event.inputs.topics }}"
 
 on:
   workflow_dispatch:
     inputs:
-      labels_file:
-        description: 'Profile'
+      profiles:
+        description: 'Comma-separated list of profiles (e.g., common,spring)'
         required: true
-        default: 'java-spring'
+        default: 'common,spring'
       topics:
         description: 'Comma-separated list of repository topics to filter by'
         required: true
@@ -120,12 +120,22 @@ jobs:
             exit 0
           fi
           
+          # Split profiles by comma
+          IFS=',' read -ra PROFILE_ARRAY <<< "${{ github.event.inputs.profiles }}"
+          
+          # Split repositories by comma
           IFS=',' read -ra REPO_ARRAY <<< "$REPOS"
+          
           for REPO in "${REPO_ARRAY[@]}"; do
             echo "➡️  Syncing labels to jetbrains-eval-lab/$REPO"
-            github-label-sync \
-              --access-token "$GITHUB_TOKEN" \
-              --labels ".github/labels/${{ github.event.inputs.labels_file }}.json" \
-              --allow-added-labels \
-              "jetbrains-eval-lab/$REPO"
+            
+            # Process each profile
+            for PROFILE in "${PROFILE_ARRAY[@]}"; do
+              echo "  🏷️  Applying labels from profile: $PROFILE"
+              github-label-sync \
+                --access-token "$GITHUB_TOKEN" \
+                --labels ".github/labels/${PROFILE}.json" \
+                --allow-added-labels \
+                "jetbrains-eval-lab/$REPO"
+            done
           done

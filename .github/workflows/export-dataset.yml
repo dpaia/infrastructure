@@ -1,5 +1,5 @@
 name: Export SWE Dataset
-run-name: "${{inputs.generator}} Export SWE Dataset: ${{ inputs.search_query }} -> ${{ inputs.output_file }}"
+run-name: "[${{inputs.generator}}] Export SWE Dataset: ${{ inputs.search_query }} -> ${{ inputs.output_file }}"
 
 on:
   workflow_dispatch:
@@ -180,7 +180,7 @@ jobs:
           update_status: 'false'
 
   update-issue-swe-data:
-    needs: [find-issues, update-outdated-data]
+    needs: [find-issues]
     if: inputs.update == 'force-update'
     runs-on: ubuntu-latest
     strategy:

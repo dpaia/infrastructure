@@ -85,13 +85,7 @@ jobs:
 
   get-data-field:
     needs: [get-project-data, find-issues, collect-exists-data, update-data, check-commit, update-issue-swe-data]
-    if: |
-      always() && 
-      (
-        (inputs.update == 'none' && (needs.collect-exists-data.result == 'success' || needs.collect-exists-data.result == 'skipped')) || 
-        (inputs.update == 'update' && (needs.check-commit.result == 'success' || needs.check-commit.result == 'skipped') && (needs.check-commit.outputs.commits-match == 'true' || (needs.update-issue-swe-data.result == 'success' || needs.update-issue-swe-data.result == 'skipped'))) || 
-        (inputs.update == 'force-update' && (needs.update-issue-swe-data.result == 'success' || needs.update-issue-swe-data.result == 'skipped'))
-      )
+    if: always()
     runs-on: ubuntu-latest
     strategy:
       matrix:

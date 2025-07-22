@@ -324,7 +324,7 @@ jobs:
             echo "Found existing gist with ID: $GIST_ID, updating it..."
             
             # Update the existing gist
-            GIST_URL=$(gh gist edit "$GIST_ID" -f "$GIST_FILENAME" "$LOCAL_FILENAME" | grep -o 'https://gist.github.com/[^ ]*')
+            GIST_URL=$(gh gist edit "$GIST_ID" -f "$GIST_FILENAME" -a "$LOCAL_FILENAME" | grep -o 'https://gist.github.com/[^ ]*')
           else
             echo "No existing gist found, creating a new one..."
             

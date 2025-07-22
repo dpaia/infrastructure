@@ -22,6 +22,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       repositories: ${{ steps.get-repos.outputs.repos }}
+      repositories_json: ${{ steps.get-repos.outputs.repos_json }}
     steps:
       - uses: actions/checkout@v4
 
@@ -110,8 +111,14 @@ jobs:
           if [ -z "$REPOS" ]; then
             echo "No repositories found. Exiting."
             echo "repos=" >> $GITHUB_OUTPUT
+            echo "repos_json=[]" >> $GITHUB_OUTPUT
           else
             echo "repos=$REPOS" >> $GITHUB_OUTPUT
+            
+            # Convert comma-separated list to JSON array with proper quoting
+            REPOS_JSON="[\"$(echo $REPOS | sed 's/,/\",\"/g')\"]"
+            echo "repos_json=$REPOS_JSON" >> $GITHUB_OUTPUT
+            echo "Repositories JSON: $REPOS_JSON"
           fi
 
   # Dynamic jobs for each profile
@@ -140,7 +147,7 @@ jobs:
     strategy:
       matrix:
         profile: ${{ fromJson(needs.sync-labels-setup.outputs.profiles) }}
-        repository: ${{ fromJson(format('[{0}]', needs.search-repositories.outputs.repositories)) }}
+        repository: ${{ fromJson(needs.search-repositories.outputs.repositories_json) }}
       fail-fast: false
     name: sync-labels-${{ matrix.profile }}
     runs-on: ubuntu-latest

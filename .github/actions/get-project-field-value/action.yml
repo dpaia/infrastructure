@@ -1,0 +1,85 @@
+name: 'Get Project Field Value'
+description: 'Gets a field value for an issue in a GitHub Project V2'
+author: 'JetBrains'
+
+inputs:
+  project_id:
+    description: 'The ID of the GitHub Project'
+    required: true
+  issue_node_id:
+    description: 'The GraphQL node ID of the issue'
+    required: true
+  field_name:
+    description: 'The name of the field to get the value for'
+    required: true
+  github_token:
+    description: 'GitHub token for API access'
+    required: true
+
+outputs:
+  field_value:
+    description: 'The value of the specified field for the issue'
+    value: ${{ steps.get-field-value.outputs.field_value }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Get field value
+      id: get-field-value
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github_token }}
+        PROJECT_ID: ${{ inputs.project_id }}
+        ISSUE_NODE_ID: ${{ inputs.issue_node_id }}
+        FIELD_NAME: ${{ inputs.field_name }}
+      run: |
+        echo "Getting field value for field '$FIELD_NAME' for issue with node ID '$ISSUE_NODE_ID'"
+        
+        # Get project item for this issue
+        ITEM_QUERY=$(gh api graphql -f query='
+        query($project:ID!) {
+          node(id: $project) {
+            ... on ProjectV2 {
+              items(first: 100) {
+                nodes {
+                  id
+                  content {
+                    ... on Issue {
+                      id
+                    }
+                  }
+                  fieldValues(first: 100) {
+                    nodes {
+                      ... on ProjectV2ItemFieldTextValue {
+                        field {
+                          ... on ProjectV2FieldCommon {
+                            id
+                            name
+                          }
+                        }
+                        text
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }' -f project=$PROJECT_ID)
+        
+        # Find the item for this issue and extract field values
+        ITEM_DATA=$(echo "$ITEM_QUERY" | jq -c '.data.node.items.nodes[] | select(.content.id == "'$ISSUE_NODE_ID'")')
+        
+        FIELD_VALUE=""
+        if [ -n "$ITEM_DATA" ]; then
+          echo "Found project item for issue"
+          
+          # Extract field value by field name
+          FIELD_VALUE=$(echo "$ITEM_DATA" | jq -r '.fieldValues.nodes[] | select(.field.name == "'$FIELD_NAME'") | .text')
+          echo "$FIELD_NAME field value: $FIELD_VALUE"
+        else
+          echo "Issue not found in project"
+        fi
+        
+        # Set output
+        echo "field_value=$FIELD_VALUE" >> $GITHUB_OUTPUT

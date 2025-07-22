@@ -17,7 +17,7 @@ on:
         type: choice
         options:
           - none
-          - create
+          - update
           - force-update
         default: "none"
 
@@ -30,7 +30,7 @@ jobs:
       data_field_id: ${{ steps.get-project-data.outputs.data_field_id }}
     steps:
       - uses: actions/checkout@v4
-      
+
       - name: Get project data
         id: get-project-data
         uses: ./.github/actions/get-project-data
@@ -75,7 +75,7 @@ jobs:
           jq -s '.' > issue_ids.json
           
           echo "Found $(jq length issue_ids.json) issues"
-          
+
       - name: Set matrix output
         id: set-matrix
         run: |
@@ -84,7 +84,7 @@ jobs:
           echo "matrix=$MATRIX_JSON" >> $GITHUB_OUTPUT
 
   get-data-field:
-    needs: [find-issues, get-project-data]
+    needs: [get-project-data, find-issues]
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -92,77 +92,32 @@ jobs:
       fail-fast: false
     steps:
       - uses: actions/checkout@v4
-      
+
+      - name: Get GitHub issue ID (GraphQL node ID)
+        id: get-issue-node-id
+        uses: ./.github/actions/get-issue-node-id
+        with:
+          repository: ${{ matrix.issue.repo_name }}
+          organization: ${{ matrix.issue.org_name }}
+          issue_number: ${{ matrix.issue.issue_id }}
+          github_token: ${{ secrets.PROJECT_TOKEN }}
+
       - name: Get Data field value
         id: get-data-value
+        uses: ./.github/actions/get-project-field-value
+        with:
+          project_id: ${{ needs.get-project-data.outputs.project_id }}
+          issue_node_id: ${{ steps.get-issue-node-id.outputs.issue_node_id }}
+          field_name: "Data"
+          github_token: ${{ secrets.PROJECT_TOKEN }}
+
+      - name: Create data value file
         env:
-          GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
           ISSUE_ID: ${{ matrix.issue.issue_id }}
           REPO_NAME: ${{ matrix.issue.repo_name }}
           ORG_NAME: ${{ matrix.issue.org_name }}
-          PROJECT_ID: ${{ needs.get-project-data.outputs.project_id }}
-          DATA_FIELD_ID: ${{ needs.get-project-data.outputs.data_field_id }}
+          DATA_VALUE: ${{ steps.get-data-value.outputs.field_value }}
         run: |
-          echo "Getting Data field value for issue #$ISSUE_ID from $ORG_NAME/$REPO_NAME"
-          
-          # Get GitHub issue ID (GraphQL node ID)
-          ISSUE_NODE_ID=$(gh api graphql -f query='
-          query($repo:String!, $owner:String!, $number:Int!) {
-            repository(name: $repo, owner: $owner) {
-              issue(number: $number) {
-                id
-              }
-            }
-          }' -f repo="$REPO_NAME" -f owner="$ORG_NAME" -F number=$ISSUE_ID --jq '.data.repository.issue.id')
-          
-          echo "Issue Node ID: $ISSUE_NODE_ID"
-          
-          # Get project item for this issue
-          ITEM_QUERY=$(gh api graphql -f query='
-          query($project:ID!, $issue:ID!) {
-            node(id: $project) {
-              ... on ProjectV2 {
-                items(first: 100) {
-                  nodes {
-                    id
-                    content {
-                      ... on Issue {
-                        id
-                      }
-                    }
-                    fieldValues(first: 100) {
-                      nodes {
-                        ... on ProjectV2ItemFieldTextValue {
-                          field {
-                            ... on ProjectV2FieldCommon {
-                              id
-                              name
-                            }
-                          }
-                          text
-                        }
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          }' -f project=$PROJECT_ID -f issue=$ISSUE_NODE_ID)
-          
-          # Find the item for this issue and extract field values
-          ITEM_DATA=$(echo "$ITEM_QUERY" | jq -c '.data.node.items.nodes[] | select(.content.id == "'$ISSUE_NODE_ID'")')
-          
-          DATA_VALUE=""
-          if [ -n "$ITEM_DATA" ]; then
-            echo "Found project item for issue #$ISSUE_ID"
-            
-            # Extract Data field value (GIST URL)
-            DATA_VALUE=$(echo "$ITEM_DATA" | jq -r '.fieldValues.nodes[] | select(.field.id == "'$DATA_FIELD_ID'") | .text')
-            echo "Data field value: $DATA_VALUE"
-          else
-            echo "Issue #$ISSUE_ID not found in project"
-          fi
-          
           # Create a JSON file with the issue info and data value
           mkdir -p ./data_values
           echo "{\"issue_id\": \"$ISSUE_ID\", \"repo_name\": \"$REPO_NAME\", \"org_name\": \"$ORG_NAME\", \"data_value\": \"$DATA_VALUE\"}" > ./data_values/${ORG_NAME}_${REPO_NAME}_${ISSUE_ID}.json
@@ -173,26 +128,162 @@ jobs:
           name: data-value-${{ matrix.issue.org_name }}-${{ matrix.issue.repo_name }}-${{ matrix.issue.issue_id }}
           path: ./data_values/${{ matrix.issue.org_name }}_${{ matrix.issue.repo_name }}_${{ matrix.issue.issue_id }}.json
           retention-days: 1
-  aggregate-results:
-    needs: get-data-field
+
+  collect-exists-data:
+    needs: find-issues
+    if: inputs.update == 'none'
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        issue: ${{ fromJson(needs.find-issues.outputs.issue-matrix) }}
+      fail-fast: false
     steps:
-      - name: Download all issue data
+      - uses: actions/checkout@v4
+      
+      - name: Collect exists SWE Data
+        id: update-java-data
+        uses: ./.github/actions/update-issue-swe-data
+        with:
+          generator: 'java'
+          organization: ${{ matrix.issue.org_name }}
+          repository: ${{ matrix.issue.repo_name }}
+          issue_id: ${{ matrix.issue.issue_id }}
+          github_token: ${{ secrets.PROJECT_TOKEN }}
+          gist_token: ${{ secrets.GIST_TOKEN }}
+          update_status: ${{ inputs.update == 'force-update' }}
+
+  update-data:
+    needs: find-issues
+    if: inputs.update == 'update'
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        issue: ${{ fromJson(needs.find-issues.outputs.issue-matrix) }}
+      fail-fast: false
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Update SWE Data
+        id: update-python-data
+        uses: ./.github/actions/update-issue-swe-data
+        with:
+          generator: 'python'
+          organization: ${{ matrix.issue.org_name }}
+          repository: ${{ matrix.issue.repo_name }}
+          issue_id: ${{ matrix.issue.issue_id }}
+          github_token: ${{ secrets.PROJECT_TOKEN }}
+          gist_token: ${{ secrets.GIST_TOKEN }}
+          update_status: ${{ inputs.update == 'force-update' }}
+
+  force-update-data:
+    needs: find-issues
+    if: inputs.update == 'force-update'
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        issue: ${{ fromJson(needs.find-issues.outputs.issue-matrix) }}
+      fail-fast: false
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Force update SWE Data
+        id: update-kotlin-data
+        uses: ./.github/actions/update-issue-swe-data
+        with:
+          generator: 'kotlin'
+          organization: ${{ matrix.issue.org_name }}
+          repository: ${{ matrix.issue.repo_name }}
+          issue_id: ${{ matrix.issue.issue_id }}
+          github_token: ${{ secrets.PROJECT_TOKEN }}
+          gist_token: ${{ secrets.GIST_TOKEN }}
+          update_status: ${{ inputs.update == 'force-update' }}
+
+
+  fetch-gist-data:
+    needs: [get-data-field]
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        issue: ${{ fromJson(needs.has-data-field.outputs.eligible-issues) }}
+      fail-fast: false
+    steps:
+      - name: Download data value artifact
         uses: actions/download-artifact@v4
         with:
-          pattern: issue-*-*-*-data
-          path: ./all_issues
+          name: data-value-${{ matrix.issue.org_name }}-${{ matrix.issue.repo_name }}-${{ matrix.issue.issue_id }}
+          path: ./data_values
+
+      - name: Install jq and curl
+        run: sudo apt-get update && sudo apt-get -y install jq curl
+
+      - name: Fetch GIST JSON content
+        env:
+          ISSUE_ID: ${{ matrix.issue.issue_id }}
+          REPO_NAME: ${{ matrix.issue.repo_name }}
+          ORG_NAME: ${{ matrix.issue.org_name }}
+        run: |
+          # Extract GIST URL from the data value file
+          DATA_FILE="./data_values/${ORG_NAME}_${REPO_NAME}_${ISSUE_ID}.json"
+          if [ -f "$DATA_FILE" ]; then
+            GIST_URL=$(jq -r '.data_value' "$DATA_FILE")
+            echo "GIST URL: $GIST_URL"
+            
+            if [ -n "$GIST_URL" ] && [ "$GIST_URL" != "null" ]; then
+              # Extract GIST ID from URL
+              GIST_ID=$(echo "$GIST_URL" | sed -E 's|.*/([a-f0-9]+)$|\1|')
+              
+              if [ -n "$GIST_ID" ]; then
+                echo "Fetching GIST content for ID: $GIST_ID"
+                
+                # Fetch the raw GIST content
+                mkdir -p ./gist_content
+                RAW_URL="https://gist.githubusercontent.com/raw/$GIST_ID"
+                curl -s "$RAW_URL" > "./gist_content/${ORG_NAME}_${REPO_NAME}_${ISSUE_ID}_gist.json"
+                
+                # Create a combined JSON with issue info and GIST content
+                GIST_CONTENT=$(cat "./gist_content/${ORG_NAME}_${REPO_NAME}_${ISSUE_ID}_gist.json")
+                echo "{\"issue_id\": \"$ISSUE_ID\", \"repo_name\": \"$REPO_NAME\", \"org_name\": \"$ORG_NAME\", \"gist_url\": \"$GIST_URL\", \"gist_content\": $GIST_CONTENT}" > "./gist_content/${ORG_NAME}_${REPO_NAME}_${ISSUE_ID}_combined.json"
+              else
+                echo "Could not extract GIST ID from URL: $GIST_URL"
+                echo "{\"issue_id\": \"$ISSUE_ID\", \"repo_name\": \"$REPO_NAME\", \"org_name\": \"$ORG_NAME\", \"gist_url\": \"$GIST_URL\", \"error\": \"Could not extract GIST ID\"}" > "./gist_content/${ORG_NAME}_${REPO_NAME}_${ISSUE_ID}_combined.json"
+              fi
+            else
+              echo "No valid GIST URL found for issue #$ISSUE_ID"
+              echo "{\"issue_id\": \"$ISSUE_ID\", \"repo_name\": \"$REPO_NAME\", \"org_name\": \"$ORG_NAME\", \"error\": \"No valid GIST URL found\"}" > "./gist_content/${ORG_NAME}_${REPO_NAME}_${ISSUE_ID}_combined.json"
+            fi
+          else
+            echo "Data file not found for issue #$ISSUE_ID"
+            mkdir -p ./gist_content
+            echo "{\"issue_id\": \"$ISSUE_ID\", \"repo_name\": \"$REPO_NAME\", \"org_name\": \"$ORG_NAME\", \"error\": \"Data file not found\"}" > "./gist_content/${ORG_NAME}_${REPO_NAME}_${ISSUE_ID}_combined.json"
+          fi
+
+      - name: Upload GIST content
+        uses: actions/upload-artifact@v4
+        with:
+          name: gist-content-${{ matrix.issue.org_name }}-${{ matrix.issue.repo_name }}-${{ matrix.issue.issue_id }}
+          path: ./gist_content/${{ matrix.issue.org_name }}_${{ matrix.issue.repo_name }}_${{ matrix.issue.issue_id }}_combined.json
+          retention-days: 1
+
+  aggregate-results:
+    needs: fetch-gist-data
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all GIST content
+        uses: actions/download-artifact@v4
+        with:
+          pattern: gist-content-*-*-*
+          path: ./all_gists
           merge-multiple: true
-      
+
       - name: Install jq
         run: sudo apt-get update && sudo apt-get -y install jq
-      
+
       - name: Combine issue data
         env:
           OUT: ${{ inputs.output_file }}
         run: |
-          # Combine all individual issue files into one JSON array
-          find ./all_issues -name "*.json" -exec cat {} \; | jq -s '.' > "$OUT"
+          # Combine all individual GIST content files into one JSON array
+          find ./all_gists -name "*.json" -exec cat {} \; | jq -s '.' > "$OUT"
           echo "Combined $(jq length "$OUT") issues into $OUT"
       
       - name: Upload final artifact

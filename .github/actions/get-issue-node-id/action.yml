@@ -1,0 +1,48 @@
+name: 'Get Issue Node ID'
+description: 'Gets the GitHub issue ID (GraphQL node ID) for a given issue number'
+author: 'JetBrains'
+
+inputs:
+  repository:
+    description: 'Repository name'
+    required: true
+  organization:
+    description: 'GitHub organization name'
+    required: true
+  issue_number:
+    description: 'Issue number'
+    required: true
+  github_token:
+    description: 'GitHub token for API access'
+    required: true
+
+outputs:
+  issue_node_id:
+    description: 'The GraphQL node ID of the issue'
+    value: ${{ steps.get-issue-node-id.outputs.issue_node_id }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Get issue node ID
+      id: get-issue-node-id
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github_token }}
+        REPO_NAME: ${{ inputs.repository }}
+        ORG_NAME: ${{ inputs.organization }}
+        ISSUE_ID: ${{ inputs.issue_number }}
+      run: |
+        echo "Getting GitHub issue ID for issue #$ISSUE_ID from $ORG_NAME/$REPO_NAME"
+        
+        ISSUE_NODE_ID=$(gh api graphql -f query='
+        query($repo:String!, $owner:String!, $number:Int!) {
+          repository(name: $repo, owner: $owner) {
+            issue(number: $number) {
+              id
+            }
+          }
+        }' -f repo="$REPO_NAME" -f owner="$ORG_NAME" -F number=$ISSUE_ID --jq '.data.repository.issue.id')
+        
+        echo "Issue Node ID: $ISSUE_NODE_ID"
+        echo "issue_node_id=$ISSUE_NODE_ID" >> $GITHUB_OUTPUT

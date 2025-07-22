@@ -49,27 +49,12 @@ runs:
 
     - name: Fetch GitHub issue ID
       id: fetch-issue-id
-      shell: bash
-      env:
-        GH_TOKEN: ${{ inputs.github_token }}
-      run: |
-        repo="${{ inputs.organization }}/${{ inputs.repository }}"
-        issue_number="${{ inputs.issue_id }}"
-        owner="${repo%/*}"
-        repo_name="${repo##*/}"
-
-        echo "Fetching Issue ID..."
-        issue_id=$(gh api graphql -f query='
-        query($repo:String!, $owner:String!, $number:Int!) {
-          repository(name: $repo, owner: $owner) {
-            issue(number: $number) {
-              id
-            }
-          }
-        }' -f repo="$repo_name" -f owner="$owner" -F number=$issue_number --jq '.data.repository.issue.id')
-
-        echo "Issue ID: $issue_id"
-        echo "issue_id=$issue_id" >> $GITHUB_OUTPUT
+      uses: ./.github/actions/get-issue-node-id
+      with:
+        repository: ${{ inputs.repository }}
+        organization: ${{ inputs.organization }}
+        issue_number: ${{ inputs.issue_id }}
+        github_token: ${{ inputs.github_token }}
 
     - name: Get project data
       id: get-project-data
@@ -86,7 +71,7 @@ runs:
       env:
         GH_TOKEN: ${{ inputs.github_token }}
         PROJECT_ID: ${{ steps.get-project-data.outputs.project_id }}
-        ISSUE_ID: ${{ steps.fetch-issue-id.outputs.issue_id }}
+        ISSUE_ID: ${{ steps.fetch-issue-id.outputs.issue_node_id }}
       run: |
         echo "Adding Issue to Project..."
         item_id=$(gh api graphql -f query='

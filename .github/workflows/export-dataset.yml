@@ -112,25 +112,27 @@ jobs:
           github_token: ${{ secrets.PROJECT_TOKEN }}
 
       - name: Create data value file
+        id: create_data_file
         env:
           ISSUE_ID: ${{ matrix.issue.issue_id }}
           REPO_NAME: ${{ matrix.issue.repo_name }}
           ORG_NAME: ${{ matrix.issue.org_name }}
           DATA_VALUE: ${{ steps.get-data-value.outputs.field_value }}
         run: |
-          # Create a JSON file with the issue info and data value
+          # Create a JSON file with the issue info and data value only if DATA_VALUE is not empty
           mkdir -p ./data_values
           
-          # Check if DATA_VALUE is null, empty, or doesn't exist and set it to empty string if needed
+          # Check if DATA_VALUE is null, empty, or doesn't exist
           if [ -z "$DATA_VALUE" ] || [ "$DATA_VALUE" = "null" ]; then
-            FINAL_VALUE=""
+            echo "DATA_VALUE is empty or null, skipping file creation"
+            echo "file_created=false" >> $GITHUB_OUTPUT
           else
-            FINAL_VALUE="$DATA_VALUE"
+            echo "{\"issue_id\": \"$ISSUE_ID\", \"repo_name\": \"$REPO_NAME\", \"org_name\": \"$ORG_NAME\", \"data_value\": \"$DATA_VALUE\"}" > ./data_values/${ORG_NAME}_${REPO_NAME}_${ISSUE_ID}.json
+            echo "file_created=true" >> $GITHUB_OUTPUT
           fi
-          
-          echo "{\"issue_id\": \"$ISSUE_ID\", \"repo_name\": \"$REPO_NAME\", \"org_name\": \"$ORG_NAME\", \"data_value\": \"$FINAL_VALUE\"}" > ./data_values/${ORG_NAME}_${REPO_NAME}_${ISSUE_ID}.json
 
       - name: Upload data value
+        if: steps.create_data_file.outputs.file_created == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: data-value-${{ matrix.issue.org_name }}-${{ matrix.issue.repo_name }}-${{ matrix.issue.issue_id }}

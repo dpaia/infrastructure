@@ -1,4 +1,5 @@
 name: Export SWE Dataset
+run-name: "Export SWE Dataset: ${{ inputs.search_query }} -> ${{ inputs.output_file }}"
 
 on:
   workflow_dispatch:
@@ -47,12 +48,12 @@ jobs:
 
           PAGE=100
           
-          # Get issue IDs only for the matrix
+          # Get issue IDs and repository info for the matrix
           gh api --paginate -X GET search/issues \
             -H "X-GitHub-Api-Version: 2022-11-28" \
             -f q="$QUERY" -f per_page="$PAGE" -f advanced_search=true |
-          jq -c '.items[] | .number' |
-          jq -s 'map(. | tostring)' > issue_ids.json
+          jq -c '.items[] | {issue_id: .number | tostring, repo_name: .repository_url | split("/") | .[-1], org_name: .repository_url | split("/") | .[-2]}' |
+          jq -s '.' > issue_ids.json
           
           echo "Found $(jq length issue_ids.json) issues"
           
@@ -68,27 +69,29 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        issue_id: ${{ fromJson(needs.find-issues.outputs.issue-matrix) }}
+        issue: ${{ fromJson(needs.find-issues.outputs.issue-matrix) }}
       fail-fast: false
     steps:
       - name: Get issue data
         env:
           GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
-          ISSUE_ID: ${{ matrix.issue_id }}
+          ISSUE_ID: ${{ matrix.issue.issue_id }}
+          REPO_NAME: ${{ matrix.issue.repo_name }}
+          ORG_NAME: ${{ matrix.issue.org_name }}
         run: |
           mkdir -p ./issue_data
           
           # Get detailed data for this specific issue
-          gh api -X GET repos/${{ github.repository_owner }}/$(echo ${{ github.repository }} | cut -d'/' -f2)/issues/$ISSUE_ID |
-          jq -c '{id: .number, title: .title}' > ./issue_data/issue_$ISSUE_ID.json
+          gh api -X GET repos/$ORG_NAME/$REPO_NAME/issues/$ISSUE_ID |
+          jq -c '{id: .number, title: .title, repo: $REPO_NAME, org: $ORG_NAME}' --arg REPO_NAME "$REPO_NAME" --arg ORG_NAME "$ORG_NAME" > ./issue_data/issue_${ORG_NAME}_${REPO_NAME}_${ISSUE_ID}.json
           
-          echo "Processed issue #$ISSUE_ID"
+          echo "Processed issue #$ISSUE_ID from $ORG_NAME/$REPO_NAME"
       
       - name: Upload individual issue data
         uses: actions/upload-artifact@v4
         with:
-          name: issue-${{ matrix.issue_id }}-data
-          path: ./issue_data/issue_${{ matrix.issue_id }}.json
+          name: issue-${{ matrix.issue.org_name }}-${{ matrix.issue.repo_name }}-${{ matrix.issue.issue_id }}-data
+          path: ./issue_data/issue_${{ matrix.issue.org_name }}_${{ matrix.issue.repo_name }}_${{ matrix.issue.issue_id }}.json
           retention-days: 1
 
   aggregate-results:
@@ -98,7 +101,7 @@ jobs:
       - name: Download all issue data
         uses: actions/download-artifact@v4
         with:
-          pattern: issue-*-data
+          pattern: issue-*-*-*-data
           path: ./all_issues
           merge-multiple: true
       

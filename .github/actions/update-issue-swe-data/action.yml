@@ -187,7 +187,12 @@ runs:
         ISSUE_BODY=$(echo "$ISSUE_DETAILS" | jq -r '.body')
         
         # Format the commit message
-        COMMIT_MESSAGE="${ISSUE_TITLE} #${ISSUE_ID}\n\n${ISSUE_BODY}\n\nFAIL_TO_PASS: ${FAIL_TO_PASS}\nPASS_TO_PASS: ${PASS_TO_PASS}"
+        COMMIT_MESSAGE="${ISSUE_TITLE} #${ISSUE_ID}
+
+  ${ISSUE_BODY}
+
+FAIL_TO_PASS: ${FAIL_TO_PASS}
+PASS_TO_PASS: ${PASS_TO_PASS}"
         
         # Add, commit, and push the changes
         git add "$FILE_PATH"
@@ -201,7 +206,7 @@ runs:
         REPO_OWNER=${REPO_PARTS[0]}
         REPO_NAME=${REPO_PARTS[1]}
         BRANCH=$(git rev-parse --abbrev-ref HEAD)
-        FILE_URL="https://github.com/${DATASET_REPO}/blob/${BRANCH}/${FILE_PATH}"
+        FILE_URL="https://github.com/${ORGANIZATION}/${DATASET_REPO}/blob/${BRANCH}/${FILE_PATH}"
         
         echo "File URL: $FILE_URL"
         echo "gist_url=$FILE_URL" >> $GITHUB_OUTPUT

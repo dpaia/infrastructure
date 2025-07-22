@@ -1,10 +1,10 @@
-name: 'Download Gist Content'
-description: 'Downloads content from a GitHub Gist URL'
+name: 'Download Content'
+description: 'Downloads content from a GitHub URL (supports both GitHub repository files and Gists)'
 author: 'JetBrains'
 
 inputs:
   data_value:
-    description: 'The value containing the Gist URL'
+    description: 'The value containing the URL'
     required: true
   org_name:
     description: 'The organization name'
@@ -60,8 +60,26 @@ runs:
         
             # Set output
             echo "content_processed=true" >> $GITHUB_OUTPUT
+          # Handle GitHub repository URLs (e.g., https://github.com/org/repo/blob/branch/path/to/file)
+          elif [[ "$DATA_VALUE" == https://github.com/*/blob/* ]]; then
+            GITHUB_URL="$DATA_VALUE"
+            echo "Found GitHub repository URL: $GITHUB_URL"
+        
+            # Convert to raw content URL
+            # Format: https://raw.githubusercontent.com/org/repo/branch/path/to/file
+            # Replace 'github.com' with 'raw.githubusercontent.com' and remove '/blob/'
+            RAW_URL=$(echo "$GITHUB_URL" | sed 's/github.com/raw.githubusercontent.com/g' | sed 's/\/blob\//\//g')
+        
+            echo "Raw content URL: $RAW_URL"
+        
+            # Fetch the raw content
+            mkdir -p ./_content
+            curl -s "$RAW_URL" > "./_content/${ORG_NAME}_${REPO_NAME}_${ISSUE_ID}.json"
+        
+            # Set output
+            echo "content_processed=true" >> $GITHUB_OUTPUT
           else
-            echo "No valid gist URL found in DATA_VALUE"
+            echo "No valid GitHub URL found in DATA_VALUE"
             echo "content_processed=false" >> $GITHUB_OUTPUT
           fi
         else

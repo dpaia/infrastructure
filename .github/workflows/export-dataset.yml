@@ -256,7 +256,7 @@ jobs:
       - name: Download content
         if: steps.check_data_links.outputs.has_content == 'true'
         id: download-content
-        uses: ./.github/actions/download-gist-content
+        uses: ./.github/actions/download-content
         with:
           data_value: ${{ steps.get-data-value.outputs.field_value }}
           org_name: ${{ matrix.issue.org_name }}

@@ -84,7 +84,7 @@ jobs:
           echo "matrix=$MATRIX_JSON" >> $GITHUB_OUTPUT
 
   get-data-field:
-    needs: [get-project-data, find-issues, collect-exists-data, update-data, force-update-data]
+    needs: [get-project-data, find-issues, collect-exists-data, update-issue-swe-data, force-update-data]
     if: always()
     runs-on: ubuntu-latest
     strategy:
@@ -160,10 +160,12 @@ jobs:
           issue_number: ${{ matrix.issue.issue_id }}
           github_token: ${{ secrets.PROJECT_TOKEN }}
 
-  update-data:
-    needs: [find-issues]
+  compare-commits:
+    needs: [find-issues, get-project-data]
     if: inputs.update == 'update'
     runs-on: ubuntu-latest
+    outputs:
+      commits-match: ${{ steps.set-matrix-output.outputs.commits-match-matrix }}
     strategy:
       matrix:
         issue: ${{ fromJson(needs.find-issues.outputs.issue-matrix) }}
@@ -214,22 +216,67 @@ jobs:
             echo "Commits match"
             echo "match=true" >> $GITHUB_OUTPUT
           fi
-
-      - name: Check all commits
-        id: check-all-commits
-        if: always()
+      
+      - name: Create result file
+        env:
+          ISSUE_ID: ${{ matrix.issue.issue_id }}
+          REPO_NAME: ${{ matrix.issue.repo_name }}
+          ORG_NAME: ${{ matrix.issue.org_name }}
+          MATCH_RESULT: ${{ steps.compare-commits.outputs.match }}
         run: |
-          if [ "${{ steps.compare-commits.outputs.match }}" == "false" ]; then
-            echo "all_match=false" >> $GITHUB_OUTPUT
-          else
-            echo "all_match=true" >> $GITHUB_OUTPUT
-          fi  
+          mkdir -p ./commit_results
+          echo "{\"issue_id\": \"$ISSUE_ID\", \"repo_name\": \"$REPO_NAME\", \"org_name\": \"$ORG_NAME\", \"match\": \"$MATCH_RESULT\"}" > ./commit_results/${ORG_NAME}_${REPO_NAME}_${ISSUE_ID}.json
+
+      - name: Upload commit comparison result
+        uses: actions/upload-artifact@v4
+        with:
+          name: commit-result-${{ matrix.issue.org_name }}-${{ matrix.issue.repo_name }}-${{ matrix.issue.issue_id }}
+          path: ./commit_results/${{ matrix.issue.org_name }}_${{ matrix.issue.repo_name }}_${{ matrix.issue.issue_id }}.json
+          retention-days: 1
           
-          steps:
+      - name: Set matrix output
+        id: set-matrix-output
+        run: |
+          # Collect all results into a matrix format
+          find ./commit_results -name "*.json" -exec cat {} \; | jq -s '.' > commit_results_matrix.json
+          MATRIX_JSON=$(jq -c '.' commit_results_matrix.json)
+          echo "commits-match-matrix=$MATRIX_JSON" >> $GITHUB_OUTPUT
+
+  update-issue-swe-data:
+    needs: [compare-commits]
+    if: inputs.update == 'update'
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        issue: ${{ fromJson(needs.find-issues.outputs.issue-matrix) }}
+      fail-fast: false
+    steps:
       - uses: actions/checkout@v4
+      
+      - name: Download commit comparison result
+        uses: actions/download-artifact@v4
+        with:
+          name: commit-result-${{ matrix.issue.org_name }}-${{ matrix.issue.repo_name }}-${{ matrix.issue.issue_id }}
+          path: ./commit_results
+          
+      - name: Check if update is needed
+        id: check-update
+        env:
+          ISSUE_ID: ${{ matrix.issue.issue_id }}
+          REPO_NAME: ${{ matrix.issue.repo_name }}
+          ORG_NAME: ${{ matrix.issue.org_name }}
+        run: |
+          RESULT_FILE="./commit_results/${ORG_NAME}_${REPO_NAME}_${ISSUE_ID}.json"
+          if [ -f "$RESULT_FILE" ]; then
+            MATCH_RESULT=$(jq -r '.match' "$RESULT_FILE")
+            echo "match=$MATCH_RESULT" >> $GITHUB_OUTPUT
+          else
+            echo "Result file not found, skipping update"
+            echo "match=true" >> $GITHUB_OUTPUT
+          fi
 
       - name: Update Issue SWE Data
-        if: needs.check-commit.outputs.commits-match == 'false'
+        if: steps.check-update.outputs.match == 'false'
         uses: ./.github/actions/update-issue-swe-data
         with:
           generator: 'java'
@@ -263,7 +310,7 @@ jobs:
           update_status: 'false'
 
   fetch-gist-data:
-    needs: [get-data-field, find-issues]
+    needs: [get-data-field]
     runs-on: ubuntu-latest
     strategy:
       matrix:

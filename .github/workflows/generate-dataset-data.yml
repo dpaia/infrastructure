@@ -153,24 +153,47 @@ jobs:
     if: inputs.auto_merge && always()
     runs-on: ubuntu-latest
     outputs:
-      pull_requests: ${{ steps.collect-prs.outputs.pull_requests }}
+      pr_list: ${{ steps.extract-prs.outputs.pr_list }}
     steps:
-      - name: Collect all PR URLs
-        id: collect-prs
+      - uses: actions/checkout@v4
+
+      - name: Extract PR URLs
+        id: extract-prs
         run: |
           echo "Collecting PR URLs based on update mode: ${{ inputs.update }}"
 
-          # Extract PR data based on which job actually ran
+          # Create a temporary file to store PR URLs
+          touch pr_list.txt
+
+          # Extract PR URLs based on which job actually ran
           if [ "${{ inputs.update }}" = "update" ]; then
-            PR_JSON='${{ toJSON(needs.update-outdated-data.outputs) }}'
             echo "Using PR data from update-outdated-data job"
+
+            # Extract each PR URL from the outputs object
+            OUTPUT_JSON='${{ toJSON(needs.update-outdated-data.outputs) }}'
+            echo "$OUTPUT_JSON" > temp_output.json
+
+            # Extract PR URLs using grep and pattern matching instead of jq
+            grep -o 'https://github.com/[^"]*' temp_output.json > pr_list.txt || true
+
           else
-            PR_JSON='${{ toJSON(needs.update-issue-swe-data.outputs) }}'
             echo "Using PR data from update-issue-swe-data job"
+
+            # Extract each PR URL from the outputs object
+            OUTPUT_JSON='${{ toJSON(needs.update-issue-swe-data.outputs) }}'
+            echo "$OUTPUT_JSON" > temp_output.json
+
+            # Extract PR URLs using grep and pattern matching instead of jq
+            grep -o 'https://github.com/[^"]*' temp_output.json > pr_list.txt || true
           fi
 
-          echo "PR_JSON=$PR_JSON" >> $GITHUB_ENV
-          echo "pull_requests=$PR_JSON" >> $GITHUB_OUTPUT
+          # Create a comma-separated list of PR URLs
+          PR_LIST=$(cat pr_list.txt | tr '\n' ',' | sed 's/,$//')
+
+          echo "Found PRs: $PR_LIST"
+
+          # Output the list of PRs
+          echo "pr_list=$PR_LIST" >> $GITHUB_OUTPUT
           echo "PR collection complete"
 
   update-issue-swe-data:
@@ -215,49 +238,34 @@ jobs:
       - name: Merge Pull Requests
         env:
           GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
-          PR_DATA: ${{ needs.collect-prs.outputs.pull_requests }}
+          PR_LIST: ${{ needs.collect-prs.outputs.pr_list }}
         run: |
           echo "Merging pull requests..."
           echo "Auto merge value: ${{ inputs.auto_merge }}"
 
-          echo "DEBUG: PRs data structure:"
-          echo "$PR_DATA" | jq '.' || echo "Failed to parse PR_DATA as JSON: $PR_DATA"
+          echo "DEBUG: PR List: $PR_LIST"
 
-          # Function to extract PR URLs from job outputs
-          extract_prs() {
-            local json_data="$1"
-            if [ -z "$json_data" ] || [ "$json_data" == "null" ]; then
-              echo "Empty or null JSON data"
-              return
-            fi
-
-            # Parse the JSON and extract PR URLs
-            echo "$json_data" | jq -r 'to_entries[] | .value' | grep -v "^$" || true
-          }
-
-          # Extract all PR URLs
-          echo "Extracting PRs from job output..."
-          all_prs=$(extract_prs "$PR_DATA")
-
-          echo "PRs to merge: $all_prs"
-
-          if [ -z "$all_prs" ]; then
+          # Check if we have PRs to merge
+          if [ -z "$PR_LIST" ]; then
             echo "No pull requests to merge."
             exit 0
           fi
 
+          # Convert comma-separated list back to newline-separated list
+          echo "$PR_LIST" | tr ',' '\n' > pr_urls.txt
+
           echo "Found the following pull requests to merge:"
-          echo "$all_prs"
+          cat pr_urls.txt
 
           # Merge each PR one by one
-          echo "$all_prs" | while read pr_url; do
+          while read pr_url; do
             if [ -n "$pr_url" ]; then
               echo "Merging pull request: $pr_url"
               gh pr merge "$pr_url" --rebase --delete-branch || echo "Failed to merge PR: $pr_url"
-              
+
               # Wait a bit between merges to avoid rate limiting
               sleep 2
             fi
-          done
+          done < pr_urls.txt
           
           echo "All pull requests have been merged."

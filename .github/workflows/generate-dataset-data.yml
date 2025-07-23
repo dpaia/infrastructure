@@ -83,6 +83,10 @@ jobs:
       fail-fast: false
     steps:
       - uses: actions/checkout@v4
+      
+      # Create a directory for PR artifacts
+      - name: Create PR artifacts directory
+        run: mkdir -p pr_artifacts
 
       - name: Get GitHub issue ID
         id: get-issue-node-id
@@ -145,7 +149,21 @@ jobs:
         id: collect-prs
         if: steps.compare-commits.outputs.match == 'false' && steps.update-swe-data.outputs.pull_request_url != ''
         run: |
+          # Save PR URL to both output and artifact file
           echo "pr_${{ matrix.issue.issue_id }}=${{ steps.update-swe-data.outputs.pull_request_url }}" >> $GITHUB_OUTPUT
+          
+          # Save PR URL to a file in the artifacts directory
+          echo "${{ steps.update-swe-data.outputs.pull_request_url }}" > pr_artifacts/pr_${{ matrix.issue.issue_id }}.txt
+          echo "Saved PR URL to artifact file: pr_artifacts/pr_${{ matrix.issue.issue_id }}.txt"
+      
+      # Upload PR artifacts
+      - name: Upload PR artifacts
+        if: steps.update-swe-data.outputs.pull_request_url != ''
+        uses: actions/upload-artifact@v3
+        with:
+          name: outdated-data-pr-${{ matrix.issue.issue_id }}
+          path: pr_artifacts/
+          retention-days: 1
 
   # This job runs after all matrix jobs are complete to collect PR URLs
   collect-prs:
@@ -161,7 +179,22 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y jq
-
+          
+      # Create a directory for downloaded artifacts
+      - name: Create artifacts directory
+        run: mkdir -p downloaded_artifacts
+          
+      # Download all artifacts from update-outdated-data job
+      - name: Download update-outdated-data artifacts
+        uses: actions/download-artifact@v3
+        with:
+          path: downloaded_artifacts
+          
+      - name: List downloaded artifacts
+        run: |
+          echo "Downloaded artifacts:"
+          find downloaded_artifacts -type f | sort
+          
       - name: Extract PR URLs
         id: extract-prs
         run: |
@@ -169,7 +202,22 @@ jobs:
 
           # Create a temporary file to store PR URLs
           touch pr_list.txt
-
+          
+          echo "Processing artifacts from all matrix jobs"
+          
+          # Find all PR artifact files and extract URLs
+          find downloaded_artifacts -name "pr_*.txt" -type f | while read pr_file; do
+            echo "Processing PR file: $pr_file"
+            PR_URL=$(cat "$pr_file")
+            if [ -n "$PR_URL" ]; then
+              echo "Found PR URL: $PR_URL"
+              echo "$PR_URL" >> pr_list.txt
+            fi
+          done
+          
+          # Also check job outputs as a fallback (keeping the existing logic)
+          echo "Also checking job outputs as fallback"
+          
           # Check which jobs were executed based on the update mode
           echo "Update mode: ${{ inputs.update }}"
           if [ "${{ inputs.update }}" = "update" ]; then
@@ -264,7 +312,7 @@ jobs:
 
           # Check if we found any PRs
           if [ ! -s pr_list.txt ]; then
-            echo "No PRs found in any job outputs"
+            echo "No PRs found in any job outputs or artifacts"
             PR_LIST=""
           else
             # Create a comma-separated list of PR URLs
@@ -288,6 +336,10 @@ jobs:
       fail-fast: false
     steps:
       - uses: actions/checkout@v4
+      
+      # Create a directory for PR artifacts
+      - name: Create PR artifacts directory
+        run: mkdir -p pr_artifacts
 
       - name: Update Issue SWE Data
         id: update-swe-data
@@ -305,7 +357,21 @@ jobs:
         id: collect-prs
         if: steps.update-swe-data.outputs.pull_request_url != ''
         run: |
+          # Save PR URL to both output and artifact file
           echo "pr_${{ matrix.issue.issue_id }}=${{ steps.update-swe-data.outputs.pull_request_url }}" >> $GITHUB_OUTPUT
+          
+          # Save PR URL to a file in the artifacts directory
+          echo "${{ steps.update-swe-data.outputs.pull_request_url }}" > pr_artifacts/pr_${{ matrix.issue.issue_id }}.txt
+          echo "Saved PR URL to artifact file: pr_artifacts/pr_${{ matrix.issue.issue_id }}.txt"
+      
+      # Upload PR artifacts
+      - name: Upload PR artifacts
+        if: steps.update-swe-data.outputs.pull_request_url != ''
+        uses: actions/upload-artifact@v3
+        with:
+          name: issue-swe-data-pr-${{ matrix.issue.issue_id }}
+          path: pr_artifacts/
+          retention-days: 1
 
   merge-pull-requests:
     needs: [collect-prs]

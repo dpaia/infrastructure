@@ -76,7 +76,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       commits-match: ${{ steps.set-matrix-output.outputs.commits-match-matrix }}
-      pull_requests: ${{ toJSON(steps.final-pr-collection.outputs) }}
+      pull_requests: ${{ toJSON(steps.collect-prs.outputs) }}
     strategy:
       matrix:
         issue: ${{ fromJson(needs.find-issues.outputs.issue-matrix) }}
@@ -148,15 +148,15 @@ jobs:
           echo "pr_${{ matrix.issue.issue_id }}=${{ steps.update-swe-data.outputs.pull_request_url }}" >> $GITHUB_OUTPUT
 
   # This job runs after all matrix jobs are complete to collect PR URLs
-  collect-outdated-prs:
-    needs: [update-outdated-data]
-    if: inputs.update == 'update' && always()
+  collect-prs:
+    needs: [update-outdated-data, update-issue-swe-data]
+    if: inputs.auto_merge == 'true' && always()
     runs-on: ubuntu-latest
     outputs:
-      all_prs: ${{ steps.final-pr-collection.outputs.pull_requests }}
+      all_prs: ${{ steps.collect-prs.outputs.pull_requests }}
     steps:
       - name: Collect all PR URLs
-        id: final-pr-collection
+        id: collect-prs
         run: |
           echo "Collecting all PR URLs from matrix jobs..."
           PR_DATA='{}'
@@ -174,7 +174,7 @@ jobs:
     if: inputs.update == 'force-update'
     runs-on: ubuntu-latest
     outputs:
-      pull_requests: ${{ toJSON(steps.final-pr-collection.outputs) }}
+      pull_requests: ${{ toJSON(steps.collect-prs.outputs) }}
     strategy:
       matrix:
         issue: ${{ fromJson(needs.find-issues.outputs.issue-matrix) }}
@@ -200,31 +200,9 @@ jobs:
         run: |
           echo "pr_${{ matrix.issue.issue_id }}=${{ steps.update-swe-data.outputs.pull_request_url }}" >> $GITHUB_OUTPUT
 
-  # This job runs after all matrix jobs are complete to collect PR URLs
-  collect-force-update-prs:
-    needs: [update-issue-swe-data]
-    if: inputs.update == 'force-update' && always()
-    runs-on: ubuntu-latest
-    outputs:
-      all_prs: ${{ steps.final-pr-collection.outputs.pull_requests }}
-    steps:
-      - name: Collect all PR URLs
-        id: final-pr-collection
-        run: |
-          echo "Collecting all PR URLs from matrix jobs..."
-          PR_DATA='{}'
-
-          # Extract PR data from the needs context
-          PR_JSON='${{ toJSON(needs.update-issue-swe-data.outputs) }}'
-          echo "PR_JSON=$PR_JSON" >> $GITHUB_ENV
-
-          # Create a JSON with all PRs
-          echo "pull_requests=$PR_JSON" >> $GITHUB_OUTPUT
-          echo "PR collection complete"
-
   merge-pull-requests:
-    needs: [collect-outdated-prs, collect-force-update-prs]
-    if: always()
+    needs: [collect-prs]
+    if: inputs.auto_merge == 'true' && always()
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -233,17 +211,13 @@ jobs:
       - name: Merge Pull Requests
         env:
           GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
-          UPDATE_OUTDATED_PRS: ${{ needs.collect-outdated-prs.outputs.all_prs }}
-          UPDATE_FORCE_PRS: ${{ needs.collect-force-update-prs.outputs.all_prs }}
+          UPDATE_OUTDATED_PRS: ${{ needs.collect-prs.outputs.all_prs }}
         run: |
           echo "Merging pull requests..."
           echo "Auto merge value: ${{ inputs.auto_merge }}"
 
           echo "DEBUG: Outdated PRs data structure:"
           echo "$UPDATE_OUTDATED_PRS" | jq '.' || echo "Failed to parse UPDATE_OUTDATED_PRS as JSON: $UPDATE_OUTDATED_PRS"
-
-          echo "DEBUG: Force update PRs data structure:"
-          echo "$UPDATE_FORCE_PRS" | jq '.' || echo "Failed to parse UPDATE_FORCE_PRS as JSON: $UPDATE_FORCE_PRS"
 
           # Function to extract PR URLs from job outputs
           extract_prs() {
@@ -258,17 +232,13 @@ jobs:
           }
 
           # Extract PR URLs from both jobs
-          echo "Extracting PRs from update-outdated-data job..."
+          echo "Extracting PRs from job..."
           prs_from_update_outdated=$(extract_prs "$UPDATE_OUTDATED_PRS")
 
-          echo "Extracting PRs from update-issue-swe-data job..."
-          prs_from_update_force=$(extract_prs "$UPDATE_FORCE_PRS")
-
-          echo "PRs from update-outdated-data: $prs_from_update_outdated"
-          echo "PRs from update-issue-swe-data: $prs_from_update_force"
+          echo "PRs: $prs_from_update_outdated"    
 
           # Combine all PR URLs
-          all_prs=$(echo -e "${prs_from_update_outdated}\n${prs_from_update_force}" | grep -v "^$" || true)
+          all_prs=$(echo -e "${prs_from_update_outdated}" | grep -v "^$" || true)
 
           if [ -z "$all_prs" ]; then
             echo "No pull requests to merge."

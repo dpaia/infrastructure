@@ -24,6 +24,11 @@ on:
         description: 'Issue number'
         required: true
         type: string
+      auto_merge:
+        description: 'Automatically merge data updates'
+        required: false
+        type: boolean
+        default: false
 
 jobs:
   update-swe-data:
@@ -45,4 +50,5 @@ jobs:
           issue_id: ${{ github.event.inputs.issue_id }}
           github_token: ${{ secrets.PROJECT_TOKEN }}
           dataset_repo: ${{ vars.DATASET_REPO }}
+          auto_merge: ${{ github.event.inputs.auto_merge }}
           update_status: 'true'

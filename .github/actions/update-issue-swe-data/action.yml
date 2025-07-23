@@ -160,9 +160,8 @@ runs:
         chmod +x .github/generator/utils/generate_commit_message.py
 
         # Generate the commit message and title using Python script
-        echo "data_value<<EOF" >> $GITHUB_OUTPUT
-        .github/generator/utils/generate_commit_message.py >> $GITHUB_OUTPUT
-        echo "EOF" >> $GITHUB_OUTPUT
+        # Run the script and let it output directly to GITHUB_OUTPUT
+        .github/generator/utils/generate_commit_message.py >> $GITHUB_OUTPUT      
 
         echo "✅ Commit message and title generated successfully!"
 

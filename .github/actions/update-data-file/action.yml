@@ -1,0 +1,97 @@
+name: 'Update Repository File'
+description: 'Creates or updates a file in a GitHub repository with provided data'
+author: 'JetBrains'
+
+inputs:
+  github_token:
+    description: 'GitHub token for API access'
+    required: true
+  data_value:
+    description: 'JSON data to be written to the file'
+    required: true
+  issue_id:
+    description: 'Issue number'
+    required: true
+  repository:
+    description: 'Repository name'
+    required: true
+  dataset_repo:
+    description: 'Repository for storing dataset files'
+    required: true
+  organization:
+    description: 'GitHub organization name'
+    required: true
+  commit_message:
+    description: 'Commit message for the file update'
+    required: true
+
+outputs:
+  file_url:
+    description: 'The URL of the created or updated file in the repository'
+    value: ${{ steps.create-file.outputs.file_url }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Create or update repository file
+      id: create-file
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github_token }}
+        DATA_VALUE: ${{ inputs.data_value }}
+        ISSUE_ID: ${{ inputs.issue_id }}
+        REPOSITORY: ${{ inputs.repository }}
+        DATASET_REPO: ${{ inputs.dataset_repo }}
+        ORGANIZATION: ${{ inputs.organization }}
+        COMMIT_MESSAGE: ${{ inputs.commit_message }}
+      run: |
+        echo "Creating or updating repository file with JSON data..."
+
+        # Extract instance_id from the JSON data
+        INSTANCE_ID=$(echo "$DATA_VALUE" | jq -r '.instance_id')
+
+        # Create a temporary file with the JSON data
+        FILE_PATH="${REPOSITORY}/${INSTANCE_ID}.json"
+
+        # Replace slashes with underscores for the local filename to avoid directory issues
+        LOCAL_FILENAME="${FILE_PATH//\//__}"
+        echo "$DATA_VALUE" > "$LOCAL_FILENAME"
+
+        # Create a temporary directory for the repository
+        TEMP_DIR=$(mktemp -d)
+        cd "$TEMP_DIR"
+
+        # Clone the repository
+        echo "Cloning repository: $DATASET_REPO"
+        git clone "https://x-access-token:${GH_TOKEN}@github.com/${ORGANIZATION}/${DATASET_REPO}.git" .
+
+        # Create directory structure if it doesn't exist
+        mkdir -p "$(dirname "$FILE_PATH")"
+
+        # Copy the file to the repository
+        cp "$GITHUB_WORKSPACE/$LOCAL_FILENAME" "$FILE_PATH"
+        
+        # Add, commit, and push the changes
+        git add "$FILE_PATH"
+        git config --global user.email "action@github.com"
+        git config --global user.name "GitHub Action"
+        echo "Using commit message from Python script"
+        git commit -m "$COMMIT_MESSAGE"
+        git fetch origin main
+        git rebase origin main
+        git push origin main
+        
+        # Get the URL to the file in the repository
+        REPO_PARTS=(${DATASET_REPO//\// })
+        REPO_OWNER=${REPO_PARTS[0]}
+        REPO_NAME=${REPO_PARTS[1]}
+        BRANCH=$(git rev-parse --abbrev-ref HEAD)
+        FILE_URL="https://github.com/${ORGANIZATION}/${DATASET_REPO}/blob/${BRANCH}/${FILE_PATH}"
+        
+        echo "File URL: $FILE_URL"
+        echo "file_url=$FILE_URL" >> $GITHUB_OUTPUT
+        
+        # Clean up temporary files and directory
+        cd "$GITHUB_WORKSPACE"
+        rm "$LOCAL_FILENAME"
+        rm -rf "$TEMP_DIR"

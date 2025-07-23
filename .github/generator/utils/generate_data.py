@@ -526,8 +526,8 @@ def generate_patches(organization, repository, issue_number, commit_ids, test_fi
         tuple: (source_patch, test_patch) containing the combined patches for source and test files
     """
     # Get commit IDs for the ticket
-    if not commit_ids:
-        commit_ids = fetch_commit_ids(organization, repository, issue_number)
+    # if not commit_ids:
+    #     commit_ids = fetch_commit_ids(organization, repository, issue_number)
     
     if not commit_ids:
         print(f"No commits found for issue #{issue_number}", file=sys.stderr)

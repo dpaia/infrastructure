@@ -7,6 +7,8 @@ on:
       organization:
         description: 'GitHub organization name'
         required: true
+        type: string
+        default: 'jetbrains-eval-lab'
       generator:
         description: 'Profile'
         required: true

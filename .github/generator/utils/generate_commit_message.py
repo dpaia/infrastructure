@@ -2,6 +2,7 @@
 
 import os
 import sys
+import json
 from datetime import datetime
 
 # Import fetch_problem_statement from generate_data

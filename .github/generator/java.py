@@ -124,9 +124,8 @@ def _find_files_with_github_api(organization, repository, filename, commit=None)
     
     cmd = [
         'gh', 'api',
-        api_endpoint,
-        '--query', 'recursive=1',  # Add recursive parameter as a query parameter
-        '--jq', '.tree[] | select(.type=="blob") | .path'
+        api_endpoint,          # Add recursive parameter as a query parameter
+        '--jq', f'".tree[] | select(.path | endswith("{filename}")) | .path"'
     ]
     
     print(f"Running command: {' '.join(cmd)}", file=sys.stderr)

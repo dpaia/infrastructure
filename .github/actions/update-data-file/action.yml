@@ -116,14 +116,19 @@ runs:
         if [ "$AUTO_MERGE" = "true" ]; then
           echo "Auto-merging pull request with rebase..."
           gh pr merge "$PR_URL" --rebase --auto
-  
+
           # Wait for merge to complete
           echo "Waiting for merge to complete..."
           sleep 5
-  
-          # Delete the branch after successful merge
-          echo "Removing branch after merge..."
-          git push origin --delete "$BRANCH_NAME"
+
+          # Check if the merge was successful before deleting the branch
+          PR_STATE=$(gh pr view "$PR_URL" --json state --jq .state)
+          if [ "$PR_STATE" = "MERGED" ]; then
+            echo "Merge was successful. Removing branch..."
+            git push origin --delete "$BRANCH_NAME"
+          else
+            echo "Merge was not successful. Branch will not be deleted."
+          fi
         fi
         
         # Get the URL to the file in the repository

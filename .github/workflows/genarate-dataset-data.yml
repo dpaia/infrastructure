@@ -33,7 +33,8 @@ on:
       auto_merge:
         description: 'Automatically merge data updates'
         required: false
-        default: 'false'
+        type: boolean
+        default: false
 
 jobs:
   get-project-data:

@@ -112,7 +112,7 @@ runs:
         echo "Branch: $BRANCH_NAME"
         echo "Title: $TITLE"
         echo "Commit message: $COMMIT_MESSAGE"
-        PR_URL=$(gh pr create --base main --head "$BRANCH_NAME" --title "$TITLE" --body "$COMMIT_MESSAGE" --repo "${ORGANIZATION}/${DATASET_REPO}")
+        PR_URL=$(gh pr create --base main --head "$BRANCH_NAME" --title "[${DATASET_REPO}] $TITLE" --body "$COMMIT_MESSAGE" --repo "${ORGANIZATION}/${DATASET_REPO}")
         echo "Pull request created: $PR_URL"
         echo "pull_request_url=$PR_URL" >> $GITHUB_OUTPUT
         

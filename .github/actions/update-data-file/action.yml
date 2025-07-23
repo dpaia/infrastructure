@@ -93,16 +93,16 @@ runs:
         # Copy the file to the repository
         cp "$GITHUB_WORKSPACE/$LOCAL_FILENAME" "$FILE_PATH"
         
-        # Add, commit, and create a pull request
+        # Create a new branch with a unique name first
+        BRANCH_NAME="update-data-file-${ISSUE_ID}-$(date +%s)"
+        git checkout -b "$BRANCH_NAME"
+
+        # Add, commit on the new branch
         git add "$FILE_PATH"
         git config --local user.email "$GIT_USER_EMAIL"
         git config --local user.name "$GIT_USER_NAME"
-        
+
         git commit -m "$COMMIT_MESSAGE"
-        
-        # Create a new branch with a unique name
-        BRANCH_NAME="update-data-file-${ISSUE_ID}-$(date +%s)"
-        git checkout -b "$BRANCH_NAME"
         
         # Push to the new branch
         git push origin "$BRANCH_NAME"

@@ -36,32 +36,66 @@ def detect_build_system(organization, repository, commit=None):
             - "gradle" if Gradle with Groovy DSL is detected (build.gradle exists)
             - "" (empty string) if no build system is detected
     """
+    print(f"Starting build system detection for {organization}/{repository} at commit: {commit if commit else 'current'}", file=sys.stderr)
     # Use GitHub API to find build files
     try:
         # Find all pom.xml files
         maven_files = _find_files_with_github_api(organization, repository, "pom.xml", commit)
+        print(f"Maven files found: {len(maven_files)}", file=sys.stderr)
         if maven_files:
+            print(f"Maven files: {maven_files}", file=sys.stderr)
+            print(f"Build system detected: maven", file=sys.stderr)
             return "maven"
         
         # Find all build.gradle files
         gradle_groovy_files = _find_files_with_github_api(organization, repository, "build.gradle", commit)
+        print(f"Gradle Groovy files found: {len(gradle_groovy_files)}", file=sys.stderr)
+        if gradle_groovy_files:
+            print(f"Gradle Groovy files: {gradle_groovy_files}", file=sys.stderr)
         
         # Find all build.gradle.kts files
         gradle_kotlin_files = _find_files_with_github_api(organization, repository, "build.gradle.kts", commit)
+        print(f"Gradle Kotlin files found: {len(gradle_kotlin_files)}", file=sys.stderr)
+        if gradle_kotlin_files:
+            print(f"Gradle Kotlin files: {gradle_kotlin_files}", file=sys.stderr)
         
         # If Gradle is detected, determine the type
         if gradle_groovy_files or gradle_kotlin_files:
+            print(f"Gradle detected. Determining type between Groovy ({len(gradle_groovy_files)} files) and Kotlin ({len(gradle_kotlin_files)} files)", file=sys.stderr)
             # If both types exist, prioritize the one with more files
             # If equal, prioritize Kotlin as it's newer
             if len(gradle_kotlin_files) >= len(gradle_groovy_files):
+                print(f"Selected Gradle Kotlin as build system (more or equal files than Groovy)", file=sys.stderr)
+                print(f"Build system detected: gradle-kotlin", file=sys.stderr)
                 return "gradle-kotlin"
             else:
+                print(f"Selected Gradle Groovy as build system (more files than Kotlin)", file=sys.stderr)
+                print(f"Build system detected: gradle", file=sys.stderr)
                 return "gradle"
         
+        # If no build system detected via GitHub API, try a fallback approach
+        # For Maven projects, assume it's Maven if the repository name contains common Maven-related terms
+        repo_lower = repository.lower()
+        maven_terms = ["maven", "java", "spring", "jakarta", "jee", "j2ee"]
+        print(f"No build files found via GitHub API. Checking repository name for Maven-related terms: {maven_terms}", file=sys.stderr)
+        if any(term in repo_lower for term in maven_terms):
+            print(f"Repository name suggests Maven: {repository}", file=sys.stderr)
+            print(f"Build system detected (fallback): maven", file=sys.stderr)
+            return "maven"
+        
+        print(f"No build system detected for {organization}/{repository}", file=sys.stderr)
         return ""
     except Exception as e:
         print(f"Error using GitHub API to detect build system: {e}", file=sys.stderr)
-        # Return empty string when GitHub API fails
+        # Try fallback detection based on repository name for Maven
+        repo_lower = repository.lower()
+        maven_terms = ["maven", "java", "spring", "jakarta", "jee", "j2ee"]
+        print(f"Checking repository name for Maven-related terms after API error: {maven_terms}", file=sys.stderr)
+        if any(term in repo_lower for term in maven_terms):
+            print(f"GitHub API failed, but repository name suggests Maven: {repository}", file=sys.stderr)
+            print(f"Build system detected (error fallback): maven", file=sys.stderr)
+            return "maven"
+        print(f"No build system detected for {organization}/{repository} after API error", file=sys.stderr)
         return ""
 
 def _find_files_with_github_api(organization, repository, filename, commit=None):
@@ -77,6 +111,8 @@ def _find_files_with_github_api(organization, repository, filename, commit=None)
     Returns:
         list: A list of paths to the found files
     """
+    print(f"Searching for {filename} in {organization}/{repository} at commit: {commit if commit else 'current'}", file=sys.stderr)
+    
     # Base query
     query = f'filename:{filename}+repo:{organization}/{repository}'
     
@@ -85,16 +121,22 @@ def _find_files_with_github_api(organization, repository, filename, commit=None)
         # For specific commit, we need to use the ref parameter
         query += f'+ref:{commit}'
     
+    print(f"GitHub API query: {query}", file=sys.stderr)
+    
     cmd = [
         'gh', 'api',
         f'search/code?q={query}',
         '--jq', '.items[].path'
     ]
     
+    print(f"Running command: {' '.join(cmd)}", file=sys.stderr)
+    
     try:
         result = run_subprocess(cmd, capture_output=True, text=True, check=True)
         files = result.stdout.strip().split('\n')
-        return [file for file in files if file]
+        files = [file for file in files if file]
+        print(f"GitHub API found {len(files)} {filename} files", file=sys.stderr)
+        return files
     except Exception as e:
         print(f"Error searching for {filename}: {e}", file=sys.stderr)
         return []
@@ -123,7 +165,7 @@ try:
         "base_commit": os.environ.get('BASE_COMMIT', ''),
         "problem_statement": fetch_problem_statement(organization, repository, issue_number).get('body', ''),
         "version": "0.1",
-        "is_maven": f"{build_system == "maven"}",
+        "is_maven": build_system == "maven",
         "build_system": build_system
     }
 

@@ -166,6 +166,8 @@ jobs:
             "outdated": ${{ toJSON(needs.update-outdated-data.outputs) }},
             "force": ${{ toJSON(needs.update-issue-swe-data.outputs) }}
           }'
+          
+          echo "PR_JSON=$PR_JSON"
           echo "PR_JSON=$PR_JSON" >> $GITHUB_ENV
 
           # Create a JSON with all PRs

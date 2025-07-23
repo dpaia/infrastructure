@@ -28,9 +28,9 @@ inputs:
     default: 'true'
 
 outputs:
-  gist_url:
+  file_url:
     description: 'The URL of the created or updated file in the repository'
-    value: ${{ steps.create-update-gist.outputs.gist_url }}
+    value: ${{ steps.create-dataset-file.outputs.file_url }}
   has_error:
     description: 'Whether there was an error during the process'
     value: ${{ steps.check-error.outputs.has_error }}
@@ -165,7 +165,7 @@ runs:
         echo "✅ Commit message generated successfully!"
 
     - name: Create or update repository file
-      id: create-update-gist
+      id: create-dataset-file
       if: steps.check-error.outputs.has_error != 'true'
       shell: bash
       env:
@@ -221,7 +221,7 @@ runs:
         FILE_URL="https://github.com/${ORGANIZATION}/${DATASET_REPO}/blob/${BRANCH}/${FILE_PATH}"
         
         echo "File URL: $FILE_URL"
-        echo "gist_url=$FILE_URL" >> $GITHUB_OUTPUT
+        echo "file_url=$FILE_URL" >> $GITHUB_OUTPUT
         
         # Clean up temporary files and directory
         cd "$GITHUB_WORKSPACE"
@@ -235,7 +235,7 @@ runs:
         PROJECT_ID: ${{ steps.get-project-data.outputs.project_id }}
         ITEM_ID: ${{ steps.add-to-project.outputs.item_id }}
         DATA_FIELD_ID: ${{ steps.get-project-data.outputs.data_field_id }}
-        GIST_URL: ${{ steps.create-update-gist.outputs.gist_url }}
+        FILE_URL: ${{ steps.create-dataset-file.outputs.file_url }}
         HAS_ERROR: ${{ steps.check-error.outputs.has_error }}
       run: |
         echo "Setting Data field value..."
@@ -245,8 +245,8 @@ runs:
           echo "Error detected in data generation or test field extraction. Setting empty Data field."
           VALUE_TO_SET=""
         else
-          echo "Using gist URL: $GIST_URL"
-          VALUE_TO_SET="$GIST_URL"
+          echo "Using file URL: $FILE_URL"
+          VALUE_TO_SET="$FILE_URL"
         fi
 
         gh api graphql -f query='
@@ -268,7 +268,7 @@ runs:
         if [ "$VALUE_TO_SET" == "" ]; then
           echo "✅ Data field updated with empty value due to error!"
         else
-          echo "✅ Data field updated with gist URL: $VALUE_TO_SET"
+          echo "✅ Data field updated with URL: $VALUE_TO_SET"
         fi
 
     - name: Update Status field

@@ -138,7 +138,7 @@ jobs:
           repository: ${{ matrix.issue.repo_name }}
           issue_id: ${{ matrix.issue.issue_id }}
           github_token: ${{ secrets.PROJECT_TOKEN }}
-          dataset_repo: ${{ env.DATASET_REPO }}
+          dataset_repo: ${{ vars.DATASET_REPO }}
           auto_merge: false
           
       - name: Collect PR URLs
@@ -169,7 +169,7 @@ jobs:
           repository: ${{ matrix.issue.repo_name }}
           issue_id: ${{ matrix.issue.issue_id }}
           github_token: ${{ secrets.PROJECT_TOKEN }}
-          dataset_repo: ${{ env.DATASET_REPO }}
+          dataset_repo: ${{ vars.DATASET_REPO }}
           auto_merge: false
           
       - name: Collect PR URLs

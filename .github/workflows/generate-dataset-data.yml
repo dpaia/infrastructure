@@ -157,6 +157,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Install jq
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq
+
       - name: Extract PR URLs
         id: extract-prs
         run: |
@@ -169,28 +174,56 @@ jobs:
           if [ "${{ inputs.update }}" = "update" ]; then
             echo "Using PR data from update-outdated-data job"
 
-            # Extract each PR URL from the outputs object
+            # Get the output JSON
             OUTPUT_JSON='${{ toJSON(needs.update-outdated-data.outputs) }}'
             echo "$OUTPUT_JSON" > temp_output.json
 
-            # Extract PR URLs using grep and pattern matching instead of jq
-            grep -o 'https://github.com/[^"]*' temp_output.json > pr_list.txt || true
+            # Use jq to extract PR URLs from the pull_requests field
+            if jq -e '.pull_requests' temp_output.json > /dev/null 2>&1; then
+              PR_JSON=$(jq -r '.pull_requests' temp_output.json)
+              echo "PR_JSON from pull_requests field: $PR_JSON"
+              echo "$PR_JSON" > pr_json.json
+
+              # Extract URLs from pr_json
+              jq -r 'to_entries[] | .value' pr_json.json >> pr_list.txt || true
+            fi
+
+            # Also look for direct pr_* keys at the top level
+            jq -r 'to_entries[] | select(.key | startswith("pr_")) | .value' temp_output.json >> pr_list.txt || true
 
           else
             echo "Using PR data from update-issue-swe-data job"
 
-            # Extract each PR URL from the outputs object
+            # Get the output JSON
             OUTPUT_JSON='${{ toJSON(needs.update-issue-swe-data.outputs) }}'
             echo "$OUTPUT_JSON" > temp_output.json
 
-            # Extract PR URLs using grep and pattern matching instead of jq
-            grep -o 'https://github.com/[^"]*' temp_output.json > pr_list.txt || true
+            # Use jq to extract PR URLs from the pull_requests field
+            if jq -e '.pull_requests' temp_output.json > /dev/null 2>&1; then
+              PR_JSON=$(jq -r '.pull_requests' temp_output.json)
+              echo "PR_JSON from pull_requests field: $PR_JSON"
+              echo "$PR_JSON" > pr_json.json
+
+              # Extract URLs from pr_json
+              jq -r 'to_entries[] | .value' pr_json.json >> pr_list.txt || true
+            fi
+
+            # Also look for direct pr_* keys at the top level
+            jq -r 'to_entries[] | select(.key | startswith("pr_")) | .value' temp_output.json >> pr_list.txt || true
           fi
+
+          # Remove any duplicates and empty lines
+          sort -u pr_list.txt | grep -v '^$' > pr_list_unique.txt
+          mv pr_list_unique.txt pr_list.txt
+
+          # Show what we found
+          echo "Found these PRs:"
+          cat pr_list.txt
 
           # Create a comma-separated list of PR URLs
           PR_LIST=$(cat pr_list.txt | tr '\n' ',' | sed 's/,$//')
 
-          echo "Found PRs: $PR_LIST"
+          echo "PR List: $PR_LIST"
 
           # Output the list of PRs
           echo "pr_list=$PR_LIST" >> $GITHUB_OUTPUT

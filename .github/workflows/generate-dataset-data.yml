@@ -165,52 +165,46 @@ jobs:
       - name: Extract PR URLs
         id: extract-prs
         run: |
-          echo "Collecting PR URLs based on update mode: ${{ inputs.update }}"
+          echo "Collecting PR URLs from all executed jobs"
 
           # Create a temporary file to store PR URLs
           touch pr_list.txt
 
-          # Extract PR URLs based on which job actually ran
-          if [ "${{ inputs.update }}" = "update" ]; then
-            echo "Using PR data from update-outdated-data job"
+          # Check and process update-outdated-data job outputs
+          echo "Checking PR data from update-outdated-data job"
+          OUTPUT_JSON='${{ toJSON(needs.update-outdated-data.outputs) }}'
+          echo "$OUTPUT_JSON" > temp_outdated_output.json
 
-            # Get the output JSON
-            OUTPUT_JSON='${{ toJSON(needs.update-outdated-data.outputs) }}'
-            echo "$OUTPUT_JSON" > temp_output.json
+          # Use jq to extract PR URLs from the pull_requests field
+          if jq -e '.pull_requests' temp_outdated_output.json > /dev/null 2>&1; then
+            PR_JSON=$(jq -r '.pull_requests' temp_outdated_output.json)
+            echo "PR_JSON from update-outdated-data pull_requests field: $PR_JSON"
+            echo "$PR_JSON" > pr_json.json
 
-            # Use jq to extract PR URLs from the pull_requests field
-            if jq -e '.pull_requests' temp_output.json > /dev/null 2>&1; then
-              PR_JSON=$(jq -r '.pull_requests' temp_output.json)
-              echo "PR_JSON from pull_requests field: $PR_JSON"
-              echo "$PR_JSON" > pr_json.json
-
-              # Extract URLs from pr_json
-              jq -r 'to_entries[] | .value' pr_json.json >> pr_list.txt || true
-            fi
-
-            # Also look for direct pr_* keys at the top level
-            jq -r 'to_entries[] | select(.key | startswith("pr_")) | .value' temp_output.json >> pr_list.txt || true
-
-          else
-            echo "Using PR data from update-issue-swe-data job"
-
-            # Get the output JSON
-            OUTPUT_JSON='${{ toJSON(needs.update-issue-swe-data.outputs) }}'
-            echo "$OUTPUT_JSON" > temp_output.json
-
-            # Use jq to extract PR URLs from the pull_requests field
-            if jq -e '.pull_requests' temp_output.json > /dev/null 2>&1; then
-              PR_JSON=$(jq -r '.pull_requests' temp_output.json)
-              echo "PR_JSON from pull_requests field: $PR_JSON"
-              echo "$PR_JSON" > pr_json.json
-
-              # Extract URLs from pr_json
-              jq -r 'to_entries[] | .value' pr_json.json >> pr_list.txt || true
-            fi
-
-            # Also look for direct pr_* keys at the top level
-            jq -r 'to_entries[] | select(.key | startswith("pr_")) | .value' temp_output.json >> pr_list.txt || true
+            # Extract URLs from pr_json
+            jq -r 'to_entries[] | .value' pr_json.json >> pr_list.txt || true
           fi
+
+          # Also look for direct pr_* keys at the top level
+          jq -r 'to_entries[] | select(.key | startswith("pr_")) | .value' temp_outdated_output.json >> pr_list.txt || true
+
+          # Check and process update-issue-swe-data job outputs
+          echo "Checking PR data from update-issue-swe-data job"
+          OUTPUT_JSON='${{ toJSON(needs.update-issue-swe-data.outputs) }}'
+          echo "$OUTPUT_JSON" > temp_swe_output.json
+
+          # Use jq to extract PR URLs from the pull_requests field
+          if jq -e '.pull_requests' temp_swe_output.json > /dev/null 2>&1; then
+            PR_JSON=$(jq -r '.pull_requests' temp_swe_output.json)
+            echo "PR_JSON from update-issue-swe-data pull_requests field: $PR_JSON"
+            echo "$PR_JSON" > pr_json.json
+
+            # Extract URLs from pr_json
+            jq -r 'to_entries[] | .value' pr_json.json >> pr_list.txt || true
+          fi
+
+          # Also look for direct pr_* keys at the top level
+          jq -r 'to_entries[] | select(.key | startswith("pr_")) | .value' temp_swe_output.json >> pr_list.txt || true
 
           # Remove any duplicates and empty lines
           sort -u pr_list.txt | grep -v '^$' > pr_list_unique.txt

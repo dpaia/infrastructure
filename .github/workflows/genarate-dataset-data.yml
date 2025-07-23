@@ -76,6 +76,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       commits-match: ${{ steps.set-matrix-output.outputs.commits-match-matrix }}
+      pull_requests: ${{ toJSON(steps.collect-prs.outputs) }}
     strategy:
       matrix:
         issue: ${{ fromJson(needs.find-issues.outputs.issue-matrix) }}
@@ -129,6 +130,7 @@ jobs:
 
       - name: Update Issue SWE Data
         if: steps.compare-commits.outputs.match == 'false'
+        id: update-swe-data
         uses: ./.github/actions/update-issue-swe-data
         with:
           generator: ${{inputs.generator}}
@@ -137,12 +139,20 @@ jobs:
           issue_id: ${{ matrix.issue.issue_id }}
           github_token: ${{ secrets.PROJECT_TOKEN }}
           dataset_repo: ${{ secrets.DATASET_REPO }}
-          auto_merge: ${{ inputs.auto_merge }}
+          auto_merge: false
+          
+      - name: Collect PR URLs
+        id: collect-prs
+        if: steps.compare-commits.outputs.match == 'false' && steps.update-swe-data.outputs.pull_request_url != ''
+        run: |
+          echo "pr_${{ matrix.issue.issue_id }}=${{ steps.update-swe-data.outputs.pull_request_url }}" >> $GITHUB_OUTPUT
 
   update-issue-swe-data:
     needs: [find-issues]
     if: inputs.update == 'force-update'
     runs-on: ubuntu-latest
+    outputs:
+      pull_requests: ${{ toJSON(steps.collect-prs.outputs) }}
     strategy:
       matrix:
         issue: ${{ fromJson(needs.find-issues.outputs.issue-matrix) }}
@@ -151,6 +161,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Update Issue SWE Data
+        id: update-swe-data
         uses: ./.github/actions/update-issue-swe-data
         with:
           generator: ${{inputs.generator}}
@@ -159,4 +170,65 @@ jobs:
           issue_id: ${{ matrix.issue.issue_id }}
           github_token: ${{ secrets.PROJECT_TOKEN }}
           dataset_repo: ${{ secrets.DATASET_REPO }}
-          auto_merge: ${{ inputs.auto_merge }}
+          auto_merge: false
+          
+      - name: Collect PR URLs
+        id: collect-prs
+        if: steps.update-swe-data.outputs.pull_request_url != ''
+        run: |
+          echo "pr_${{ matrix.issue.issue_id }}=${{ steps.update-swe-data.outputs.pull_request_url }}" >> $GITHUB_OUTPUT
+          
+  merge-pull-requests:
+    needs: [update-outdated-data, update-issue-swe-data]
+    if: inputs.auto_merge == true && (needs.update-outdated-data.result == 'success' || needs.update-issue-swe-data.result == 'success')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        
+      - name: Merge Pull Requests
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
+          UPDATE_OUTDATED_PRS: ${{ needs.update-outdated-data.outputs.pull_requests }}
+          UPDATE_FORCE_PRS: ${{ needs.update-issue-swe-data.outputs.pull_requests }}
+        run: |
+          echo "Merging pull requests..."
+          
+          # Function to extract PR URLs from job outputs
+          extract_prs() {
+            local json_data="$1"
+            if [ -z "$json_data" ] || [ "$json_data" == "null" ]; then
+              return
+            fi
+            
+            # Parse the JSON and extract PR URLs
+            echo "$json_data" | jq -r 'to_entries[] | .value' | grep -v "^$" || true
+          }
+          
+          # Extract PR URLs from both jobs
+          prs_from_update_outdated=$(extract_prs "$UPDATE_OUTDATED_PRS")
+          prs_from_update_force=$(extract_prs "$UPDATE_FORCE_PRS")
+          
+          # Combine all PR URLs
+          all_prs=$(echo -e "${prs_from_update_outdated}\n${prs_from_update_force}" | grep -v "^$" || true)
+          
+          if [ -z "$all_prs" ]; then
+            echo "No pull requests to merge."
+            exit 0
+          fi
+          
+          echo "Found the following pull requests to merge:"
+          echo "$all_prs"
+          
+          # Merge each PR one by one
+          echo "$all_prs" | while read pr_url; do
+            if [ -n "$pr_url" ]; then
+              echo "Merging pull request: $pr_url"
+              gh pr merge "$pr_url" --rebase --delete-branch
+              
+              # Wait a bit between merges to avoid rate limiting
+              sleep 2
+            fi
+          done
+          
+          echo "All pull requests have been merged."

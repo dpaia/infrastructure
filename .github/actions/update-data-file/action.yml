@@ -44,6 +44,9 @@ outputs:
   file_url:
     description: 'The URL of the created or updated file in the repository'
     value: ${{ steps.create-file.outputs.file_url }}
+  pull_request_url:
+    description: 'The URL of the created pull request'
+    value: ${{ steps.create-file.outputs.pull_request_url }}
 
 runs:
   using: 'composite'
@@ -111,6 +114,7 @@ runs:
         echo "Commit message: $COMMIT_MESSAGE"
         PR_URL=$(gh pr create --base main --head "$BRANCH_NAME" --title "$TITLE" --body "$COMMIT_MESSAGE" --repo "${ORGANIZATION}/${DATASET_REPO}")
         echo "Pull request created: $PR_URL"
+        echo "pull_request_url=$PR_URL" >> $GITHUB_OUTPUT
         
         # Merge the pull request if requested
         if [ "$AUTO_MERGE" = "true" ]; then

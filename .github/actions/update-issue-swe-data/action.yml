@@ -38,6 +38,9 @@ outputs:
   has_error:
     description: 'Whether there was an error during the process'
     value: ${{ steps.check-error.outputs.has_error }}
+  pull_request_url:
+    description: 'The URL of the created pull request'
+    value: ${{ steps.create-dataset-file.outputs.pull_request_url }}
 
 runs:
   using: 'composite'

@@ -106,6 +106,9 @@ runs:
         
         # Create a pull request using the GitHub CLI
         echo "Creating pull request..."
+        echo "Branch: $BRANCH_NAME"
+        echo "Title: $TITLE"
+        echo "Commit message: $COMMIT_MESSAGE"
         PR_URL=$(gh pr create --base main --head "$BRANCH_NAME" --title "$TITLE" --body "$COMMIT_MESSAGE" --repo "${ORGANIZATION}/${DATASET_REPO}")
         echo "Pull request created: $PR_URL"
         

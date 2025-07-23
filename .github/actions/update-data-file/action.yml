@@ -112,10 +112,10 @@ runs:
         PR_URL=$(gh pr create --base main --head "$BRANCH_NAME" --title "$TITLE" --body "$COMMIT_MESSAGE" --repo "${ORGANIZATION}/${DATASET_REPO}")
         echo "Pull request created: $PR_URL"
         
-        # Auto-merge the pull request if requested
+        # Merge the pull request if requested
         if [ "$AUTO_MERGE" = "true" ]; then
-          echo "Auto-merging pull request with rebase..."
-          gh pr merge "$PR_URL" --rebase --auto
+          echo "Merging pull request with rebase..."
+          gh pr merge "$PR_URL" --rebase
 
           # Wait for merge to complete
           echo "Waiting for merge to complete..."

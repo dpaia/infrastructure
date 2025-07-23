@@ -1,0 +1,44 @@
+name: 'Get Latest Commit'
+description: 'Fetches commits related to a GitHub issue (including manually linked commits in description and comments), sorted by date, and returns the latest commit'
+author: 'JetBrains'
+
+inputs:
+  organization:
+    description: 'GitHub organization name'
+    required: true
+  repository:
+    description: 'Repository name'
+    required: true
+  issue_id:
+    description: 'Issue number'
+    required: true
+  github_token:
+    description: 'GitHub token for API access'
+    required: true
+
+outputs:
+  commit_hash:
+    description: 'The hash of the latest commit related to the issue'
+    value: ${{ steps.fetch-commit.outputs.commit_hash }}
+  base_commit_hash:
+    description: 'The hash of the parent commit (base commit)'
+    value: ${{ steps.fetch-commit.outputs.base_commit_hash }}
+  commits:
+    description: 'Array of commits linked to the issue, sorted by date (newest last)'
+    value: ${{ steps.fetch-commit.outputs.commits }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Fetch latest commit related to issue
+      id: fetch-commit
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github_token }}
+      run: |
+        # Run the Python script to fetch commits
+        python .github/generator/utils/fetch_commits.py \
+          "${{ inputs.organization }}" \
+          "${{ inputs.repository }}" \
+          "${{ inputs.issue_id }}" \
+          "${{ inputs.github_token }}"

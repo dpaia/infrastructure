@@ -23,7 +23,7 @@ This repository contains several GitHub Actions workflows that automate various 
 
 **Custom Action Steps:**
 The custom action performs the following steps:
-1. `get-latest-commit`: Retrieves the latest commit related to the issue
+1. `get-commits`: Retrieves the latest commit related to the issue
 2. `fetch-issue-id`: Gets the GitHub GraphQL ID for the issue
 3. `get-project-data`: Fetches project and field IDs from a GitHub Project
 4. `add-to-project`: Adds the issue to the project

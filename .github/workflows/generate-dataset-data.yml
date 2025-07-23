@@ -116,8 +116,8 @@ jobs:
           github_token: ${{ secrets.PROJECT_TOKEN }}
 
       - name: Get latest commit
-        id: get-latest-commit
-        uses: ./.github/actions/get-latest-commit
+        id: get-commits
+        uses: ./.github/actions/get-commits
         with:
           organization: ${{ matrix.issue.org_name }}
           repository: ${{ matrix.issue.repo_name }}
@@ -128,7 +128,7 @@ jobs:
         id: compare-commits
         env:
           COMMIT_FIELD_VALUE: ${{ steps.get-commit-value.outputs.field_value }}
-          LATEST_COMMIT: ${{ steps.get-latest-commit.outputs.commit_hash }}
+          LATEST_COMMIT: ${{ steps.get-commits.outputs.commit_hash }}
         run: |
           echo "Commit field value: $COMMIT_FIELD_VALUE"
           echo "Latest commit: $LATEST_COMMIT"

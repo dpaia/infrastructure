@@ -10,6 +10,7 @@ issue_number = os.environ.get('ISSUE_NUMBER', 'unknown')
 repository = os.environ.get('REPOSITORY', 'unknown')
 organization = os.environ.get('ORGANIZATION', 'jetbrains-eval-lab')
 latest_commit = os.environ.get('LATEST_COMMIT', '')
+linked_commits = os.environ.get('LINKED_COMMITS', '')
 fail_to_pass = os.environ.get('FAIL_TO_PASS', '')
 pass_to_pass = os.environ.get('PASS_TO_PASS', '')
 
@@ -128,7 +129,7 @@ def _find_files_with_github_api(organization, repository, filename, commit=None)
 # Wrap the main part of the script in a try-except block to ensure we always output valid JSON
 try:
     # Generate source and test patches
-    source_patch, test_patch = generate_patches(organization, repository, issue_number, is_test_file)
+    source_patch, test_patch = generate_patches(organization, repository, issue_number, linked_commits, is_test_file)
     
     # Get base commit from environment variables
     base_commit = os.environ.get('BASE_COMMIT', '')

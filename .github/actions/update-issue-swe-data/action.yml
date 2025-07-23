@@ -46,8 +46,8 @@ runs:
   using: 'composite'
   steps:
     - name: Get latest commit
-      id: get-latest-commit
-      uses: ./.github/actions/get-latest-commit
+      id: get-commits
+      uses: ./.github/actions/get-commits
       with:
         organization: ${{ inputs.organization }}
         repository: ${{ inputs.repository }}
@@ -120,8 +120,9 @@ runs:
         ISSUE_NUMBER: ${{ inputs.issue_id }}
         REPOSITORY: ${{ inputs.repository }}
         ORGANIZATION: ${{ inputs.organization }}
-        LATEST_COMMIT: ${{ steps.get-latest-commit.outputs.commit_hash }}
-        BASE_COMMIT: ${{ steps.get-latest-commit.outputs.base_commit_hash || '' }}
+        LATEST_COMMIT: ${{ steps.get-commits.outputs.commit_hash }}
+        BASE_COMMIT: ${{ steps.get-commits.outputs.base_commit_hash || '' }}
+        LINKED_COMMITS: ${{ steps.get-commits.outputs.commits }}
         GH_TOKEN: ${{ inputs.github_token }}
         FAIL_TO_PASS: ${{ steps.extract-fields.outputs.fail_to_pass }}
         PASS_TO_PASS: ${{ steps.extract-fields.outputs.pass_to_pass }}
@@ -155,7 +156,7 @@ runs:
         ISSUE_ID: ${{ inputs.issue_id }}
         REPOSITORY: ${{ inputs.repository }}
         ORGANIZATION: ${{ inputs.organization }}
-        LATEST_COMMIT: ${{ steps.get-latest-commit.outputs.commit_hash }}
+        LATEST_COMMIT: ${{ steps.get-commits.outputs.commit_hash }}
         FAIL_TO_PASS: ${{ steps.extract-fields.outputs.fail_to_pass }}
         PASS_TO_PASS: ${{ steps.extract-fields.outputs.pass_to_pass }}
       run: |
@@ -323,7 +324,7 @@ runs:
         PROJECT_ID: ${{ steps.get-project-data.outputs.project_id }}
         ITEM_ID: ${{ steps.add-to-project.outputs.item_id }}
         COMMIT_FIELD_ID: ${{ steps.get-project-data.outputs.commit_field_id }}
-        LATEST_COMMIT: ${{ steps.get-latest-commit.outputs.commit_hash }}
+        LATEST_COMMIT: ${{ steps.get-commits.outputs.commit_hash }}
       run: |
         echo "Setting Commit field value..."
         gh api graphql -f query='

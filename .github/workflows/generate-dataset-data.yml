@@ -150,7 +150,7 @@ jobs:
   # This job runs after all matrix jobs are complete to collect PR URLs
   collect-prs:
     needs: [update-outdated-data, update-issue-swe-data]
-    if: inputs.auto_merge && always()
+    if: always()  # Always run this job to collect PRs, regardless of auto_merge setting
     runs-on: ubuntu-latest
     outputs:
       pr_list: ${{ steps.extract-prs.outputs.pr_list }}
@@ -170,41 +170,89 @@ jobs:
           # Create a temporary file to store PR URLs
           touch pr_list.txt
 
+          # Check which jobs were executed based on the update mode
+          echo "Update mode: ${{ inputs.update }}"
+          if [ "${{ inputs.update }}" = "update" ]; then
+            echo "Update mode is 'update', so update-outdated-data job should have run"
+          else
+            echo "Update mode is 'force-update', so update-issue-swe-data job should have run"
+          fi
+
           # Check and process update-outdated-data job outputs
           echo "Checking PR data from update-outdated-data job"
           OUTPUT_JSON='${{ toJSON(needs.update-outdated-data.outputs) }}'
+          echo "Raw update-outdated-data outputs: $OUTPUT_JSON"
           echo "$OUTPUT_JSON" > temp_outdated_output.json
 
-          # Use jq to extract PR URLs from the pull_requests field
-          if jq -e '.pull_requests' temp_outdated_output.json > /dev/null 2>&1; then
-            PR_JSON=$(jq -r '.pull_requests' temp_outdated_output.json)
-            echo "PR_JSON from update-outdated-data pull_requests field: $PR_JSON"
-            echo "$PR_JSON" > pr_json.json
+          # Check if the job ran and has outputs
+          if [ "$OUTPUT_JSON" = "{}" ] || [ "$OUTPUT_JSON" = "" ]; then
+            echo "No outputs from update-outdated-data job, it may not have run"
+          else
+            # Use jq to extract PR URLs from the pull_requests field
+            if jq -e '.pull_requests' temp_outdated_output.json > /dev/null 2>&1; then
+              PR_JSON=$(jq -r '.pull_requests' temp_outdated_output.json)
+              echo "PR_JSON from update-outdated-data pull_requests field: $PR_JSON"
+              
+              if [ "$PR_JSON" != "{}" ] && [ "$PR_JSON" != "" ] && [ "$PR_JSON" != "null" ]; then
+                echo "$PR_JSON" > pr_json.json
+                # Extract URLs from pr_json
+                jq -r 'to_entries[] | .value' pr_json.json >> pr_list.txt || true
+                echo "Extracted PR URLs from update-outdated-data pull_requests field"
+              else
+                echo "Empty or null pull_requests field in update-outdated-data outputs"
+              fi
+            else
+              echo "No pull_requests field found in update-outdated-data outputs"
+            fi
 
-            # Extract URLs from pr_json
-            jq -r 'to_entries[] | .value' pr_json.json >> pr_list.txt || true
+            # Also look for direct pr_* keys at the top level
+            PR_KEYS=$(jq -r 'to_entries[] | select(.key | startswith("pr_")) | .key' temp_outdated_output.json || echo "")
+            if [ -n "$PR_KEYS" ]; then
+              echo "Found these PR keys in update-outdated-data outputs: $PR_KEYS"
+              jq -r 'to_entries[] | select(.key | startswith("pr_")) | .value' temp_outdated_output.json >> pr_list.txt || true
+              echo "Extracted PR URLs from update-outdated-data direct pr_* keys"
+            else
+              echo "No direct pr_* keys found in update-outdated-data outputs"
+            fi
           fi
-
-          # Also look for direct pr_* keys at the top level
-          jq -r 'to_entries[] | select(.key | startswith("pr_")) | .value' temp_outdated_output.json >> pr_list.txt || true
 
           # Check and process update-issue-swe-data job outputs
           echo "Checking PR data from update-issue-swe-data job"
           OUTPUT_JSON='${{ toJSON(needs.update-issue-swe-data.outputs) }}'
+          echo "Raw update-issue-swe-data outputs: $OUTPUT_JSON"
           echo "$OUTPUT_JSON" > temp_swe_output.json
 
-          # Use jq to extract PR URLs from the pull_requests field
-          if jq -e '.pull_requests' temp_swe_output.json > /dev/null 2>&1; then
-            PR_JSON=$(jq -r '.pull_requests' temp_swe_output.json)
-            echo "PR_JSON from update-issue-swe-data pull_requests field: $PR_JSON"
-            echo "$PR_JSON" > pr_json.json
+          # Check if the job ran and has outputs
+          if [ "$OUTPUT_JSON" = "{}" ] || [ "$OUTPUT_JSON" = "" ]; then
+            echo "No outputs from update-issue-swe-data job, it may not have run"
+          else
+            # Use jq to extract PR URLs from the pull_requests field
+            if jq -e '.pull_requests' temp_swe_output.json > /dev/null 2>&1; then
+              PR_JSON=$(jq -r '.pull_requests' temp_swe_output.json)
+              echo "PR_JSON from update-issue-swe-data pull_requests field: $PR_JSON"
+              
+              if [ "$PR_JSON" != "{}" ] && [ "$PR_JSON" != "" ] && [ "$PR_JSON" != "null" ]; then
+                echo "$PR_JSON" > pr_json.json
+                # Extract URLs from pr_json
+                jq -r 'to_entries[] | .value' pr_json.json >> pr_list.txt || true
+                echo "Extracted PR URLs from update-issue-swe-data pull_requests field"
+              else
+                echo "Empty or null pull_requests field in update-issue-swe-data outputs"
+              fi
+            else
+              echo "No pull_requests field found in update-issue-swe-data outputs"
+            fi
 
-            # Extract URLs from pr_json
-            jq -r 'to_entries[] | .value' pr_json.json >> pr_list.txt || true
+            # Also look for direct pr_* keys at the top level
+            PR_KEYS=$(jq -r 'to_entries[] | select(.key | startswith("pr_")) | .key' temp_swe_output.json || echo "")
+            if [ -n "$PR_KEYS" ]; then
+              echo "Found these PR keys in update-issue-swe-data outputs: $PR_KEYS"
+              jq -r 'to_entries[] | select(.key | startswith("pr_")) | .value' temp_swe_output.json >> pr_list.txt || true
+              echo "Extracted PR URLs from update-issue-swe-data direct pr_* keys"
+            else
+              echo "No direct pr_* keys found in update-issue-swe-data outputs"
+            fi
           fi
-
-          # Also look for direct pr_* keys at the top level
-          jq -r 'to_entries[] | select(.key | startswith("pr_")) | .value' temp_swe_output.json >> pr_list.txt || true
 
           # Remove any duplicates and empty lines
           sort -u pr_list.txt | grep -v '^$' > pr_list_unique.txt
@@ -214,12 +262,17 @@ jobs:
           echo "Found these PRs:"
           cat pr_list.txt
 
-          # Create a comma-separated list of PR URLs
-          PR_LIST=$(cat pr_list.txt | tr '\n' ',' | sed 's/,$//')
+          # Check if we found any PRs
+          if [ ! -s pr_list.txt ]; then
+            echo "No PRs found in any job outputs"
+            PR_LIST=""
+          else
+            # Create a comma-separated list of PR URLs
+            PR_LIST=$(cat pr_list.txt | tr '\n' ',' | sed 's/,$//')
+            echo "PR List: $PR_LIST"
+          fi
 
-          echo "PR List: $PR_LIST"
-
-          # Output the list of PRs
+          # Output the list of PRs (even if empty)
           echo "pr_list=$PR_LIST" >> $GITHUB_OUTPUT
           echo "PR collection complete"
 

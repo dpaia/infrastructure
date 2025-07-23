@@ -156,17 +156,15 @@ runs:
         FAIL_TO_PASS: ${{ steps.extract-fields.outputs.fail_to_pass }}
         PASS_TO_PASS: ${{ steps.extract-fields.outputs.pass_to_pass }}
       run: |
-        echo "Generating commit message using Python script..."
-
         # Make the script executable
         chmod +x .github/generator/utils/generate_commit_message.py
 
-        # Generate the commit message using Python script
-        echo "commit_message<<COMMIT_MESSAGE_DELIM" >> $GITHUB_OUTPUT
+        # Generate the commit message and title using Python script
+        echo "data_value<<EOF" >> $GITHUB_OUTPUT
         .github/generator/utils/generate_commit_message.py >> $GITHUB_OUTPUT
-        echo "COMMIT_MESSAGE_DELIM" >> $GITHUB_OUTPUT
+        echo "EOF" >> $GITHUB_OUTPUT
 
-        echo "✅ Commit message generated successfully!"
+        echo "✅ Commit message and title generated successfully!"
 
     - name: Create or update data file
       id: create-dataset-file
@@ -177,6 +175,7 @@ runs:
         repository: ${{ inputs.repository }}
         issue_id: ${{ inputs.issue_id }}
         data_value: ${{ steps.generate-data.outputs.data_value }}
+        title: ${{ steps.generate-commit-message.outputs.title }}
         commit_message: ${{ steps.generate-commit-message.outputs.commit_message }}
         github_token: ${{ inputs.github_token }}
         dataset_repo: ${{ inputs.dataset_repo }}

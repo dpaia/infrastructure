@@ -18,6 +18,9 @@ inputs:
   commit_message:
     description: 'Commit message for the file update'
     required: true
+  title:
+    description: 'Title for the pull request'
+    required: true
   github_token:
     description: 'GitHub token for API access'
     required: true
@@ -55,6 +58,7 @@ runs:
         REPOSITORY: ${{ inputs.repository }}
         DATASET_REPO: ${{ inputs.dataset_repo }}
         ORGANIZATION: ${{ inputs.organization }}
+        TITLE: ${{ inputs.title }}
         COMMIT_MESSAGE: ${{ inputs.commit_message }}
         AUTO_MERGE: ${{ inputs.auto_merge }}
         GIT_USER_EMAIL: ${{ inputs.git_user_email }}
@@ -102,7 +106,7 @@ runs:
         
         # Create a pull request using the GitHub CLI
         echo "Creating pull request..."
-        PR_URL=$(gh pr create --base main --head "$BRANCH_NAME" --title "$COMMIT_MESSAGE" --body "$COMMIT_MESSAGE" --repo "${ORGANIZATION}/${DATASET_REPO}")
+        PR_URL=$(gh pr create --base main --head "$BRANCH_NAME" --title "$TITLE" --body "$COMMIT_MESSAGE" --repo "${ORGANIZATION}/${DATASET_REPO}")
         echo "Pull request created: $PR_URL"
         
         # Auto-merge the pull request if requested

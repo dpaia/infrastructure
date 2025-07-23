@@ -55,7 +55,7 @@ runs:
           # Try to check for cross-referenced PRs that might contain commits
           echo "Checking for related pull requests..."
           related_prs=$(gh api repos/${owner}/${repo_name}/issues/${issue_number}/timeline \
-            --jq '.[] | select(.event == "cross-referenced" and .source.issue.pull_request != null) | .source.issue.number')
+            --jq '.[] | select(.event == "cross-referenced" and .source.issue.pull_request != null and .source.issue.repository.owner.login == "'${owner}'" and .source.issue.repository.name == "'${repo_name}'") | .source.issue.number')
 
           if [ -n "$related_prs" ]; then
             echo "Found related PRs: $related_prs"

@@ -1,16 +1,12 @@
 name: Export SWE Dataset
-run-name: "[${{inputs.generator}}] Export SWE Dataset: ${{ inputs.search_query }} -> ${{ inputs.output_file }}"
+run-name: "Export SWE Dataset: ${{ inputs.search_query }} -> ${{ inputs.output_file }}"
 
 on:
   workflow_dispatch:
     inputs:
-      generator:
-        description: 'Profile'
+      organization:
+        description: 'GitHub organization name'
         required: true
-        default: 'java'
-        type: choice
-        options:
-          - java
       search_query:
         description: >
           GitHub issue search
@@ -19,14 +15,6 @@ on:
       output_file:
         description: "Export file name"
         default: "dataset.json"
-      update:
-        description: "Update mode for existing data"
-        type: choice
-        options:
-          - none
-          - update
-          - force-update
-        default: "none"
 
 jobs:
   get-project-data:
@@ -51,138 +39,19 @@ jobs:
     needs: get-project-data
     runs-on: ubuntu-latest
     outputs:
-      issue-matrix: ${{ steps.set-matrix.outputs.matrix }}
+      issue-matrix: ${{ steps.find-issues.outputs.issue-matrix }}
     steps:
       - uses: actions/checkout@v4
-
-      - name: Install jq
-        run: sudo apt-get update && sudo apt-get -y install jq
 
       - name: Find issues by query
         id: find-issues
-        env:
-          GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
-          ORG:  ${{ github.repository_owner }}
-          QRAW: ${{ inputs.search_query }}
-        shell: bash
-        run: |
-          ME="${{ github.actor }}"
-          QFIXED=$(echo "$QRAW" | sed "s/@me/$ME/g")
-          QUERY="project:$ORG/2 is:issue $QFIXED"
-
-          echo "🔎 GitHub search query: $QUERY"
-
-          PAGE=100
-          
-          # Get issue IDs and repository info for the matrix
-          gh api --paginate -X GET search/issues \
-            -H "X-GitHub-Api-Version: 2022-11-28" \
-            -f q="$QUERY" -f per_page="$PAGE" -f advanced_search=true |
-          jq -c '.items[] | {issue_id: .number | tostring, repo_name: .repository_url | split("/") | .[-1], org_name: .repository_url | split("/") | .[-2]}' |
-          jq -s '.' > issue_ids.json
-          
-          echo "Found $(jq length issue_ids.json) issues"
-
-      - name: Set matrix output
-        id: set-matrix
-        run: |
-          # Ensure the JSON is properly formatted for GitHub Actions output
-          MATRIX_JSON=$(jq -c '.' issue_ids.json)
-          echo "matrix=$MATRIX_JSON" >> $GITHUB_OUTPUT
-
-  update-outdated-data:
-    needs: [find-issues, get-project-data]
-    if: inputs.update == 'update'
-    runs-on: ubuntu-latest
-    outputs:
-      commits-match: ${{ steps.set-matrix-output.outputs.commits-match-matrix }}
-    strategy:
-      matrix:
-        issue: ${{ fromJson(needs.find-issues.outputs.issue-matrix) }}
-      fail-fast: false
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Get GitHub issue ID
-        id: get-issue-node-id
-        uses: ./.github/actions/get-issue-node-id
+        uses: ./.github/actions/find-issues
         with:
-          repository: ${{ matrix.issue.repo_name }}
-          organization: ${{ matrix.issue.org_name }}
-          issue_number: ${{ matrix.issue.issue_id }}
+          search_query: "project:${{ inputs.organization }}/2 is:issue ${{ inputs.search_query }}"
           github_token: ${{ secrets.PROJECT_TOKEN }}
-
-      - name: Get Commit field value
-        id: get-commit-value
-        uses: ./.github/actions/get-project-field-value
-        with:
-          project_id: ${{ needs.get-project-data.outputs.project_id }}
-          issue_node_id: ${{ steps.get-issue-node-id.outputs.issue_node_id }}
-          field_name: "Commit"
-          github_token: ${{ secrets.PROJECT_TOKEN }}
-
-      - name: Get latest commit
-        id: get-latest-commit
-        uses: ./.github/actions/get-latest-commit
-        with:
-          organization: ${{ matrix.issue.org_name }}
-          repository: ${{ matrix.issue.repo_name }}
-          issue_id: ${{ matrix.issue.issue_id }}
-          github_token: ${{ secrets.PROJECT_TOKEN }}
-
-      - name: Compare commits
-        id: compare-commits
-        env:
-          COMMIT_FIELD_VALUE: ${{ steps.get-commit-value.outputs.field_value }}
-          LATEST_COMMIT: ${{ steps.get-latest-commit.outputs.commit_hash }}
-        run: |
-          echo "Commit field value: $COMMIT_FIELD_VALUE"
-          echo "Latest commit: $LATEST_COMMIT"
-
-          if [ -z "$COMMIT_FIELD_VALUE" ] || [ "$COMMIT_FIELD_VALUE" = "null" ] || [ "$COMMIT_FIELD_VALUE" != "$LATEST_COMMIT" ]; then
-            echo "Commits don't match or Commit field is empty"
-            echo "match=false" >> $GITHUB_OUTPUT
-          else
-            echo "Commits match"
-            echo "match=true" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Update Issue SWE Data
-        if: steps.compare-commits.outputs.match == 'false'
-        uses: ./.github/actions/update-issue-swe-data
-        with:
-          generator: ${{inputs.generator}}
-          organization: ${{ matrix.issue.org_name }}
-          repository: ${{ matrix.issue.repo_name }}
-          issue_id: ${{ matrix.issue.issue_id }}
-          github_token: ${{ secrets.PROJECT_TOKEN }}
-          dataset_repo: ${{ secrets.DATASET_REPO }}
-          update_status: 'false'
-
-  update-issue-swe-data:
-    needs: [find-issues]
-    if: inputs.update == 'force-update'
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        issue: ${{ fromJson(needs.find-issues.outputs.issue-matrix) }}
-      fail-fast: false
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Update Issue SWE Data
-        uses: ./.github/actions/update-issue-swe-data
-        with:
-          generator: ${{inputs.generator}}
-          organization: ${{ matrix.issue.org_name }}
-          repository: ${{ matrix.issue.repo_name }}
-          issue_id: ${{ matrix.issue.issue_id }}
-          github_token: ${{ secrets.PROJECT_TOKEN }}
-          dataset_repo: ${{ secrets.DATASET_REPO }}
-          update_status: 'false'
 
   get-data-field:
-    needs: [get-project-data, find-issues, update-outdated-data, update-issue-swe-data]
+    needs: [get-project-data, find-issues]
     if: always()
     runs-on: ubuntu-latest
     outputs:

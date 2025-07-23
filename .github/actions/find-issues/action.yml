@@ -1,0 +1,55 @@
+name: 'Find Issues'
+description: 'Finds GitHub issues based on a search query and outputs a matrix for downstream jobs'
+author: 'JetBrains'
+
+inputs:
+  search_query:
+    description: 'GitHub search query to find issues'
+    required: true
+  github_token:
+    description: 'GitHub token for API access'
+    required: true
+
+outputs:
+  issue-matrix:
+    description: 'JSON matrix of found issues'
+    value: ${{ steps.set-matrix.outputs.matrix }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Install jq
+      shell: bash
+      run: sudo apt-get update && sudo apt-get -y install jq
+
+    - name: Find issues by query
+      id: find-issues
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github_token }}
+        QRAW: ${{ inputs.search_query }}
+      run: |
+        ME="${{ github.actor }}"
+        QFIXED=$(echo "$QRAW" | sed "s/@me/$ME/g")
+        QUERY=$QFIXED
+
+        echo "🔎 GitHub search query: $QUERY"
+
+        PAGE=100
+        
+        # Get issue IDs and repository info for the matrix
+        gh api --paginate -X GET search/issues \
+          -H "X-GitHub-Api-Version: 2022-11-28" \
+          -f q="$QUERY" -f per_page="$PAGE" -f advanced_search=true |
+        jq -c '.items[] | {issue_id: .number | tostring, repo_name: .repository_url | split("/") | .[-1], org_name: .repository_url | split("/") | .[-2]}' |
+        jq -s '.' > issue_ids.json
+        
+        echo "Found $(jq length issue_ids.json) issues"
+
+    - name: Set matrix output
+      id: set-matrix
+      shell: bash
+      run: |
+        # Ensure the JSON is properly formatted for GitHub Actions output
+        MATRIX_JSON=$(jq -c '.' issue_ids.json)
+        echo "matrix=$MATRIX_JSON" >> $GITHUB_OUTPUT

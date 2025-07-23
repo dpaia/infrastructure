@@ -224,7 +224,7 @@ jobs:
 
   merge-pull-requests:
     needs: [collect-outdated-prs, collect-force-update-prs]
-    if: ${{ inputs.auto_merge == true }}
+    if: always()
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository

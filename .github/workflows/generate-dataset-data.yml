@@ -150,7 +150,7 @@ jobs:
   # This job runs after all matrix jobs are complete to collect PR URLs
   collect-prs:
     needs: [update-outdated-data, update-issue-swe-data]
-    if: inputs.auto_merge == 'true' && always()
+    if: inputs.auto_merge && always()
     runs-on: ubuntu-latest
     outputs:
       all_prs: ${{ steps.collect-prs.outputs.pull_requests }}
@@ -202,7 +202,7 @@ jobs:
 
   merge-pull-requests:
     needs: [collect-prs]
-    if: inputs.auto_merge == 'true' && always()
+    if: inputs.auto_merge && always()
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository

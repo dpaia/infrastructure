@@ -72,29 +72,11 @@ def detect_build_system(organization, repository, commit=None):
                 print(f"Selected Gradle Groovy as build system (more files than Kotlin)", file=sys.stderr)
                 print(f"Build system detected: gradle", file=sys.stderr)
                 return "gradle"
-        
-        # If no build system detected via GitHub API, try a fallback approach
-        # For Maven projects, assume it's Maven if the repository name contains common Maven-related terms
-        repo_lower = repository.lower()
-        maven_terms = ["maven", "java", "spring", "jakarta", "jee", "j2ee"]
-        print(f"No build files found via GitHub API. Checking repository name for Maven-related terms: {maven_terms}", file=sys.stderr)
-        if any(term in repo_lower for term in maven_terms):
-            print(f"Repository name suggests Maven: {repository}", file=sys.stderr)
-            print(f"Build system detected (fallback): maven", file=sys.stderr)
-            return "maven"
-        
+
         print(f"No build system detected for {organization}/{repository}", file=sys.stderr)
         return ""
     except Exception as e:
         print(f"Error using GitHub API to detect build system: {e}", file=sys.stderr)
-        # Try fallback detection based on repository name for Maven
-        repo_lower = repository.lower()
-        maven_terms = ["maven", "java", "spring", "jakarta", "jee", "j2ee"]
-        print(f"Checking repository name for Maven-related terms after API error: {maven_terms}", file=sys.stderr)
-        if any(term in repo_lower for term in maven_terms):
-            print(f"GitHub API failed, but repository name suggests Maven: {repository}", file=sys.stderr)
-            print(f"Build system detected (error fallback): maven", file=sys.stderr)
-            return "maven"
         print(f"No build system detected for {organization}/{repository} after API error", file=sys.stderr)
         return ""
 
@@ -117,15 +99,14 @@ def _find_files_with_github_api(organization, repository, filename, commit=None)
     tree_ref = commit if commit else 'HEAD'
     
     # Use the GitHub tree API to get all files in the repository
-    # The recursive=1 parameter ensures we get all files, including those in subdirectories
     api_endpoint = f'repos/{organization}/{repository}/git/trees/{tree_ref}'
     
     print(f"GitHub API endpoint: {api_endpoint}", file=sys.stderr)
     
     cmd = [
         'gh', 'api',
-        api_endpoint,          # Add recursive parameter as a query parameter
-        '--jq', f'".tree[] | select(.path | endswith(\\"{filename}\\")) | .path"'
+        api_endpoint,
+        '--jq', '.tree[] | select(.path) | .path'
     ]
     
     print(f"Running command: {' '.join(cmd)}", file=sys.stderr)

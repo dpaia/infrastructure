@@ -9,6 +9,11 @@ on:
         required: true
         type: string
         default: 'jetbrains-eval-lab'
+      topic:
+        description: 'Repositories topic'
+        required: false
+        type: string
+        default: 'Java'
       generator:
         description: 'Profile'
         required: true
@@ -35,6 +40,10 @@ on:
         required: false
         type: boolean
         default: false
+
+  schedule:
+    # Run overnight at 2:00 AM UTC
+    - cron: '0 2 * * *'
 
 jobs:
   get-project-data:
@@ -67,7 +76,7 @@ jobs:
         id: find-issues
         uses: ./.github/actions/find-issues
         with:
-          search_query: "project:${{ inputs.organization }}/2 is:issue ${{ inputs.search_query }}"
+          search_query: "project:${{ inputs.organization }}/2 is:issue topic:${{ inputs.topic }} ${{ inputs.search_query }}"
           github_token: ${{ secrets.PROJECT_TOKEN }}
 
   update-outdated-data:

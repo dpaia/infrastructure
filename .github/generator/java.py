@@ -113,28 +113,32 @@ def _find_files_with_github_api(organization, repository, filename, commit=None)
     """
     print(f"Searching for {filename} in {organization}/{repository} at commit: {commit if commit else 'current'}", file=sys.stderr)
     
-    # Base query
-    query = f'filename:{filename}+repo:{organization}/{repository}'
+    # Determine the tree reference (branch or commit)
+    tree_ref = commit if commit else 'HEAD'
     
-    # Add commit reference if provided
-    if commit:
-        # For specific commit, we need to use the ref parameter
-        query += f'+ref:{commit}'
+    # Use the GitHub tree API to get all files in the repository
+    # The recursive=1 parameter ensures we get all files, including those in subdirectories
+    api_endpoint = f'repos/{organization}/{repository}/git/trees/{tree_ref}'
     
-    print(f"GitHub API query: {query}", file=sys.stderr)
+    print(f"GitHub API endpoint: {api_endpoint}", file=sys.stderr)
     
     cmd = [
         'gh', 'api',
-        f'search/code?q={query}',
-        '--jq', '.items[].path'
+        api_endpoint,
+        '--query', 'recursive=1',  # Add recursive parameter as a query parameter
+        '--jq', '.tree[] | select(.type=="blob") | .path'
     ]
     
     print(f"Running command: {' '.join(cmd)}", file=sys.stderr)
     
     try:
         result = run_subprocess(cmd, capture_output=True, text=True, check=True)
-        files = result.stdout.strip().split('\n')
-        files = [file for file in files if file]
+        all_files = result.stdout.strip().split('\n')
+        all_files = [file for file in all_files if file]
+        
+        # Filter files to only include those with the specified filename
+        files = [file for file in all_files if os.path.basename(file) == filename]
+        
         print(f"GitHub API found {len(files)} {filename} files", file=sys.stderr)
         return files
     except Exception as e:

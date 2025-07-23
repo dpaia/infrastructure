@@ -21,6 +21,8 @@ on:
           GitHub issue search
           (example: '-label:Epic label:Security assignee:@me is:open')
         required: true
+        default: '-label:Epic label:Verified'
+        type: string
       update:
         description: "Update mode for existing data"
         type: choice

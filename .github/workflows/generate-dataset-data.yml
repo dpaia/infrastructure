@@ -153,24 +153,23 @@ jobs:
     if: inputs.auto_merge && always()
     runs-on: ubuntu-latest
     outputs:
-      all_prs: ${{ steps.collect-prs.outputs.pull_requests }}
+      pull_requests: ${{ steps.collect-prs.outputs.pull_requests }}
     steps:
       - name: Collect all PR URLs
         id: collect-prs
         run: |
-          echo "Collecting all PR URLs from matrix jobs..."
-          PR_DATA='{}'
+          echo "Collecting PR URLs based on update mode: ${{ inputs.update }}"
 
-          # Extract PR data from both job contexts
-          PR_JSON='{
-            "outdated": ${{ toJSON(needs.update-outdated-data.outputs) }},
-            "force": ${{ toJSON(needs.update-issue-swe-data.outputs) }}
-          }'
-          
-          echo "PR_JSON=$PR_JSON"
+          # Extract PR data based on which job actually ran
+          if [ "${{ inputs.update }}" = "update" ]; then
+            PR_JSON='${{ toJSON(needs.update-outdated-data.outputs) }}'
+            echo "Using PR data from update-outdated-data job"
+          else
+            PR_JSON='${{ toJSON(needs.update-issue-swe-data.outputs) }}'
+            echo "Using PR data from update-issue-swe-data job"
+          fi
+
           echo "PR_JSON=$PR_JSON" >> $GITHUB_ENV
-
-          # Create a JSON with all PRs
           echo "pull_requests=$PR_JSON" >> $GITHUB_OUTPUT
           echo "PR collection complete"
 
@@ -216,13 +215,13 @@ jobs:
       - name: Merge Pull Requests
         env:
           GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
-          ALL_PRS: ${{ needs.collect-prs.outputs.all_prs }}
+          PR_DATA: ${{ needs.collect-prs.outputs.pull_requests }}
         run: |
           echo "Merging pull requests..."
           echo "Auto merge value: ${{ inputs.auto_merge }}"
 
           echo "DEBUG: PRs data structure:"
-          echo "$ALL_PRS" | jq '.' || echo "Failed to parse ALL_PRS as JSON: $ALL_PRS"
+          echo "$PR_DATA" | jq '.' || echo "Failed to parse PR_DATA as JSON: $PR_DATA"
 
           # Function to extract PR URLs from job outputs
           extract_prs() {
@@ -236,18 +235,11 @@ jobs:
             echo "$json_data" | jq -r 'to_entries[] | .value' | grep -v "^$" || true
           }
 
-          # Extract PR URLs from both jobs
-          echo "Extracting PRs from outdated data job..."
-          prs_from_update_outdated=$(echo "$ALL_PRS" | jq -r '.outdated' | extract_prs)
+          # Extract all PR URLs
+          echo "Extracting PRs from job output..."
+          all_prs=$(extract_prs "$PR_DATA")
 
-          echo "Extracting PRs from force update job..."
-          prs_from_force_update=$(echo "$ALL_PRS" | jq -r '.force' | extract_prs)
-
-          echo "PRs from outdated data: $prs_from_update_outdated"    
-          echo "PRs from force update: $prs_from_force_update"
-
-          # Combine all PR URLs
-          all_prs=$(echo -e "${prs_from_update_outdated}\n${prs_from_force_update}" | grep -v "^$" || true)
+          echo "PRs to merge: $all_prs"
 
           if [ -z "$all_prs" ]; then
             echo "No pull requests to merge."

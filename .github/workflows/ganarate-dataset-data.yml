@@ -26,6 +26,10 @@ on:
           - update
           - force-update
         default: "update"
+      auto_merge:
+        description: 'Automatically merge data updates'
+        required: false
+        default: 'false'
 
 jobs:
   get-project-data:
@@ -128,7 +132,7 @@ jobs:
           issue_id: ${{ matrix.issue.issue_id }}
           github_token: ${{ secrets.PROJECT_TOKEN }}
           dataset_repo: ${{ secrets.DATASET_REPO }}
-          update_status: 'false'
+          auto_merge: ${{ inputs.auto_merge }}
 
   update-issue-swe-data:
     needs: [find-issues]
@@ -150,4 +154,4 @@ jobs:
           issue_id: ${{ matrix.issue.issue_id }}
           github_token: ${{ secrets.PROJECT_TOKEN }}
           dataset_repo: ${{ secrets.DATASET_REPO }}
-          update_status: 'false'
+          auto_merge: ${{ inputs.auto_merge }}

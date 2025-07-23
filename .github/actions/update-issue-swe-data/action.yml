@@ -26,6 +26,10 @@ inputs:
     description: 'Whether to update the Status field in the project'
     required: false
     default: 'true'
+  auto_merge:
+    description: 'Automatically merge the pull request'
+    required: false
+    default: 'false'
 
 outputs:
   file_url:
@@ -169,13 +173,14 @@ runs:
       if: steps.check-error.outputs.has_error != 'true'
       uses: ./.github/actions/update-data-file
       with:
-        github_token: ${{ inputs.github_token }}
-        data_value: ${{ steps.generate-data.outputs.data_value }}
-        issue_id: ${{ inputs.issue_id }}
-        repository: ${{ inputs.repository }}
-        dataset_repo: ${{ inputs.dataset_repo }}
         organization: ${{ inputs.organization }}
+        repository: ${{ inputs.repository }}
+        issue_id: ${{ inputs.issue_id }}
+        data_value: ${{ steps.generate-data.outputs.data_value }}
         commit_message: ${{ steps.generate-commit-message.outputs.commit_message }}
+        github_token: ${{ inputs.github_token }}
+        dataset_repo: ${{ inputs.dataset_repo }}
+        auto_merge: ${{ inputs.auto_merge }}
 
     - name: Update Data field
       shell: bash

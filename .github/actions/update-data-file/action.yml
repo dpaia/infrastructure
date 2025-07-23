@@ -3,27 +3,39 @@ description: 'Creates or updates a file in a GitHub repository with provided dat
 author: 'JetBrains'
 
 inputs:
-  github_token:
-    description: 'GitHub token for API access'
-    required: true
-  data_value:
-    description: 'JSON data to be written to the file'
-    required: true
-  issue_id:
-    description: 'Issue number'
+  organization:
+    description: 'GitHub organization name'
     required: true
   repository:
     description: 'Repository name'
     required: true
-  dataset_repo:
-    description: 'Repository for storing dataset files'
+  issue_id:
+    description: 'Issue number'
     required: true
-  organization:
-    description: 'GitHub organization name'
+  data_value:
+    description: 'JSON data to be written to the file'
     required: true
   commit_message:
     description: 'Commit message for the file update'
     required: true
+  github_token:
+    description: 'GitHub token for API access'
+    required: true
+  dataset_repo:
+    description: 'Repository for storing dataset files'
+    required: true
+  auto_merge:
+    description: 'Automatically merge the pull request'
+    required: false
+    default: 'false'
+  git_user_email:
+    description: 'Git user email for commit'
+    required: false
+    default: 'action@github.com'
+  git_user_name:
+    description: 'Git user name for commit'
+    required: false
+    default: 'GitHub Action'
 
 outputs:
   file_url:
@@ -44,6 +56,9 @@ runs:
         DATASET_REPO: ${{ inputs.dataset_repo }}
         ORGANIZATION: ${{ inputs.organization }}
         COMMIT_MESSAGE: ${{ inputs.commit_message }}
+        AUTO_MERGE: ${{ inputs.auto_merge }}
+        GIT_USER_EMAIL: ${{ inputs.git_user_email }}
+        GIT_USER_NAME: ${{ inputs.git_user_name }}
       run: |
         echo "Creating or updating repository file with JSON data..."
 
@@ -71,22 +86,45 @@ runs:
         # Copy the file to the repository
         cp "$GITHUB_WORKSPACE/$LOCAL_FILENAME" "$FILE_PATH"
         
-        # Add, commit, and push the changes
+        # Add, commit, and create a pull request
         git add "$FILE_PATH"
-        git config --global user.email "action@github.com"
-        git config --global user.name "GitHub Action"
-        echo "Using commit message from Python script"
+        git config --local user.email "$GIT_USER_EMAIL"
+        git config --local user.name "$GIT_USER_NAME"
+        
         git commit -m "$COMMIT_MESSAGE"
-        git fetch origin main
-        git rebase origin main
-        git push origin main
+        
+        # Create a new branch with a unique name
+        BRANCH_NAME="update-data-file-${ISSUE_ID}-$(date +%s)"
+        git checkout -b "$BRANCH_NAME"
+        
+        # Push to the new branch
+        git push origin "$BRANCH_NAME"
+        
+        # Create a pull request using the GitHub CLI
+        echo "Creating pull request..."
+        PR_URL=$(gh pr create --base main --head "$BRANCH_NAME" --title "$COMMIT_MESSAGE" --body "$COMMIT_MESSAGE" --repo "${ORGANIZATION}/${DATASET_REPO}")
+        echo "Pull request created: $PR_URL"
+        
+        # Auto-merge the pull request if requested
+        if [ "$AUTO_MERGE" = "true" ]; then
+          echo "Auto-merging pull request with rebase..."
+          gh pr merge "$PR_URL" --rebase --auto
+  
+          # Wait for merge to complete
+          echo "Waiting for merge to complete..."
+          sleep 5
+  
+          # Delete the branch after successful merge
+          echo "Removing branch after merge..."
+          git push origin --delete "$BRANCH_NAME"
+        fi
         
         # Get the URL to the file in the repository
         REPO_PARTS=(${DATASET_REPO//\// })
         REPO_OWNER=${REPO_PARTS[0]}
         REPO_NAME=${REPO_PARTS[1]}
-        BRANCH=$(git rev-parse --abbrev-ref HEAD)
-        FILE_URL="https://github.com/${ORGANIZATION}/${DATASET_REPO}/blob/${BRANCH}/${FILE_PATH}"
+        # Use main branch for the file URL since the PR will eventually be merged to main
+        FILE_URL="https://github.com/${ORGANIZATION}/${DATASET_REPO}/blob/main/${FILE_PATH}"
         
         echo "File URL: $FILE_URL"
         echo "file_url=$FILE_URL" >> $GITHUB_OUTPUT

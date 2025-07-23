@@ -159,7 +159,7 @@ jobs:
       # Upload PR artifacts
       - name: Upload PR artifacts
         if: steps.update-swe-data.outputs.pull_request_url != ''
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: outdated-data-pr-${{ matrix.issue.issue_id }}
           path: pr_artifacts/
@@ -186,7 +186,7 @@ jobs:
           
       # Download all artifacts from update-outdated-data job
       - name: Download update-outdated-data artifacts
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
         with:
           path: downloaded_artifacts
           
@@ -367,7 +367,7 @@ jobs:
       # Upload PR artifacts
       - name: Upload PR artifacts
         if: steps.update-swe-data.outputs.pull_request_url != ''
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: issue-swe-data-pr-${{ matrix.issue.issue_id }}
           path: pr_artifacts/

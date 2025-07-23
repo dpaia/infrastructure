@@ -180,7 +180,7 @@ jobs:
           
   merge-pull-requests:
     needs: [update-outdated-data, update-issue-swe-data]
-    if: inputs.auto_merge == true && (needs.update-outdated-data.result == 'success' || needs.update-issue-swe-data.result == 'success')
+    if: inputs.auto_merge == true
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository

@@ -77,20 +77,44 @@ runs:
         issue_number: ${{ inputs.issue_id }}
         github_token: ${{ inputs.github_token }}
 
-    - name: Get project data
-      id: get-project-data
-      uses: ./.github/actions/get-project-data
+    - name: Get project ID
+      id: get-project-id
+      uses: ./.github/actions/get-project-id
       with:
         organization: ${{ inputs.organization }}
         project_number: 3
         github_token: ${{ inputs.github_token }}
-        fetch_status_field: ${{ inputs.update_status }}
+        
+    - name: Get commit field ID
+      id: get-commit-field-id
+      uses: ./.github/actions/get-project-field-id
+      with:
+        project_id: ${{ steps.get-project-id.outputs.project_id }}
+        field_name: "Commit"
+        github_token: ${{ inputs.github_token }}
+        
+    - name: Get data field ID
+      id: get-data-field-id
+      uses: ./.github/actions/get-project-field-id
+      with:
+        project_id: ${{ steps.get-project-id.outputs.project_id }}
+        field_name: "Data"
+        github_token: ${{ inputs.github_token }}
+        
+    - name: Get status field ID
+      id: get-status-field-id
+      if: inputs.update_status == 'true'
+      uses: ./.github/actions/get-project-field-id
+      with:
+        project_id: ${{ steps.get-project-id.outputs.project_id }}
+        field_name: "Status"
+        github_token: ${{ inputs.github_token }}
 
     - name: Add Issue to Project
       id: add-to-project
       uses: ./.github/actions/add-issue-to-project
       with:
-        project_id: ${{ steps.get-project-data.outputs.project_id }}
+        project_id: ${{ steps.get-project-id.outputs.project_id }}
         issue_node_id: ${{ steps.fetch-issue-id.outputs.issue_node_id }}
         github_token: ${{ inputs.github_token }}
 
@@ -187,9 +211,9 @@ runs:
       shell: bash
       env:
         GH_TOKEN: ${{ inputs.github_token }}
-        PROJECT_ID: ${{ steps.get-project-data.outputs.project_id }}
+        PROJECT_ID: ${{ steps.get-project-id.outputs.project_id }}
         ITEM_ID: ${{ steps.add-to-project.outputs.item_id }}
-        DATA_FIELD_ID: ${{ steps.get-project-data.outputs.data_field_id }}
+        DATA_FIELD_ID: ${{ steps.get-data-field-id.outputs.field_id }}
         FILE_URL: ${{ steps.create-dataset-file.outputs.file_url }}
         HAS_ERROR: ${{ steps.check-error.outputs.has_error }}
       run: |
@@ -231,9 +255,9 @@ runs:
       shell: bash
       env:
         GH_TOKEN: ${{ inputs.github_token }}
-        PROJECT_ID: ${{ steps.get-project-data.outputs.project_id }}
+        PROJECT_ID: ${{ steps.get-project-id.outputs.project_id }}
         ITEM_ID: ${{ steps.add-to-project.outputs.item_id }}
-        STATUS_FIELD_ID: ${{ steps.get-project-data.outputs.status_field_id }}
+        STATUS_FIELD_ID: ${{ steps.get-status-field-id.outputs.field_id }}
         HAS_ERROR: ${{ steps.check-error.outputs.has_error }}
       run: |
         # Check if there was an error
@@ -320,9 +344,9 @@ runs:
       shell: bash
       env:
         GH_TOKEN: ${{ inputs.github_token }}
-        PROJECT_ID: ${{ steps.get-project-data.outputs.project_id }}
+        PROJECT_ID: ${{ steps.get-project-id.outputs.project_id }}
         ITEM_ID: ${{ steps.add-to-project.outputs.item_id }}
-        COMMIT_FIELD_ID: ${{ steps.get-project-data.outputs.commit_field_id }}
+        COMMIT_FIELD_ID: ${{ steps.get-commit-field-id.outputs.field_id }}
         LATEST_COMMIT: ${{ steps.get-commits.outputs.commit_hash }}
       run: |
         echo "Setting Commit field value..."

@@ -50,4 +50,4 @@ runs:
           "${{ inputs.organization }}" \
           "${{ inputs.repository }}" \
           "${{ inputs.issue_id }}" \
-          "${{ inputs.github_token }}" >> $GITHUB_OUTPUT
+          "${{ inputs.github_token }}"

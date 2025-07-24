@@ -1,4 +1,8 @@
 #!/usr/bin/env python3
+
+# Simple test to check if the script is being executed
+print("SCRIPT_EXECUTION_TEST: fetch_commits.py is being executed")
+
 """
 Script to fetch commits related to a GitHub issue.
 
@@ -283,6 +287,7 @@ def fetch_commits(organization, repository, issue_number, github_token=None):
 
 def main():
     """Main function to run the script from command line."""
+    print("DEBUG: Starting main function")
     if len(sys.argv) < 4:
         print("Usage: fetch_commits.py <organization> <repository> <issue_number> [github_token]")
         sys.exit(1)
@@ -292,9 +297,25 @@ def main():
     issue_number = sys.argv[3]
     github_token = sys.argv[4] if len(sys.argv) > 4 else os.environ.get('GH_TOKEN')
     
-    result = fetch_commits(organization, repository, issue_number, github_token)
+    print(f"DEBUG: Arguments - org: {organization}, repo: {repository}, issue: {issue_number}, token: {'set' if github_token else 'not set'}")
+    
+    try:
+        print("DEBUG: Calling fetch_commits function")
+        result = fetch_commits(organization, repository, issue_number, github_token)
+        print(f"DEBUG: fetch_commits returned: {result}")
+    except Exception as e:
+        print(f"ERROR: Exception in fetch_commits: {str(e)}")
+        import traceback
+        print(traceback.format_exc())
+        sys.exit(1)
     
     # Output the results in GitHub Actions format
+    # Print the results to stdout for visibility in logs
+    print(f"RESULT: commit_hash={result['commit_hash']}")
+    print(f"RESULT: base_commit_hash={result['base_commit_hash']}")
+    print(f"RESULT: commits={json.dumps(result['commits'])}")
+    
+    # Output for GitHub Actions
     # Check if GITHUB_OUTPUT environment variable exists (GitHub Actions environment)
     github_output = os.environ.get('GITHUB_OUTPUT')
     if github_output:
@@ -305,6 +326,12 @@ def main():
             f.write(f"commits={json.dumps(result['commits'])}\n")
     else:
         # Fallback for local testing or older GitHub Actions
-        print(f"::set-output name=commit_hash::{result['commit_hash']}")
-        print(f"::set-output name=base_commit_hash::{result['base_commit_hash']}")
-        print(f"::set-output name=commits::{json.dumps(result['commits'])}")
+        print(f"commit_hash={result['commit_hash']}")
+        print(f"base_commit_hash={result['base_commit_hash']}")
+        print(f"commits={json.dumps(result['commits'])}")
+
+
+# Call the main function when the script is executed directly
+if __name__ == "__main__":
+    print("DEBUG: __name__ == '__main__', calling main()")
+    main()

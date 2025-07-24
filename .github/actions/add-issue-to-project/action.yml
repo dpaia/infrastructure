@@ -1,0 +1,45 @@
+name: 'Add Issue to Project'
+description: 'Adds a GitHub issue to a GitHub Project V2'
+author: 'JetBrains'
+
+inputs:
+  project_id:
+    description: 'The ID of the GitHub Project V2'
+    required: true
+  issue_node_id:
+    description: 'The node ID of the GitHub issue to add'
+    required: true
+  github_token:
+    description: 'GitHub token for API access'
+    required: true
+
+outputs:
+  item_id:
+    description: 'The ID of the created project item'
+    value: ${{ steps.add-to-project.outputs.item_id }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Add Issue to Project
+      id: add-to-project
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github_token }}
+        PROJECT_ID: ${{ inputs.project_id }}
+        ISSUE_ID: ${{ inputs.issue_node_id }}
+      run: |
+        echo "Adding Issue to Project..."
+        item_id=$(gh api graphql -f query='
+        mutation($projectId:ID!, $contentId:ID!) {
+          addProjectV2ItemById(input: {projectId: $projectId, contentId: $contentId}) {
+            item {
+              id
+            }
+          }
+        }' -f projectId=$PROJECT_ID -f contentId=$ISSUE_ID --jq '.data.addProjectV2ItemById.item.id')
+
+        echo "Item ID: $item_id"
+        echo "item_id=$item_id" >> $GITHUB_OUTPUT
+
+        echo "✅ Issue added to project!"

@@ -43,10 +43,10 @@ runs:
         GH_TOKEN: ${{ inputs.github_token }}
       run: |
         # Make the script executable
-        chmod +x .github/generator/utils/fetch_commits.py
+        chmod +x .github/python/utils/fetch_commits.py
         # Run the Python script to fetch commits
         echo "Run the Python script to fetch commits..."                      
-        .github/generator/utils/fetch_commits.py \
+        .github/python/utils/fetch_commits.py \
           "${{ inputs.organization }}" \
           "${{ inputs.repository }}" \
           "${{ inputs.issue_id }}" \

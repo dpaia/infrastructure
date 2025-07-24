@@ -89,3 +89,19 @@ This workflow aggregates already generated dataset items from the "dataset" repo
 
 **Description:**
 This workflow helps maintain consistent issue labels across multiple repositories in the organization. It can target repositories based on topics or a specific list, and apply different label profiles to them.
+
+### 5. Add Issues to Project
+
+**File:** [.github/workflows/add-issues-to-project.yml](.github/workflows/add-issues-to-project.yml)
+
+**Purpose:** Automatically adds GitHub issues to a specified project board.
+
+**Trigger:** Manual (workflow_dispatch) or Scheduled (daily at midnight UTC)
+
+**Inputs:**
+- `organization`: GitHub organization name (default: 'jetbrains-eval-lab')
+- `project_number`: Project number (default: '2')
+- `search_query`: GitHub issue search query (default: '-label:Epic is:issue')
+
+**Description:**
+This workflow automates the process of adding GitHub issues to a project board. It searches for issues matching the specified query and adds them to the designated project. The workflow consists of three main jobs: finding issues that match the search criteria, retrieving the project data, and adding each matching issue to the project.

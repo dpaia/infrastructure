@@ -1,0 +1,96 @@
+name: Add Issues to Project
+
+on:
+  workflow_dispatch:
+    inputs:
+      organization:
+        description: 'GitHub organization name'
+        required: true
+        type: string
+        default: 'jetbrains-eval-lab'
+      project_number:
+        description: 'Project number'
+        required: true
+        default: '2'
+        type: string
+      search_query:
+        description: >
+          GitHub issue search
+          (example: '-label:Epic label:Security assignee:@me is:open')
+        required: true
+        type: string
+        default: '-label:Epic is:issue'
+  schedule:
+    # Run every night at midnight UTC
+    - cron: '0 0 * * *'
+
+# Define default values to be used by scheduled runs
+env:
+  DEFAULT_ORGANIZATION: 'jetbrains-eval-lab'
+  DEFAULT_PROJECT_NUMBER: '2'
+  DEFAULT_SEARCH_QUERY: '-label:Epic is:issue'
+
+jobs:
+  find-issues:
+    name: Find Issues
+    runs-on: ubuntu-latest
+    outputs:
+      issue-matrix: ${{ steps.find-issues.outputs.issue-matrix }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Find issues by query
+        id: find-issues
+        uses: ./.github/actions/find-issues
+        with:
+          search_query: ${{ github.event_name == 'schedule' && env.DEFAULT_SEARCH_QUERY || github.event.inputs.search_query }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+
+  get-project-data:
+    name: Get Project Data
+    runs-on: ubuntu-latest
+    outputs:
+      project_id: ${{ steps.get-project-data.outputs.project_id }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Get project data
+        id: get-project-data
+        uses: ./.github/actions/get-project-data
+        with:
+          organization: ${{ github.event_name == 'schedule' && env.DEFAULT_ORGANIZATION || github.event.inputs.organization }}
+          project_number: ${{ github.event_name == 'schedule' && env.DEFAULT_PROJECT_NUMBER || github.event.inputs.project_number }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          fetch_status_field: 'false'
+
+  add-issues-to-project:
+    name: Add Issues to Project
+    needs: [find-issues, get-project-data]
+    runs-on: ubuntu-latest
+    if: ${{ needs.find-issues.outputs.issue-matrix != '[]' && needs.find-issues.outputs.issue-matrix != '' }}
+    strategy:
+      matrix:
+        issue: ${{ fromJson(needs.find-issues.outputs.issue-matrix) }}
+      fail-fast: false
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Get issue node ID
+        id: get-issue-node-id
+        uses: ./.github/actions/get-issue-node-id
+        with:
+          organization: ${{ matrix.issue.org_name }}
+          repository: ${{ matrix.issue.repo_name }}
+          issue_number: ${{ matrix.issue.issue_id }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Add issue to project
+        id: add-to-project
+        uses: ./.github/actions/add-issue-to-project
+        with:
+          project_id: ${{ needs.get-project-data.outputs.project_id }}
+          issue_node_id: ${{ steps.get-issue-node-id.outputs.issue_node_id }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}

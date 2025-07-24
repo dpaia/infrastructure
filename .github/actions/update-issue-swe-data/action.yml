@@ -88,26 +88,11 @@ runs:
 
     - name: Add Issue to Project
       id: add-to-project
-      shell: bash
-      env:
-        GH_TOKEN: ${{ inputs.github_token }}
-        PROJECT_ID: ${{ steps.get-project-data.outputs.project_id }}
-        ISSUE_ID: ${{ steps.fetch-issue-id.outputs.issue_node_id }}
-      run: |
-        echo "Adding Issue to Project..."
-        item_id=$(gh api graphql -f query='
-        mutation($projectId:ID!, $contentId:ID!) {
-          addProjectV2ItemById(input: {projectId: $projectId, contentId: $contentId}) {
-            item {
-              id
-            }
-          }
-        }' -f projectId=$PROJECT_ID -f contentId=$ISSUE_ID --jq '.data.addProjectV2ItemById.item.id')
-
-        echo "Item ID: $item_id"
-        echo "item_id=$item_id" >> $GITHUB_OUTPUT
-
-        echo "✅ Issue added to project!"
+      uses: ./.github/actions/add-issue-to-project
+      with:
+        project_id: ${{ steps.get-project-data.outputs.project_id }}
+        issue_node_id: ${{ steps.fetch-issue-id.outputs.issue_node_id }}
+        github_token: ${{ inputs.github_token }}
 
     - name: Set up Python
       uses: actions/setup-python@v4
@@ -123,9 +108,9 @@ runs:
         ORGANIZATION: ${{ inputs.organization }}
         GH_TOKEN: ${{ inputs.github_token }}
       run: |
-        chmod +x .github/generator/utils/extract_test_fields.py
+        chmod +x .github/python/utils/extract_test_fields.py
         # Run the script and let it output directly to GITHUB_OUTPUT
-        .github/generator/utils/extract_test_fields.py >> $GITHUB_OUTPUT
+        .github/python/utils/extract_test_fields.py >> $GITHUB_OUTPUT
 
     - name: Generate data
       id: generate-data
@@ -141,9 +126,9 @@ runs:
         FAIL_TO_PASS: ${{ steps.extract-fields.outputs.fail_to_pass }}
         PASS_TO_PASS: ${{ steps.extract-fields.outputs.pass_to_pass }}
       run: |
-        chmod +x .github/generator/${{ inputs.generator }}.py
+        chmod +x .github/python/${{ inputs.generator }}.py
         echo "data_value<<EOF" >> $GITHUB_OUTPUT
-        .github/generator/${{ inputs.generator }}.py >> $GITHUB_OUTPUT
+        .github/python/${{ inputs.generator }}.py >> $GITHUB_OUTPUT
         echo "EOF" >> $GITHUB_OUTPUT
 
     - name: Check for errors
@@ -175,11 +160,11 @@ runs:
         PASS_TO_PASS: ${{ steps.extract-fields.outputs.pass_to_pass }}
       run: |
         # Make the script executable
-        chmod +x .github/generator/utils/generate_commit_message.py
+        chmod +x .github/python/utils/generate_commit_message.py
 
         # Generate the commit message and title using Python script
         # Run the script and let it output directly to GITHUB_OUTPUT
-        .github/generator/utils/generate_commit_message.py >> $GITHUB_OUTPUT      
+        .github/python/utils/generate_commit_message.py >> $GITHUB_OUTPUT      
 
         echo "✅ Commit message and title generated successfully!"
 

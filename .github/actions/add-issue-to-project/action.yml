@@ -37,7 +37,7 @@ runs:
               id
             }
           }
-        }' -f projectId=$PROJECT_ID -f contentId=$ISSUE_ID --jq '.data.addProjectV2ItemById.item.id')
+        }' -f projectId="$PROJECT_ID" -f contentId="$ISSUE_ID" --jq '.data.addProjectV2ItemById.item.id')
 
         echo "Item ID: $item_id"
         echo "item_id=$item_id" >> $GITHUB_OUTPUT

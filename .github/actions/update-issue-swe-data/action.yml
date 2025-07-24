@@ -53,6 +53,20 @@ runs:
         repository: ${{ inputs.repository }}
         issue_id: ${{ inputs.issue_id }}
         github_token: ${{ inputs.github_token }}
+        
+    - name: Check if commits were found
+      id: check-commits
+      shell: bash
+      env:
+        COMMITS: ${{ steps.get-commits.outputs.commits }}
+        COMMIT_HASH: ${{ steps.get-commits.outputs.commit_hash }}
+      run: |
+        if [ -z "$COMMIT_HASH" ] || [ "$COMMITS" == "[]" ]; then
+          echo "No commits found for issue #${{ inputs.issue_id }}"
+          exit 1
+        else
+          echo "Commits found for issue #${{ inputs.issue_id }}"
+        fi
 
     - name: Fetch GitHub issue ID
       id: fetch-issue-id

@@ -1,4 +1,4 @@
-name: 'Get Latest Commit'
+name: 'Get Commits'
 description: 'Fetches commits related to a GitHub issue (including manually linked commits in description and comments), sorted by date, and returns the latest commit'
 author: 'JetBrains'
 
@@ -30,7 +30,13 @@ outputs:
 runs:
   using: 'composite'
   steps:
-    - name: Fetch latest commit related to issue
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.x'
+
+    - name: Fetch commits related to issue
       id: fetch-commit
       shell: bash
       env:
@@ -39,8 +45,8 @@ runs:
         # Make the script executable
         chmod +x .github/generator/utils/fetch_commits.py
         # Run the Python script to fetch commits
-        echo "Run the Python script to fetch commits..."
-        python .github/generator/utils/fetch_commits.py \
+        echo "Run the Python script to fetch commits..."                      
+        .github/generator/utils/fetch_commits.py \
           "${{ inputs.organization }}" \
           "${{ inputs.repository }}" \
           "${{ inputs.issue_id }}" \

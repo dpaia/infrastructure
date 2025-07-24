@@ -11,8 +11,8 @@ on:
       project_number:
         description: 'Project number'
         required: true
-        default: '2'
-        type: string
+        default: 2
+        type: number
       search_query:
         description: >
           GitHub issue search

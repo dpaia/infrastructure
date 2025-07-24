@@ -10,7 +10,7 @@ issue_number = os.environ.get('ISSUE_NUMBER', 'unknown')
 repository = os.environ.get('REPOSITORY', 'unknown')
 organization = os.environ.get('ORGANIZATION', 'jetbrains-eval-lab')
 latest_commit = os.environ.get('LATEST_COMMIT', '')
-linked_commits = os.environ.get('LINKED_COMMITS', '')
+linked_commits = json.loads(os.environ.get('LINKED_COMMITS', '')) if os.environ.get('LINKED_COMMITS', '') else []
 fail_to_pass = os.environ.get('FAIL_TO_PASS', '')
 pass_to_pass = os.environ.get('PASS_TO_PASS', '')
 

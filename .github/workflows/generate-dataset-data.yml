@@ -1,5 +1,5 @@
-name: Generate SWE Dataset Data
-run-name: "[${{inputs.generator}}] Generate SWE Dataset Data: ${{ inputs.search_query }}"
+name: Generate dataset data for issues
+run-name: "[${{ github.event_name == 'schedule' && 'java' || inputs.generator }}] Generate Dataset Data: ${{ github.event_name == 'schedule' && '-label:Epic label:Verified' || inputs.search_query }}"
 
 on:
   workflow_dispatch:
@@ -29,12 +29,13 @@ on:
         default: '-label:Epic label:Verified'
         type: string
       update:
-        description: "Update mode for existing data"
+        description: "Update mode"
         type: choice
         options:
-          - update
+          - create-new
+          - update-outdated
           - force-update
-        default: "update"
+        default: "create-new"
       auto_merge:
         description: 'Automatically merge data updates'
         required: false
@@ -46,7 +47,37 @@ on:
     - cron: '0 2 * * *'
 
 jobs:
+  set-defaults:
+    runs-on: ubuntu-latest
+    outputs:
+      organization: ${{ steps.set-defaults.outputs.organization }}
+      topic: ${{ steps.set-defaults.outputs.topic }}
+      generator: ${{ steps.set-defaults.outputs.generator }}
+      search_query: ${{ steps.set-defaults.outputs.search_query }}
+      update: ${{ steps.set-defaults.outputs.update }}
+      auto_merge: ${{ steps.set-defaults.outputs.auto_merge }}
+    steps:
+      - id: set-defaults
+        run: |
+          # Set default values for scheduled runs
+          if [[ "${{ github.event_name }}" == "schedule" ]]; then
+            echo "organization=jetbrains-eval-lab" >> $GITHUB_OUTPUT
+            echo "topic=Java" >> $GITHUB_OUTPUT
+            echo "generator=java" >> $GITHUB_OUTPUT
+            echo "search_query=-label:Epic label:Verified" >> $GITHUB_OUTPUT
+            echo "update=create-new" >> $GITHUB_OUTPUT
+            echo "auto_merge=false" >> $GITHUB_OUTPUT
+          else
+            echo "organization=${{ inputs.organization }}" >> $GITHUB_OUTPUT
+            echo "topic=${{ inputs.topic }}" >> $GITHUB_OUTPUT
+            echo "generator=${{ inputs.generator }}" >> $GITHUB_OUTPUT
+            echo "search_query=${{ inputs.search_query }}" >> $GITHUB_OUTPUT
+            echo "update=${{ inputs.update }}" >> $GITHUB_OUTPUT
+            echo "auto_merge=${{ inputs.auto_merge }}" >> $GITHUB_OUTPUT
+          fi
+
   get-project-data:
+    needs: set-defaults
     runs-on: ubuntu-latest
     outputs:
       project_id: ${{ steps.get-project-data.outputs.project_id }}
@@ -65,7 +96,7 @@ jobs:
           fetch_status_field: 'false'
 
   find-issues:
-    needs: get-project-data
+    needs: [get-project-data, set-defaults]
     runs-on: ubuntu-latest
     outputs:
       issue-matrix: ${{ steps.find-issues.outputs.issue-matrix }}
@@ -76,16 +107,74 @@ jobs:
         id: find-issues
         uses: ./.github/actions/find-issues
         with:
-          search_query: "project:${{ inputs.organization }}/2 is:issue topic:${{ inputs.topic }} ${{ inputs.search_query }}"
+          search_query: "project:${{ needs.set-defaults.outputs.organization }}/2 is:issue topic:${{ needs.set-defaults.outputs.topic }} ${{ needs.set-defaults.outputs.search_query }}"
           github_token: ${{ secrets.PROJECT_TOKEN }}
 
-  update-outdated-data:
-    needs: [find-issues, get-project-data]
-    if: inputs.update == 'update'
+  create-new-data:
+    needs: [ find-issues, get-project-data, set-defaults ]
+    if: needs.set-defaults.outputs.update == 'create-new'
     runs-on: ubuntu-latest
     outputs:
       commits-match: ${{ steps.set-matrix-output.outputs.commits-match-matrix }}
-      pull_requests: ${{ toJSON(steps.collect-prs.outputs) }}
+      pull_requests: ${{ toJSON(steps.process-issue-data.outputs) }}
+    strategy:
+      matrix:
+        issue: ${{ fromJson(needs.find-issues.outputs.issue-matrix) }}
+      fail-fast: false
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Get GitHub issue ID
+        id: get-issue-node-id
+        uses: ./.github/actions/get-issue-node-id
+        with:
+          repository: ${{ matrix.issue.repo_name }}
+          organization: ${{ matrix.issue.org_name }}
+          issue_number: ${{ matrix.issue.issue_id }}
+          github_token: ${{ secrets.PROJECT_TOKEN }}
+
+      - name: Get status field value
+        id: get-status-value
+        uses: ./.github/actions/get-project-field-value
+        with:
+          project_id: ${{ needs.get-project-data.outputs.project_id }}
+          issue_node_id: ${{ steps.get-issue-node-id.outputs.issue_node_id }}
+          field_name: "Status"
+          github_token: ${{ secrets.PROJECT_TOKEN }}
+
+      - name: Compare status
+        id: compare-status
+        env:
+          STATUS_FIELD_VALUE: ${{ steps.get-status-value.outputs.field_value }}
+        run: |          
+          if [ -z "STATUS_FIELD_VALUE" ] || [ "STATUS_FIELD_VALUE" = "null" ] || [ "STATUS_FIELD_VALUE" != "Done" ]; then
+            echo "Status is not Done"
+            echo "match=false" >> $GITHUB_OUTPUT
+          else
+            echo "Already processed. Skipping..."
+            echo "match=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Process Issue Data
+        id: process-issue-data
+        uses: ./.github/actions/process-issue-data
+        with:
+          generator: ${{ needs.set-defaults.outputs.generator }}
+          organization: ${{ matrix.issue.org_name }}
+          repository: ${{ matrix.issue.repo_name }}
+          issue_id: ${{ matrix.issue.issue_id }}
+          github_token: ${{ secrets.PROJECT_TOKEN }}
+          dataset_repo: ${{ vars.DATASET_REPO }}
+          auto_merge: 'false'
+          condition: ${{ steps.compare-status.outputs.match == 'false' }}
+
+  update-outdated-data:
+    needs: [find-issues, get-project-data, set-defaults]
+    if: needs.set-defaults.outputs.update == 'update-outdated'
+    runs-on: ubuntu-latest
+    outputs:
+      commits-match: ${{ steps.set-matrix-output.outputs.commits-match-matrix }}
+      pull_requests: ${{ toJSON(steps.process-issue-data.outputs) }}
     strategy:
       matrix:
         issue: ${{ fromJson(needs.find-issues.outputs.issue-matrix) }}
@@ -93,10 +182,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       
-      # Create a directory for PR artifacts
-      - name: Create PR artifacts directory
-        run: mkdir -p pr_artifacts
-
       - name: Get GitHub issue ID
         id: get-issue-node-id
         uses: ./.github/actions/get-issue-node-id
@@ -141,42 +226,22 @@ jobs:
             echo "match=true" >> $GITHUB_OUTPUT
           fi
 
-      - name: Update Issue SWE Data
-        if: steps.compare-commits.outputs.match == 'false'
-        id: update-swe-data
-        uses: ./.github/actions/update-issue-swe-data
+      - name: Process Issue Data
+        id: process-issue-data
+        uses: ./.github/actions/process-issue-data
         with:
-          generator: ${{inputs.generator}}
+          generator: ${{ needs.set-defaults.outputs.generator }}
           organization: ${{ matrix.issue.org_name }}
           repository: ${{ matrix.issue.repo_name }}
           issue_id: ${{ matrix.issue.issue_id }}
           github_token: ${{ secrets.PROJECT_TOKEN }}
           dataset_repo: ${{ vars.DATASET_REPO }}
-          auto_merge: false
-          
-      - name: Collect PR URLs
-        id: collect-prs
-        if: steps.compare-commits.outputs.match == 'false' && steps.update-swe-data.outputs.pull_request_url != ''
-        run: |
-          # Save PR URL to both output and artifact file
-          echo "pr_${{ matrix.issue.issue_id }}=${{ steps.update-swe-data.outputs.pull_request_url }}" >> $GITHUB_OUTPUT
-          
-          # Save PR URL to a file in the artifacts directory
-          echo "${{ steps.update-swe-data.outputs.pull_request_url }}" > pr_artifacts/pr_${{ matrix.issue.issue_id }}.txt
-          echo "Saved PR URL to artifact file: pr_artifacts/pr_${{ matrix.issue.issue_id }}.txt"
-      
-      # Upload PR artifacts
-      - name: Upload PR artifacts
-        if: steps.update-swe-data.outputs.pull_request_url != ''
-        uses: actions/upload-artifact@v4
-        with:
-          name: data-pr-${{ matrix.issue.issue_id }}
-          path: pr_artifacts/
-          retention-days: 1
+          auto_merge: 'false'
+          condition: ${{ steps.compare-commits.outputs.match == 'false' }}
 
   # This job runs after all matrix jobs are complete to collect PR URLs
   collect-prs:
-    needs: [update-outdated-data, update-issue-swe-data]
+    needs: [create-new-data, update-outdated-data, update-issue-swe-data]
     if: always()  # Always run this job to collect PRs, regardless of auto_merge setting
     runs-on: ubuntu-latest
     outputs:
@@ -247,11 +312,11 @@ jobs:
           echo "PR collection complete"
 
   update-issue-swe-data:
-    needs: [find-issues]
-    if: inputs.update == 'force-update'
+    needs: [find-issues, set-defaults]
+    if: needs.set-defaults.outputs.update == 'force-update'
     runs-on: ubuntu-latest
     outputs:
-      pull_requests: ${{ toJSON(steps.collect-prs.outputs) }}
+      pull_requests: ${{ toJSON(steps.process-issue-data.outputs) }}
     strategy:
       matrix:
         issue: ${{ fromJson(needs.find-issues.outputs.issue-matrix) }}
@@ -259,45 +324,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       
-      # Create a directory for PR artifacts
-      - name: Create PR artifacts directory
-        run: mkdir -p pr_artifacts
-
-      - name: Update Issue SWE Data
-        id: update-swe-data
-        uses: ./.github/actions/update-issue-swe-data
+      - name: Process Issue Data
+        id: process-issue-data
+        uses: ./.github/actions/process-issue-data
         with:
-          generator: ${{inputs.generator}}
+          generator: ${{ needs.set-defaults.outputs.generator }}
           organization: ${{ matrix.issue.org_name }}
           repository: ${{ matrix.issue.repo_name }}
           issue_id: ${{ matrix.issue.issue_id }}
           github_token: ${{ secrets.PROJECT_TOKEN }}
           dataset_repo: ${{ vars.DATASET_REPO }}
-          auto_merge: false
-          
-      - name: Collect PR URLs
-        id: collect-prs
-        if: steps.update-swe-data.outputs.pull_request_url != ''
-        run: |
-          # Save PR URL to both output and artifact file
-          echo "pr_${{ matrix.issue.issue_id }}=${{ steps.update-swe-data.outputs.pull_request_url }}" >> $GITHUB_OUTPUT
-          
-          # Save PR URL to a file in the artifacts directory
-          echo "${{ steps.update-swe-data.outputs.pull_request_url }}" > pr_artifacts/pr_${{ matrix.issue.issue_id }}.txt
-          echo "Saved PR URL to artifact file: pr_artifacts/pr_${{ matrix.issue.issue_id }}.txt"
-      
-      # Upload PR artifacts
-      - name: Upload PR artifacts
-        if: steps.update-swe-data.outputs.pull_request_url != ''
-        uses: actions/upload-artifact@v4
-        with:
-          name: data-pr-${{ matrix.issue.issue_id }}
-          path: pr_artifacts/
-          retention-days: 1
+          auto_merge: 'false'
 
   merge-pull-requests:
-    needs: [collect-prs]
-    if: inputs.auto_merge && always()
+    needs: [collect-prs, set-defaults]
+    if: needs.set-defaults.outputs.auto_merge == 'true' && always()
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -309,7 +350,7 @@ jobs:
           PR_LIST: ${{ needs.collect-prs.outputs.pr_list }}
         run: |
           echo "Merging pull requests..."
-          echo "Auto merge value: ${{ inputs.auto_merge }}"
+          echo "Auto merge value: ${{ needs.set-defaults.outputs.auto_merge }}"
 
           echo "DEBUG: PR List: $PR_LIST"
 

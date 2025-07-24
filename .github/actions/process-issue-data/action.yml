@@ -1,0 +1,77 @@
+name: 'Process Issue Data'
+description: 'Updates issue SWE data, collects PR URLs, and uploads PR artifacts'
+
+inputs:
+  generator:
+    description: 'Generator profile'
+    required: true
+  organization:
+    description: 'GitHub organization name'
+    required: true
+  repository:
+    description: 'GitHub repository name'
+    required: true
+  issue_id:
+    description: 'GitHub issue ID'
+    required: true
+  github_token:
+    description: 'GitHub token for authentication'
+    required: true
+  dataset_repo:
+    description: 'Dataset repository name'
+    required: true
+  auto_merge:
+    description: 'Whether to automatically merge PRs'
+    required: false
+    default: 'false'
+  condition:
+    description: 'Condition to check before running the update step'
+    required: false
+    default: 'true'
+
+outputs:
+  pull_request_url:
+    description: 'URL of the created pull request'
+    value: ${{ steps.update-swe-data.outputs.pull_request_url }}
+
+runs:
+  using: "composite"
+  steps:
+    # Create a directory for PR artifacts
+    - name: Create PR artifacts directory
+      shell: bash
+      run: mkdir -p pr_artifacts
+
+    - name: Update Issue SWE Data
+      id: update-swe-data
+      if: ${{ inputs.condition == 'true' }}
+      uses: ./.github/actions/update-issue-swe-data
+      with:
+        generator: ${{ inputs.generator }}
+        organization: ${{ inputs.organization }}
+        repository: ${{ inputs.repository }}
+        issue_id: ${{ inputs.issue_id }}
+        github_token: ${{ inputs.github_token }}
+        dataset_repo: ${{ inputs.dataset_repo }}
+        auto_merge: ${{ inputs.auto_merge }}
+
+    - name: Collect PR URLs
+      id: collect-prs
+      if: ${{ steps.update-swe-data.outputs.pull_request_url != '' }}
+      shell: bash
+      run: |
+        # Save PR URL to both output and artifact file
+        echo "pr_${{ inputs.issue_id }}=${{ steps.update-swe-data.outputs.pull_request_url }}" >> $GITHUB_OUTPUT
+        
+        # Save PR URL to a file in the artifacts directory
+        echo "${{ steps.update-swe-data.outputs.pull_request_url }}" > pr_artifacts/pr_${{ inputs.issue_id }}.txt
+        echo "Saved PR URL to artifact file: pr_artifacts/pr_${{ inputs.issue_id }}.txt"
+
+    # Upload PR artifacts
+    - name: Upload PR artifacts
+      if: ${{ steps.update-swe-data.outputs.pull_request_url != '' }}
+      uses: actions/upload-artifact@v4
+      with:
+        name: data-pr-${{ inputs.issue_id }}
+        path: pr_artifacts/
+        retention-days: 1

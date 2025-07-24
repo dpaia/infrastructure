@@ -1,4 +1,4 @@
-name: Export SWE Dataset
+name: Export Dataset for issues
 run-name: "Export SWE Dataset: ${{ inputs.search_query }} -> ${{ inputs.output_file }}"
 
 on:
@@ -19,6 +19,16 @@ on:
       output_file:
         description: "Export file name"
         default: "dataset.json"
+      datasets_repository:
+        description: "Repository for exported dataset"
+        required: false
+        type: string
+        default: "jetbrains-eval-lab/ee-swe-dataset"
+      create_pull_request:
+        description: "Create a pull request to the result datasets repository"
+        required: false
+        type: boolean
+        default: false
 
 jobs:
   get-project-data:
@@ -169,3 +179,32 @@ jobs:
         with:
           name: ${{ inputs.output_file }}
           path: ${{ inputs.output_file }}
+
+  create-pull-request:
+    needs: aggregate-results
+    if: ${{ inputs.create_pull_request }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout target repository
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.datasets_repository }}
+          token: ${{ secrets.PROJECT_TOKEN }}
+          
+      - name: Download dataset artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.output_file }}
+          path: ./
+          
+      - name: Create branch
+        run: |
+          git config --global user.name "GitHub Actions"
+          git config --global user.email "actions@github.com"
+          BRANCH_NAME="dataset-$(date +%Y%m%d-%H%M%S)"
+          git checkout -b $BRANCH_NAME
+          git add ${{ inputs.output_file }}
+          git commit -m "Add dataset: ${{ inputs.search_query }}"
+          git push origin $BRANCH_NAME
+          PR_URL=$(gh pr create --base main --head "$BRANCH_NAME" --title "Dataset: ${{ inputs.search_query }}" --body "Add dataset: ${{ inputs.search_query }}" --repo "${{ inputs.datasets_repository }}")
+          echo "Pull request created: $PR_URL"

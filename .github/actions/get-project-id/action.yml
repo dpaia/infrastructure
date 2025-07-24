@@ -1,0 +1,46 @@
+name: 'Get Project ID'
+description: 'Fetches GitHub Project V2 ID'
+author: 'JetBrains'
+
+inputs:
+  organization:
+    description: 'GitHub organization name'
+    required: true
+  project_number:
+    description: 'Project number'
+    required: true
+    default: '3'
+  github_token:
+    description: 'GitHub token for API access'
+    required: true
+
+outputs:
+  project_id:
+    description: 'The ID of the GitHub Project'
+    value: ${{ steps.fetch-project-id.outputs.project_id }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Fetch project ID
+      id: fetch-project-id
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github_token }}
+        ORG_NAME: ${{ inputs.organization }}
+        PROJECT_NUMBER: ${{ inputs.project_number }}
+      run: |
+        gh auth status
+
+        echo "Fetching project ID..."
+        project_id=$(gh api graphql -f query='
+        query($org:String!, $number:Int!) {
+          organization(login: $org) {
+            projectV2(number: $number) {
+              id
+            }
+          }
+        }' -f org="$ORG_NAME" -F number=$PROJECT_NUMBER --jq '.data.organization.projectV2.id')
+
+        echo "Project ID: $project_id"
+        echo "project_id=$project_id" >> $GITHUB_OUTPUT

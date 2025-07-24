@@ -105,3 +105,26 @@ This workflow helps maintain consistent issue labels across multiple repositorie
 
 **Description:**
 This workflow automates the process of adding GitHub issues to a project board. It searches for issues matching the specified query and adds them to the designated project. The workflow consists of three main jobs: finding issues that match the search criteria, retrieving the project data, and adding each matching issue to the project.
+
+### 6. Share Workflow
+
+**File:** [.github/workflows/share-workflow.yml](.github/workflows/share-workflow.yml)
+
+**Purpose:** Shares GitHub workflow files between repositories by creating pull requests.
+
+**Trigger:** Manual (workflow_dispatch)
+
+**Inputs:**
+- `organization`: GitHub organization name (default: 'jetbrains-eval-lab')
+- `topic`: Repository topic filter (default: empty, which means all repositories)
+- `workflow_path`: Path to GitHub workflow file to share (relative to .github/workflows/)
+
+**Description:**
+This workflow automates the process of sharing GitHub workflow files across multiple repositories within an organization. It finds all repositories matching the specified organization and topic criteria, then creates pull requests to add the specified workflow file to each repository. The workflow consists of three main jobs: finding repositories that match the criteria, creating pull requests for each repository, and summarizing the results.
+
+The workflow handles various scenarios gracefully:
+- If the workflow file already exists in a target repository, it skips creating a pull request
+- If a pull request already exists for the workflow file, it uses the existing PR URL
+- If there's an error creating a pull request, it captures the error and continues with other repositories
+
+After completion, the workflow generates a summary report that categorizes the results into "Pull Requests Created", "Repositories with No Changes Needed", and "Failed Pull Requests", making it easy to see the outcome at a glance. This workflow is particularly useful for maintaining consistent CI/CD processes across multiple repositories in an organization.

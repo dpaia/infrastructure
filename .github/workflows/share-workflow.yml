@@ -1,0 +1,203 @@
+name: Share Workflow
+run-name: "Share workflow: ${{ inputs.workflow_path || 'workflow' }} to ${{ inputs.organization || 'jetbrains-eval-lab' }} repos with topic: ${{ inputs.topic || 'all' }}"
+
+on:
+  workflow_dispatch:
+    inputs:
+      organization:
+        description: 'GitHub organization name'
+        required: true
+        type: string
+        default: 'jetbrains-eval-lab'
+      topic:
+        description: 'Repository topic filter'
+        required: false
+        type: string
+        default: ''
+      workflow_path:
+        description: 'Path to GitHub workflow file to share (relative to github/)'
+        required: true
+        type: string
+
+jobs:
+  find-repositories:
+    name: Find Repositories
+    runs-on: ubuntu-latest
+    outputs:
+      repo-matrix: ${{ steps.find-repos.outputs.repo-matrix }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Find repositories by organization and topic
+        id: find-repos
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ORGANIZATION: ${{ inputs.organization }}
+          TOPIC: ${{ inputs.topic }}
+        run: |
+          # Build the search query
+          SEARCH_QUERY="org:$ORGANIZATION"
+          
+          # Add topic filter if provided
+          if [ -n "$TOPIC" ]; then
+            SEARCH_QUERY="$SEARCH_QUERY topic:$TOPIC"
+          fi
+          
+          echo "Search query: $SEARCH_QUERY"
+          
+          # Search for repositories
+          if [ -n "$TOPIC" ]; then
+            # If topic is specified, use it in the search
+            REPOS=$(gh search repos --owner $ORGANIZATION --topic $TOPIC --json nameWithOwner --limit 100 | jq -c '.[].nameWithOwner')
+          else
+            # Otherwise, list all repos in the organization
+            REPOS=$(gh repo list $ORGANIZATION --json nameWithOwner --limit 100 | jq -c '.[].nameWithOwner')
+          fi
+          
+          # Format as JSON array for matrix
+          REPO_MATRIX=$(echo "[$REPOS]" | sed 's/"\n"/","/g' | sed 's/\n/,/g')
+          
+          # Output the matrix
+          echo "repo-matrix=$REPO_MATRIX" >> $GITHUB_OUTPUT
+          
+          # Log the number of repositories found
+          REPO_COUNT=$(echo "$REPO_MATRIX" | jq '. | length')
+          echo "Found $REPO_COUNT repositories matching the criteria"
+
+  create-pull-requests:
+    name: Create Pull Requests
+    needs: find-repositories
+    runs-on: ubuntu-latest
+    if: ${{ needs.find-repositories.outputs.repo-matrix != '[]' && needs.find-repositories.outputs.repo-matrix != '' }}
+    strategy:
+      matrix:
+        repo: ${{ fromJson(needs.find-repositories.outputs.repo-matrix) }}
+      fail-fast: false
+    steps:
+      - name: Checkout source repository
+        uses: actions/checkout@v4
+        with:
+          path: source-repo
+
+      - name: Checkout target repository
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ matrix.repo }}
+          path: target-repo
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verify workflow file exists
+        id: verify-workflow
+        run: |
+          WORKFLOW_FILE="source-repo/github/${{ inputs.workflow_path }}"
+          if [ ! -f "$WORKFLOW_FILE" ]; then
+            echo "Error: Workflow file not found at $WORKFLOW_FILE"
+            exit 1
+          fi
+          echo "Workflow file found at $WORKFLOW_FILE"
+
+      - name: Create branch for changes
+        working-directory: target-repo
+        run: |
+          # Extract workflow filename from path
+          WORKFLOW_FILENAME=$(basename "${{ inputs.workflow_path }}")
+          
+          # Create a new branch
+          BRANCH_NAME="add-workflow-${WORKFLOW_FILENAME%.*}-$(date +%Y%m%d%H%M%S)"
+          git checkout -b $BRANCH_NAME
+          
+          # Set git config
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
+          
+          echo "BRANCH_NAME=$BRANCH_NAME" >> $GITHUB_ENV
+
+      - name: Copy workflow file
+        run: |
+          # Create .github/workflows directory if it doesn't exist
+          mkdir -p target-repo/.github/workflows
+          
+          # Copy the workflow file
+          cp "source-repo/github/${{ inputs.workflow_path }}" "target-repo/.github/"
+          
+          echo "Copied workflow file to target repository"
+
+      - name: Commit and push changes
+        working-directory: target-repo
+        run: |
+          # Check if there are changes
+          if git status --porcelain | grep -q .; then
+            # Add changes
+            git add .github/
+            
+            # Commit changes
+            WORKFLOW_FILENAME=$(basename "${{ inputs.workflow_path }}")
+            git commit -m "Add workflow: $WORKFLOW_FILENAME"
+            
+            # Push changes
+            git push origin $BRANCH_NAME
+            
+            echo "Changes committed and pushed to branch $BRANCH_NAME"
+          else
+            echo "No changes to commit"
+            exit 0
+          fi
+
+      - name: Create pull request
+        id: create-pr
+        working-directory: target-repo
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Extract workflow filename from path
+          WORKFLOW_FILENAME=$(basename "${{ inputs.workflow_path }}")
+          
+          # Check if there are any changes to create a PR for
+          if [ -z "$(git status --porcelain)" ]; then
+            echo "No changes to create a PR for. The workflow file might already exist in the repository."
+            echo "pr_url=no_changes" >> $GITHUB_OUTPUT
+            mkdir -p pr_artifacts
+            echo "No changes needed for ${{ matrix.repo }}" > "pr_artifacts/pr_${{ matrix.repo }}.txt"
+            exit 0
+          fi
+          
+          # Check if a PR already exists
+          EXISTING_PR=$(gh pr list --head $BRANCH_NAME --json url --jq '.[0].url')
+          if [ -n "$EXISTING_PR" ]; then
+            echo "A pull request already exists: $EXISTING_PR"
+            echo "pr_url=$EXISTING_PR" >> $GITHUB_OUTPUT
+            mkdir -p pr_artifacts
+            echo "$EXISTING_PR" > "pr_artifacts/pr_${{ matrix.repo }}.txt"
+            exit 0
+          fi
+          
+          # Create pull request
+          echo "Creating pull request..."
+          PR_URL=$(gh pr create \
+            --title "Add workflow: $WORKFLOW_FILENAME" \
+            --body "This PR adds the $WORKFLOW_FILENAME workflow from the ${{ github.repository }} repository.
+            
+            Added by the Share Workflow action." \
+            --base main \
+            --head $BRANCH_NAME) || {
+              echo "Failed to create pull request"
+              echo "pr_url=failed" >> $GITHUB_OUTPUT
+              mkdir -p pr_artifacts
+              echo "Failed to create PR for ${{ matrix.repo }}" > "pr_artifacts/pr_${{ matrix.repo }}.txt"
+              exit 0
+            }
+          
+          echo "Pull request created: $PR_URL"
+          echo "pr_url=$PR_URL" >> $GITHUB_OUTPUT
+          
+          # Save PR URL to artifact
+          mkdir -p pr_artifacts
+          echo "$PR_URL" > "pr_artifacts/pr_${{ matrix.repo }}.txt"
+
+      - name: Upload PR URL artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: pr-url-${{ matrix.repo }}
+          path: target-repo/pr_artifacts/
+          retention-days: 7

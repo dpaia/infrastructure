@@ -1,0 +1,54 @@
+name: 'Get Project Field ID'
+description: 'Fetches GitHub Project V2 field ID by name'
+author: 'JetBrains'
+
+inputs:
+  project_id:
+    description: 'The ID of the GitHub Project'
+    required: true
+  field_name:
+    description: 'The name of the field to fetch (e.g., "Commit", "Data", "Status")'
+    required: true
+  github_token:
+    description: 'GitHub token for API access'
+    required: true
+
+outputs:
+  field_id:
+    description: 'The ID of the specified field in the project'
+    value: ${{ steps.fetch-field-id.outputs.field_id }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Fetch field ID
+      id: fetch-field-id
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github_token }}
+        PROJECT_ID: ${{ inputs.project_id }}
+        FIELD_NAME: ${{ inputs.field_name }}
+      run: |
+        gh auth status
+
+        echo "Fetching Field ID for field: $FIELD_NAME..."
+        fields_query=$(gh api graphql -f query='
+        query($project:ID!) {
+          node(id: $project) {
+            ... on ProjectV2 {
+              fields(first: 100) {
+                nodes {
+                  ... on ProjectV2FieldCommon {
+                    id
+                    name
+                  }
+                }
+              }
+            }
+          }
+        }' -f project=$PROJECT_ID)
+        
+        field_id=$(echo "$fields_query" | jq -r ".data.node.fields.nodes[] | select(.name == \"$FIELD_NAME\") | .id")
+        
+        echo "$FIELD_NAME Field ID: $field_id"
+        echo "field_id=$field_id" >> $GITHUB_OUTPUT

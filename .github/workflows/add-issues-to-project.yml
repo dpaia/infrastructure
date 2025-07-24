@@ -48,7 +48,7 @@ jobs:
           github_token: ${{ secrets.GITHUB_TOKEN }}
 
   get-project-data:
-    name: Get Project Data
+    name: Get Project ID
     runs-on: ubuntu-latest
     outputs:
       project_id: ${{ steps.get-project-data.outputs.project_id }}
@@ -56,14 +56,13 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v3
 
-      - name: Get project data
+      - name: Get project ID
         id: get-project-data
-        uses: ./.github/actions/get-project-data
+        uses: ./.github/actions/get-project-id
         with:
           organization: ${{ github.event_name == 'schedule' && env.DEFAULT_ORGANIZATION || github.event.inputs.organization }}
           project_number: ${{ github.event_name == 'schedule' && env.DEFAULT_PROJECT_NUMBER || github.event.inputs.project_number }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
-          fetch_status_field: 'false'
 
   add-issues-to-project:
     name: Add Issues to Project

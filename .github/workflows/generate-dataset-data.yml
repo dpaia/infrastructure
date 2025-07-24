@@ -80,20 +80,35 @@ jobs:
     needs: set-defaults
     runs-on: ubuntu-latest
     outputs:
-      project_id: ${{ steps.get-project-data.outputs.project_id }}
-      commit_field_id: ${{ steps.get-project-data.outputs.commit_field_id }}
-      data_field_id: ${{ steps.get-project-data.outputs.data_field_id }}
+      project_id: ${{ steps.get-project-id.outputs.project_id }}
+      commit_field_id: ${{ steps.get-commit-field-id.outputs.field_id }}
+      data_field_id: ${{ steps.get-data-field-id.outputs.field_id }}
     steps:
       - uses: actions/checkout@v4
 
-      - name: Get project data
-        id: get-project-data
-        uses: ./.github/actions/get-project-data
+      - name: Get project ID
+        id: get-project-id
+        uses: ./.github/actions/get-project-id
         with:
           organization: ${{ github.repository_owner }}
           project_number: 3
           github_token: ${{ secrets.PROJECT_TOKEN }}
-          fetch_status_field: 'false'
+          
+      - name: Get commit field ID
+        id: get-commit-field-id
+        uses: ./.github/actions/get-project-field-id
+        with:
+          project_id: ${{ steps.get-project-id.outputs.project_id }}
+          field_name: "Commit"
+          github_token: ${{ secrets.PROJECT_TOKEN }}
+          
+      - name: Get data field ID
+        id: get-data-field-id
+        uses: ./.github/actions/get-project-field-id
+        with:
+          project_id: ${{ steps.get-project-id.outputs.project_id }}
+          field_name: "Data"
+          github_token: ${{ secrets.PROJECT_TOKEN }}
 
   find-issues:
     needs: [get-project-data, set-defaults]

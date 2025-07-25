@@ -72,6 +72,6 @@ runs:
       if: ${{ steps.update-swe-data.outputs.pull_request_url != '' }}
       uses: actions/upload-artifact@v4
       with:
-        name: data-pr-${{ inputs.issue_id }}
+        name: data-pr-${{ inputs.organization }}-${{ inputs.repository }}-${{ inputs.issue_id }}
         path: pr_artifacts/
         retention-days: 1

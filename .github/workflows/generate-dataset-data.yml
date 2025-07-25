@@ -298,20 +298,20 @@ jobs:
           # Find all PR artifact files and extract URLs
           find downloaded_artifacts -name "pr_*.txt" -type f | while read pr_file; do
             echo "Processing PR file: $pr_file"
-            PR_URL=$(cat "$pr_file")
+            PR_URL=$(cat "$pr_file" || echo "")
             if [ -n "$PR_URL" ]; then
               echo "Found PR URL: $PR_URL"
               echo "$PR_URL" >> pr_list.txt
             fi
-          done            
+          done || true
 
-          # Remove any duplicates and empty lines
-          sort -u pr_list.txt | grep -v '^$' > pr_list_unique.txt
-          mv pr_list_unique.txt pr_list.txt
+          # Remove any duplicates and empty lines (using || true to prevent failure)
+          sort -u pr_list.txt | grep -v '^$' > pr_list_unique.txt || true
+          mv pr_list_unique.txt pr_list.txt 2>/dev/null || true
 
           # Show what we found
           echo "Found these PRs:"
-          cat pr_list.txt
+          cat pr_list.txt || echo "No PRs found"
 
           # Check if we found any PRs
           if [ ! -s pr_list.txt ]; then
@@ -319,13 +319,15 @@ jobs:
             PR_LIST=""
           else
             # Create a comma-separated list of PR URLs
-            PR_LIST=$(cat pr_list.txt | tr '\n' ',' | sed 's/,$//')
+            PR_LIST=$(cat pr_list.txt | tr '\n' ',' | sed 's/,$//' || echo "")
             echo "PR List: $PR_LIST"
           fi
 
           # Output the list of PRs (even if empty)
           echo "pr_list=$PR_LIST" >> $GITHUB_OUTPUT
           echo "PR collection complete"
+          # Always exit with success
+          exit 0
 
   update-issue-swe-data:
     needs: [find-issues, set-defaults]

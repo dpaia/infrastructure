@@ -44,7 +44,7 @@ jobs:
         id: find-issues
         uses: ./.github/actions/find-issues
         with:
-          search_query: "-project:${{ needs.set-defaults.outputs.organization }}/${{ github.event_name == 'schedule' && env.DEFAULT_PROJECT_NUMBER || github.event.inputs.project_number }} ${{ github.event_name == 'schedule' && env.DEFAULT_SEARCH_QUERY || github.event.inputs.search_query }}"
+          search_query: "-project:${{ github.event_name == 'schedule' && env.DEFAULT_ORGANIZATION || github.event.inputs.organization }}/${{ github.event_name == 'schedule' && env.DEFAULT_PROJECT_NUMBER || github.event.inputs.project_number }} ${{ github.event_name == 'schedule' && env.DEFAULT_SEARCH_QUERY || github.event.inputs.search_query }}"
           github_token: ${{ secrets.PROJECT_TOKEN }}
 
   get-project-data:

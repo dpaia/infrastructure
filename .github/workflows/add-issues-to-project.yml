@@ -62,7 +62,7 @@ jobs:
         with:
           organization: ${{ github.event_name == 'schedule' && env.DEFAULT_ORGANIZATION || github.event.inputs.organization }}
           project_number: ${{ github.event_name == 'schedule' && env.DEFAULT_PROJECT_NUMBER || github.event.inputs.project_number }}
-          github_token: ${{ secrets.GITHUB_TOKEN }}
+          github_token: ${{ secrets.PROJECT_TOKEN }}
 
   add-issues-to-project:
     name: Add Issues to Project
@@ -84,7 +84,7 @@ jobs:
           organization: ${{ matrix.issue.org_name }}
           repository: ${{ matrix.issue.repo_name }}
           issue_number: ${{ matrix.issue.issue_id }}
-          github_token: ${{ secrets.GITHUB_TOKEN }}
+          github_token: ${{ secrets.PROJECT_TOKEN }}
 
       - name: Add issue to project
         id: add-to-project
@@ -92,4 +92,4 @@ jobs:
         with:
           project_id: ${{ needs.get-project-data.outputs.project_id }}
           issue_node_id: ${{ steps.get-issue-node-id.outputs.issue_node_id }}
-          github_token: ${{ secrets.GITHUB_TOKEN }}
+          github_token: ${{ secrets.PROJECT_TOKEN }}

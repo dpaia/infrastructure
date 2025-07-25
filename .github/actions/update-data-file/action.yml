@@ -94,7 +94,7 @@ runs:
         cp "$GITHUB_WORKSPACE/$LOCAL_FILENAME" "$FILE_PATH"
         
         # Create a new branch with a unique name first
-        BRANCH_NAME="update-data-file-${ISSUE_ID}-$(date +%s)"
+        BRANCH_NAME="update-data-file-${ORGANIZATION}-${REPOSITORY}-${ISSUE_ID}-$(date +%s)"
         git checkout -b "$BRANCH_NAME"
 
         # Add, commit on the new branch

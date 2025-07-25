@@ -31,23 +31,44 @@ env:
   DEFAULT_SEARCH_QUERY: '-label:Epic is:issue'
 
 jobs:
+
+  set-defaults:
+    runs-on: ubuntu-latest
+    outputs:
+      organization: ${{ steps.set-defaults.outputs.organization }}
+      project_number: ${{ steps.set-defaults.outputs.project_number }}
+      search_query: ${{ steps.set-defaults.outputs.search_query }}
+    steps:
+      - id: set-defaults
+        run: |
+          # Set default values for scheduled runs
+          if [[ "${{ github.event_name }}" == "schedule" ]]; then
+            echo "organization=$DEFAULT_ORGANIZATION" >> $GITHUB_OUTPUT
+            echo "project_number=$DEFAULT_PROJECT_NUMBER" >> $GITHUB_OUTPUT            
+            echo "search_query=$DEFAULT_SEARCH_QUERY" >> $GITHUB_OUTPUT          
+          else
+            echo "organization=${{ inputs.organization }}" >> $GITHUB_OUTPUT
+            echo "project_number=${{ inputs.project_number }}" >> $GITHUB_OUTPUT            
+            echo "search_query=${{ inputs.search_query }}" >> $GITHUB_OUTPUT            
+          fi
+
   find-issues:
-    name: Find Issues
+    needs: [ set-defaults ]
     runs-on: ubuntu-latest
     outputs:
       issue-matrix: ${{ steps.find-issues.outputs.issue-matrix }}
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v3
+      - uses: actions/checkout@v4
 
       - name: Find issues by query
         id: find-issues
         uses: ./.github/actions/find-issues
         with:
-          search_query: "-project:${{ github.event_name == 'schedule' && env.DEFAULT_ORGANIZATION || github.event.inputs.organization }}/${{ github.event_name == 'schedule' && env.DEFAULT_PROJECT_NUMBER || github.event.inputs.project_number }} ${{ github.event_name == 'schedule' && env.DEFAULT_SEARCH_QUERY || github.event.inputs.search_query }}"
+          search_query: "-project:${{ needs.set-defaults.outputs.organization }}/${{ needs.set-defaults.outputs.project_number }} ${{ needs.set-defaults.outputs.search_query }}"
           github_token: ${{ secrets.PROJECT_TOKEN }}
 
   get-project-data:
+    needs: set-defaults
     name: Get Project ID
     runs-on: ubuntu-latest
     outputs:
@@ -66,7 +87,7 @@ jobs:
 
   add-issues-to-project:
     name: Add Issues to Project
-    needs: [find-issues, get-project-data]
+    needs: [set-defaults, find-issues, get-project-data]
     runs-on: ubuntu-latest
     if: ${{ needs.find-issues.outputs.issue-matrix != '[]' && needs.find-issues.outputs.issue-matrix != '' }}
     strategy:

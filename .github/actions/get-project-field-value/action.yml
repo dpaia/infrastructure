@@ -93,6 +93,4 @@ runs:
             | select(.field.id == $fid)
             | .text // .name // .number // .date // .title // empty
           ')
-        echo "Query result=$QUERY_RESULT"
-        echo "Field value=$FIELD_VALUE"
         echo "field_value=$FIELD_VALUE" >> "$GITHUB_OUTPUT"

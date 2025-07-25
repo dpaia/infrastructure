@@ -162,6 +162,7 @@ jobs:
         env:
           STATUS_FIELD_VALUE: ${{ steps.get-status-value.outputs.field_value }}
         run: |          
+          echo "Field value: $STATUS_FIELD_VALUE"
           if [ -z "STATUS_FIELD_VALUE" ] || [ "STATUS_FIELD_VALUE" = "null" ] || [ "STATUS_FIELD_VALUE" != "Done" ]; then
             echo "Status is not Done"
             echo "match=false" >> $GITHUB_OUTPUT

@@ -24,6 +24,14 @@ outputs:
 runs:
   using: 'composite'
   steps:
+    - name: Get field ID
+      id: get-field-id
+      uses: ./.github/actions/get-project-field-id
+      with:
+        project_id: ${{ inputs.project_id }}
+        field_name: ${{ inputs.field_name }}
+        github_token: ${{ inputs.github_token }}
+        
     - name: Get field value
       id: get-field-value
       shell: bash
@@ -32,23 +40,24 @@ runs:
         PROJECT_ID: ${{ inputs.project_id }}
         ISSUE_NODE_ID: ${{ inputs.issue_node_id }}
         FIELD_NAME: ${{ inputs.field_name }}
+        FIELD_ID: ${{ steps.get-field-id.outputs.field_id }}
       run: |
-        echo "Getting field value for field '$FIELD_NAME' for issue with node ID '$ISSUE_NODE_ID'"
+        echo "Getting field value for field '$FIELD_NAME' (ID: $FIELD_ID) for issue with node ID '$ISSUE_NODE_ID'"
         
-        # Get project item for this issue with direct filtering
+        if [ -z "$FIELD_ID" ]; then
+          echo "Error: Field '$FIELD_NAME' not found in project"
+          exit 1
+        fi
+        
+        # Get project item for this issue using the issue_node_id filter
         ITEM_QUERY=$(gh api graphql -f query='
-        query($project:ID!, $issue:ID!) {
+        query($project:ID!, $issueId:ID!, $fieldId:ID!) {
           node(id: $project) {
             ... on ProjectV2 {
-              items(first: 10, filter: {content: {id: {eq: $issue}}}) {
+              items(first: 1, filter: {content: {id: {eq: $issueId}}}) {
                 nodes {
                   id
-                  content {
-                    ... on Issue {
-                      id
-                    }
-                  }
-                  fieldValues(first: 100) {
+                  fieldValues(first: 1, filter: {field: {id: {eq: $fieldId}}}) {
                     nodes {
                       ... on ProjectV2ItemFieldTextValue {
                         field {
@@ -93,41 +102,41 @@ runs:
               }
             }
           }
-        }' -f project=$PROJECT_ID -f issue=$ISSUE_NODE_ID)
-
-        # Extract field values from the filtered item
-        ITEM_DATA=$(echo "$ITEM_QUERY" | jq -c '.data.node.items.nodes[0]')
+        }' -f project=$PROJECT_ID -f issueId=$ISSUE_NODE_ID -f fieldId=$FIELD_ID)
+        
+        # Extract the item data
+        ITEM_DATA=$(echo "$ITEM_QUERY" | jq -c '.data.node.items.nodes[0] // ""')
         
         FIELD_VALUE=""
         if [ -n "$ITEM_DATA" ] && [ "$ITEM_DATA" != "null" ]; then
           echo "Found project item for issue"
-
-          # Determine field type and extract value
-          FIELD_TYPE=$(echo "$ITEM_DATA" | jq -r '.fieldValues.nodes[] | select(.field.name == "'$FIELD_NAME'") | keys[0]')
-
+          
+          # Determine field type and extract value (now directly from the first node since we're filtering by field ID)
+          FIELD_TYPE=$(echo "$ITEM_DATA" | jq -r '.fieldValues.nodes[0] | keys[0]')
+          
           if [ "$FIELD_TYPE" = "text" ]; then
             # Text field
-            FIELD_VALUE=$(echo "$ITEM_DATA" | jq -r '.fieldValues.nodes[] | select(.field.name == "'$FIELD_NAME'") | .text')
+            FIELD_VALUE=$(echo "$ITEM_DATA" | jq -r '.fieldValues.nodes[0].text')
             echo "$FIELD_NAME (text field) value: $FIELD_VALUE"
           elif [ "$FIELD_TYPE" = "name" ]; then
             # Single select field
-            FIELD_VALUE=$(echo "$ITEM_DATA" | jq -r '.fieldValues.nodes[] | select(.field.name == "'$FIELD_NAME'") | .name')
-            OPTION_ID=$(echo "$ITEM_DATA" | jq -r '.fieldValues.nodes[] | select(.field.name == "'$FIELD_NAME'") | .optionId')
+            FIELD_VALUE=$(echo "$ITEM_DATA" | jq -r '.fieldValues.nodes[0].name')
+            OPTION_ID=$(echo "$ITEM_DATA" | jq -r '.fieldValues.nodes[0].optionId')
             echo "$FIELD_NAME (single select field) value: $FIELD_VALUE (optionId: $OPTION_ID)"
           elif [ "$FIELD_TYPE" = "date" ]; then
             # Date field
-            FIELD_VALUE=$(echo "$ITEM_DATA" | jq -r '.fieldValues.nodes[] | select(.field.name == "'$FIELD_NAME'") | .date')
+            FIELD_VALUE=$(echo "$ITEM_DATA" | jq -r '.fieldValues.nodes[0].date')
             echo "$FIELD_NAME (date field) value: $FIELD_VALUE"
           elif [ "$FIELD_TYPE" = "number" ]; then
             # Number field
-            FIELD_VALUE=$(echo "$ITEM_DATA" | jq -r '.fieldValues.nodes[] | select(.field.name == "'$FIELD_NAME'") | .number')
+            FIELD_VALUE=$(echo "$ITEM_DATA" | jq -r '.fieldValues.nodes[0].number')
             echo "$FIELD_NAME (number field) value: $FIELD_VALUE"
           else
             echo "Field '$FIELD_NAME' found but has unsupported type: $FIELD_TYPE"
             # Return empty string for unsupported types
             FIELD_VALUE=""
           fi
-
+          
           if [ -z "$FIELD_VALUE" ] || [ "$FIELD_VALUE" = "null" ]; then
             echo "Field '$FIELD_NAME' not found or has no value"
             FIELD_VALUE=""
@@ -137,8 +146,8 @@ runs:
         fi
         
         # Debug output for troubleshooting
-        echo "All field values for this item:"
-        echo "$ITEM_DATA" | jq -r '.fieldValues.nodes[] | "Field: \(.field.name), Type: \(keys[0]), Value: \(.[keys[0]])"' || echo "No field values found or jq error"
-
+        echo "Field value details:"
+        echo "$ITEM_DATA" | jq -r '.fieldValues.nodes[0] | "Field: \(.field.name), Type: \(keys[0]), Value: \(.[keys[0]])"' || echo "No field value found or jq error"
+        
         # Set output
         echo "field_value=$FIELD_VALUE" >> $GITHUB_OUTPUT

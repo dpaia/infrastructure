@@ -136,8 +136,24 @@ runs:
         # Run the script and let it output directly to GITHUB_OUTPUT
         .github/python/utils/extract_test_fields.py >> $GITHUB_OUTPUT
 
+    - name: Check if test fields are empty
+      id: check-test-fields
+      shell: bash
+      env:
+        FAIL_TO_PASS: ${{ steps.extract-fields.outputs.fail_to_pass }}
+        PASS_TO_PASS: ${{ steps.extract-fields.outputs.pass_to_pass }}
+      run: |
+        if [ "$FAIL_TO_PASS" == "[]" ] && [ "$PASS_TO_PASS" == "[]" ]; then
+          echo "Both FAIL_TO_PASS and PASS_TO_PASS are empty. Skipping data generation."
+          echo "empty_test_fields=true" >> $GITHUB_OUTPUT
+        else
+          echo "Test fields are not empty. Proceeding with data generation."
+          echo "empty_test_fields=false" >> $GITHUB_OUTPUT
+        fi
+
     - name: Generate data
       id: generate-data
+      if: steps.check-test-fields.outputs.empty_test_fields != 'true'
       shell: bash
       env:
         ISSUE_NUMBER: ${{ inputs.issue_id }}
@@ -161,9 +177,16 @@ runs:
       env:
         DATA_VALUE: ${{ steps.generate-data.outputs.data_value }}
         EXTRACT_ERROR: ${{ steps.extract-fields.outputs.has_error }}
+        EMPTY_TEST_FIELDS: ${{ steps.check-test-fields.outputs.empty_test_fields }}
+        FAIL_TO_PASS: ${{ steps.extract-fields.outputs.fail_to_pass }}
+        PASS_TO_PASS: ${{ steps.extract-fields.outputs.pass_to_pass }}
       run: |
-        if [ "$EXTRACT_ERROR" == "true" ] || echo "$DATA_VALUE" | jq -e '.has_error == true' > /dev/null 2>&1; then
-          echo "Error detected in data generation or test field extraction."
+        if [ "$EXTRACT_ERROR" == "true" ] || [ "$EMPTY_TEST_FIELDS" == "true" ] || ([ -n "$DATA_VALUE" ] && echo "$DATA_VALUE" | jq -e '.has_error == true' > /dev/null 2>&1); then
+          if [ "$EMPTY_TEST_FIELDS" == "true" ]; then
+            echo "Both FAIL_TO_PASS and PASS_TO_PASS are empty."
+          else
+            echo "Error detected in data generation or test field extraction."
+          fi
           echo "has_error=true" >> $GITHUB_OUTPUT
         else
           echo "Data generated successfully."

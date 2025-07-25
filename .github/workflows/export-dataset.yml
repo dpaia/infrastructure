@@ -101,8 +101,18 @@ jobs:
           issue_number: ${{ matrix.issue.issue_id }}
           github_token: ${{ secrets.PROJECT_TOKEN }}
 
+      - name: Get Status field value
+        id: get-status-value
+        uses: ./.github/actions/get-project-field-value
+        with:
+          project_id: ${{ needs.get-project-data.outputs.project_id }}
+          issue_node_id: ${{ steps.get-issue-node-id.outputs.issue_node_id }}
+          field_name: "Status"
+          github_token: ${{ secrets.PROJECT_TOKEN }}
+
       - name: Get Data field value
         id: get-data-value
+        if: steps.get-status-value.outputs.field_value == 'Done'
         uses: ./.github/actions/get-project-field-value
         with:
           project_id: ${{ needs.get-project-data.outputs.project_id }}
@@ -112,6 +122,7 @@ jobs:
 
       - name: Check for links
         id: check_data_links
+        if: steps.get-status-value.outputs.field_value == 'Done'
         env:
           DATA_VALUE: ${{ steps.get-data-value.outputs.field_value }}
         run: |
@@ -132,7 +143,7 @@ jobs:
           fi
 
       - name: Download content
-        if: steps.check_data_links.outputs.has_content == 'true'
+        if: steps.get-status-value.outputs.field_value == 'Done' && steps.check_data_links.outputs.has_content == 'true'
         id: download-content
         uses: ./.github/actions/download-content
         with:
@@ -143,7 +154,7 @@ jobs:
           github_token: ${{ secrets.PROJECT_TOKEN }}
 
       - name: Upload processed content
-        if: steps.check_data_links.outputs.has_content == 'true'
+        if: steps.get-status-value.outputs.field_value == 'Done' && steps.check_data_links.outputs.has_content == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: data-${{ matrix.issue.org_name }}-${{ matrix.issue.repo_name }}-${{ matrix.issue.issue_id }}

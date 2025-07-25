@@ -39,73 +39,41 @@ runs:
         GH_TOKEN: ${{ inputs.github_token }}
         PROJECT_ID: ${{ inputs.project_id }}
         ISSUE_NODE_ID: ${{ inputs.issue_node_id }}
-        FIELD_NAME: ${{ inputs.field_name }}
         FIELD_ID: ${{ steps.get-field-id.outputs.field_id }}
       run: |
-        echo "Getting field value for field '$FIELD_NAME' (ID: $FIELD_ID) for issue with node ID '$ISSUE_NODE_ID'"
-        
         if [ -z "$FIELD_ID" ]; then
-          echo "Error: Field '$FIELD_NAME' not found in project"
+          echo "Error: Field ID not provided"
           exit 1
         fi
-        
-        ITEM_QUERY=$(gh api graphql -f query='
+
+        QUERY_RESULT=$(gh api graphql -f query='
         query($issueId: ID!) {
           node(id: $issueId) {
             ... on Issue {
               projectItems(first: 20) {
                 nodes {
-                  id
-                  project {
-                    id
-                    title
-                  }
+                  project { id }
                   fieldValues(first: 20) {
                     nodes {
                       __typename
                       ... on ProjectV2ItemFieldTextValue {
-                        field {
-                          ... on ProjectV2FieldCommon {
-                            id
-                            name
-                          }
-                        }
+                        field { ... on ProjectV2FieldCommon { id } }
                         text
                       }
                       ... on ProjectV2ItemFieldNumberValue {
-                        field {
-                          ... on ProjectV2FieldCommon {
-                            id
-                            name
-                          }
-                        }
+                        field { ... on ProjectV2FieldCommon { id } }
                         number
                       }
                       ... on ProjectV2ItemFieldDateValue {
-                        field {
-                          ... on ProjectV2FieldCommon {
-                            id
-                            name
-                          }
-                        }
+                        field { ... on ProjectV2FieldCommon { id } }
                         date
                       }
                       ... on ProjectV2ItemFieldSingleSelectValue {
-                        field {
-                          ... on ProjectV2FieldCommon {
-                            id
-                            name
-                          }
-                        }
+                        field { ... on ProjectV2FieldCommon { id } }
                         name
                       }
                       ... on ProjectV2ItemFieldIterationValue {
-                        field {
-                          ... on ProjectV2FieldCommon {
-                            id
-                            name
-                          }
-                        }
+                        field { ... on ProjectV2FieldCommon { id } }
                         title
                       }
                     }
@@ -114,127 +82,16 @@ runs:
               }
             }
           }
-        }' -f issueId=$ISSUE_NODE_ID)
+        }' -f issueId="$ISSUE_NODE_ID")
 
-        # Debug: Show the raw GraphQL response
-        echo "DEBUG: Raw GraphQL response:"
-        echo "$ITEM_QUERY" | jq '.'
-        
-        # Find the project item for the specified project
-        ITEM_DATA=$(echo "$ITEM_QUERY" | jq -c --arg project_id "$PROJECT_ID" '.data.node.projectItems.nodes[] | select(.project.id == $project_id) // ""' | head -n 1)
-        
-        # Debug: Show the ITEM_DATA value
-        echo "DEBUG: ITEM_DATA value:"
-        echo "$ITEM_DATA" | jq '.' || echo "ITEM_DATA is not valid JSON: '$ITEM_DATA'"
-        
-        FIELD_VALUE=""
-        
-        # Check if the issue exists
-        if [ -z "$(echo "$ITEM_QUERY" | jq -r '.data.node')" ] || [ "$(echo "$ITEM_QUERY" | jq -r '.data.node')" = "null" ]; then
-          echo "Issue with node ID '$ISSUE_NODE_ID' not found"
-          exit 1
-        fi
-        
-        # Check if the issue has any project items
-        if [ -z "$(echo "$ITEM_QUERY" | jq -r '.data.node.projectItems.nodes')" ] || [ "$(echo "$ITEM_QUERY" | jq -r '.data.node.projectItems.nodes')" = "null" ] || [ "$(echo "$ITEM_QUERY" | jq -r '.data.node.projectItems.nodes | length')" = "0" ]; then
-          echo "Issue with node ID '$ISSUE_NODE_ID' is not in any projects"
-          exit 1
-        fi
-        
-        if [ -n "$ITEM_DATA" ] && [ "$ITEM_DATA" != "null" ]; then
-          # Check if ITEM_DATA is a valid JSON object
-          if echo "$ITEM_DATA" | jq -e 'type == "object"' > /dev/null 2>&1; then
-            # Safely extract project title with fallback
-            PROJECT_TITLE=$(echo "$ITEM_DATA" | jq -r 'if .project and .project.title then .project.title else "unknown" end')
-            echo "Found project item for issue in project '$PROJECT_TITLE'"
-            
-            # Check if fieldValues exists and is an object before trying to access it
-            if echo "$ITEM_DATA" | jq -e '.fieldValues and .fieldValues.nodes' > /dev/null 2>&1; then
-              # Filter for the specific field by field ID
-              FIELD_VALUE_DATA=$(echo "$ITEM_DATA" | jq -c --arg field_id "$FIELD_ID" '.fieldValues.nodes[] | select(.field.id == $field_id) // ""' | head -n 1)
-            else
-              echo "ERROR: fieldValues property not found or not an object in ITEM_DATA"
-              FIELD_VALUE_DATA=""
-            fi
-          else
-            echo "ERROR: ITEM_DATA is not a valid JSON object"
-            FIELD_VALUE_DATA=""
-          fi
-          
-          if [ -n "$FIELD_VALUE_DATA" ] && [ "$FIELD_VALUE_DATA" != "null" ]; then
-            # Check if FIELD_VALUE_DATA is a valid JSON object
-            if echo "$FIELD_VALUE_DATA" | jq -e 'type == "object"' > /dev/null 2>&1; then
-              # Debug: Show field value data structure
-              echo "DEBUG: FIELD_VALUE_DATA structure:"
-              echo "$FIELD_VALUE_DATA" | jq '.'
-              
-              # Safely determine field type
-              FIELD_TYPE=$(echo "$FIELD_VALUE_DATA" | jq -r 'try (keys[0]) catch "unknown"')
-              echo "DEBUG: Field type detected: $FIELD_TYPE"
-              
-              if [ "$FIELD_TYPE" = "text" ]; then
-                # Text field
-                FIELD_VALUE=$(echo "$FIELD_VALUE_DATA" | jq -r 'try (.text) catch ""')
-                echo "$FIELD_NAME (text field) value: $FIELD_VALUE"
-              elif [ "$FIELD_TYPE" = "name" ]; then
-                # Single select field
-                FIELD_VALUE=$(echo "$FIELD_VALUE_DATA" | jq -r 'try (.name) catch ""')
-                OPTION_ID=$(echo "$FIELD_VALUE_DATA" | jq -r 'try (.optionId // "N/A") catch "N/A"')
-                echo "$FIELD_NAME (single select field) value: $FIELD_VALUE (optionId: $OPTION_ID)"
-              elif [ "$FIELD_TYPE" = "date" ]; then
-                # Date field
-                FIELD_VALUE=$(echo "$FIELD_VALUE_DATA" | jq -r 'try (.date) catch ""')
-                echo "$FIELD_NAME (date field) value: $FIELD_VALUE"
-              elif [ "$FIELD_TYPE" = "number" ]; then
-                # Number field
-                FIELD_VALUE=$(echo "$FIELD_VALUE_DATA" | jq -r 'try (.number) catch ""')
-                echo "$FIELD_NAME (number field) value: $FIELD_VALUE"
-              elif [ "$FIELD_TYPE" = "title" ]; then
-                # Iteration field
-                FIELD_VALUE=$(echo "$FIELD_VALUE_DATA" | jq -r 'try (.title) catch ""')
-                echo "$FIELD_NAME (iteration field) value: $FIELD_VALUE"
-              else
-                echo "Field '$FIELD_NAME' found but has unsupported type: $FIELD_TYPE"
-                # Return empty string for unsupported types
-                FIELD_VALUE=""
-              fi
-            else
-              echo "ERROR: FIELD_VALUE_DATA is not a valid JSON object: '$FIELD_VALUE_DATA'"
-              FIELD_VALUE=""
-            fi
-            
-            if [ -z "$FIELD_VALUE" ] || [ "$FIELD_VALUE" = "null" ]; then
-              echo "Field '$FIELD_NAME' found but has no value"
-              FIELD_VALUE=""
-            fi
-          else
-            echo "Field with ID '$FIELD_ID' not found for this issue"
-          fi
-        else
-          echo "Issue with node ID '$ISSUE_NODE_ID' not found in project '$PROJECT_ID'"
-          # We already checked that the issue exists and has project items,
-          # so if we get here, the issue exists but is not in the specified project
-          echo "Available projects for this issue:"
-          # Safely extract project information with error handling
-          if echo "$ITEM_QUERY" | jq -e '.data.node.projectItems.nodes' > /dev/null 2>&1; then
-            echo "$ITEM_QUERY" | jq -r 'try (.data.node.projectItems.nodes[] | "- \(if .project and .project.title then .project.title else "Unknown" end) (ID: \(if .project and .project.id then .project.id else "Unknown" end))") catch "- Unable to extract project information"'
-          else
-            echo "- No project information available"
-          fi
-        fi
-        
-        # Debug output for troubleshooting
-        echo "Field value details:"
-        if [ -n "$FIELD_VALUE_DATA" ] && [ "$FIELD_VALUE_DATA" != "null" ]; then
-          # Safely extract field details with error handling
-          if echo "$FIELD_VALUE_DATA" | jq -e 'type == "object"' > /dev/null 2>&1; then
-            echo "$FIELD_VALUE_DATA" | jq -r 'try ("Field: \(if .field and .field.name then .field.name else "Unknown" end), Type: \(keys[0] // "Unknown"), Value: \(.[keys[0] // ""] // "None")") catch "Unable to extract field details"'
-          else
-            echo "Field value data is not a valid JSON object: '$FIELD_VALUE_DATA'"
-          fi
-        else
-          echo "No field value found for this issue and field"
-        fi
-        
-        # Set output
-        echo "field_value=$FIELD_VALUE" >> $GITHUB_OUTPUT
+        FIELD_VALUE=$(echo "$QUERY_RESULT" | jq -r \
+          --arg pid "$PROJECT_ID" \
+          --arg fid "$FIELD_ID" '
+            .data.node.projectItems.nodes[]
+            | select(.project.id == $pid)
+            | .fieldValues.nodes[]
+            | select(.field.id == $fid)
+            | .text // .name // .number // .date // .title // empty
+          ')
+
+        echo "field_value=$FIELD_VALUE" >> "$GITHUB_OUTPUT"

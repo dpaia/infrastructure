@@ -64,7 +64,7 @@ jobs:
         id: find-issues
         uses: ./.github/actions/find-issues
         with:
-          search_query: "-project:${{ needs.set-defaults.outputs.organization }}/${{ needs.set-defaults.outputs.project_number }} ${{ needs.set-defaults.outputs.search_query }}"
+          search_query: "org:${{ needs.set-defaults.outputs.organization }} -project:${{ needs.set-defaults.outputs.organization }}/${{ needs.set-defaults.outputs.project_number }} ${{ needs.set-defaults.outputs.search_query }}"
           github_token: ${{ secrets.PROJECT_TOKEN }}
 
   get-project-data:

@@ -165,10 +165,10 @@ jobs:
           echo "Field value: $STATUS_FIELD_VALUE"
           if [ -z "$STATUS_FIELD_VALUE" ] || [ "$STATUS_FIELD_VALUE" = "null" ] || [ "$STATUS_FIELD_VALUE" != "Done" ]; then
             echo "Status is not Done"
-            echo "match=false" >> $GITHUB_OUTPUT
+            echo "match=true" >> $GITHUB_OUTPUT
           else
             echo "Already processed. Skipping..."
-            echo "match=true" >> $GITHUB_OUTPUT
+            echo "match=false" >> $GITHUB_OUTPUT
           fi
 
       - name: Process Issue Data
@@ -182,7 +182,7 @@ jobs:
           github_token: ${{ secrets.PROJECT_TOKEN }}
           dataset_repo: ${{ vars.DATASET_REPO }}
           auto_merge: 'false'
-          condition: ${{ steps.compare-status.outputs.match == 'false' }}
+          condition: ${{ steps.compare-status.outputs.match == 'true' }}
 
   update-outdated-data:
     needs: [find-issues, get-project-data, set-defaults]
@@ -225,6 +225,20 @@ jobs:
           issue_id: ${{ matrix.issue.issue_id }}
           github_token: ${{ secrets.PROJECT_TOKEN }}
 
+      - name: Compare status
+        id: compare-status
+        env:
+          STATUS_FIELD_VALUE: ${{ steps.get-status-value.outputs.field_value }}
+        run: |
+          echo "Field value: $STATUS_FIELD_VALUE"
+          if [ -z "$STATUS_FIELD_VALUE" ] || [ "$STATUS_FIELD_VALUE" = "null" ] || [ "$STATUS_FIELD_VALUE" != "Done" ]; then
+            echo "Status is not Done"
+            echo "match=true" >> $GITHUB_OUTPUT
+          else
+            echo "Already processed. Skipping..."
+            echo "match=false" >> $GITHUB_OUTPUT
+          fi
+
       - name: Compare commits
         id: compare-commits
         env:
@@ -253,7 +267,7 @@ jobs:
           github_token: ${{ secrets.PROJECT_TOKEN }}
           dataset_repo: ${{ vars.DATASET_REPO }}
           auto_merge: 'false'
-          condition: ${{ steps.compare-commits.outputs.match == 'false' }}
+          condition: ${{ steps.compare-commits.outputs.match == 'false' || steps.compare-status.outputs.match == 'true' }}
 
   # This job runs after all matrix jobs are complete to collect PR URLs
   collect-prs:

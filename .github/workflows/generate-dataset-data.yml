@@ -13,7 +13,7 @@ on:
         description: 'Repositories topic'
         required: false
         type: string
-        default: 'Java'
+        default: 'java'
       generator:
         description: 'Profile'
         required: true
@@ -46,6 +46,15 @@ on:
     # Run overnight at 2:00 AM UTC
     - cron: '0 2 * * *'
 
+# Define default values to be used by scheduled runs
+env:
+  DEFAULT_ORGANIZATION: 'jetbrains-eval-lab'
+  DEFAULT_TOPIC: 'java'
+  DEFAULT_SEARCH_QUERY: '-label:Epic label:Verified'
+  DEFAULT_GENERATOR: 'java'
+  DEFAULT_UPDATE: 'create-new'
+  DEFAULT_AUTO_MERGE: 'false'
+
 jobs:
   set-defaults:
     runs-on: ubuntu-latest
@@ -61,12 +70,12 @@ jobs:
         run: |
           # Set default values for scheduled runs
           if [[ "${{ github.event_name }}" == "schedule" ]]; then
-            echo "organization=jetbrains-eval-lab" >> $GITHUB_OUTPUT
-            echo "topic=Java" >> $GITHUB_OUTPUT
-            echo "generator=java" >> $GITHUB_OUTPUT
-            echo "search_query=-label:Epic label:Verified" >> $GITHUB_OUTPUT
-            echo "update=create-new" >> $GITHUB_OUTPUT
-            echo "auto_merge=false" >> $GITHUB_OUTPUT
+            echo "organization=$DEFAULT_ORGANIZATION" >> $GITHUB_OUTPUT
+            echo "topic=$DEFAULT_TOPIC" >> $GITHUB_OUTPUT
+            echo "generator=$DEFAULT_GENERATOR" >> $GITHUB_OUTPUT
+            echo "search_query=$DEFAULT_SEARCH_QUERY" >> $GITHUB_OUTPUT
+            echo "update=$DEFAULT_UPDATE" >> $GITHUB_OUTPUT
+            echo "auto_merge=$DEFAULT_AUTO_MERGE" >> $GITHUB_OUTPUT
           else
             echo "organization=${{ inputs.organization }}" >> $GITHUB_OUTPUT
             echo "topic=${{ inputs.topic }}" >> $GITHUB_OUTPUT

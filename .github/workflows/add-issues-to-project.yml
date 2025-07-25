@@ -45,7 +45,7 @@ jobs:
         uses: ./.github/actions/find-issues
         with:
           search_query: ${{ github.event_name == 'schedule' && env.DEFAULT_SEARCH_QUERY || github.event.inputs.search_query }}
-          github_token: ${{ secrets.GITHUB_TOKEN }}
+          github_token: ${{ secrets.PROJECT_TOKEN }}
 
   get-project-data:
     name: Get Project ID

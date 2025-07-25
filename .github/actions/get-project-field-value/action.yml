@@ -116,8 +116,16 @@ runs:
           }
         }' -f issueId=$ISSUE_NODE_ID)
 
+        # Debug: Show the raw GraphQL response
+        echo "DEBUG: Raw GraphQL response:"
+        echo "$ITEM_QUERY" | jq '.'
+        
         # Find the project item for the specified project
         ITEM_DATA=$(echo "$ITEM_QUERY" | jq -c --arg project_id "$PROJECT_ID" '.data.node.projectItems.nodes[] | select(.project.id == $project_id) // ""' | head -n 1)
+        
+        # Debug: Show the ITEM_DATA value
+        echo "DEBUG: ITEM_DATA value:"
+        echo "$ITEM_DATA" | jq '.' || echo "ITEM_DATA is not valid JSON: '$ITEM_DATA'"
         
         FIELD_VALUE=""
         
@@ -134,39 +142,64 @@ runs:
         fi
         
         if [ -n "$ITEM_DATA" ] && [ "$ITEM_DATA" != "null" ]; then
-          echo "Found project item for issue in project '$(echo "$ITEM_DATA" | jq -r '.project.title')'"
-          
-          # Filter for the specific field by field ID
-          FIELD_VALUE_DATA=$(echo "$ITEM_DATA" | jq -c --arg field_id "$FIELD_ID" '.fieldValues.nodes[] | select(.field.id == $field_id) // ""' | head -n 1)
+          # Check if ITEM_DATA is a valid JSON object
+          if echo "$ITEM_DATA" | jq -e 'type == "object"' > /dev/null 2>&1; then
+            # Safely extract project title with fallback
+            PROJECT_TITLE=$(echo "$ITEM_DATA" | jq -r 'if .project and .project.title then .project.title else "unknown" end')
+            echo "Found project item for issue in project '$PROJECT_TITLE'"
+            
+            # Check if fieldValues exists and is an object before trying to access it
+            if echo "$ITEM_DATA" | jq -e '.fieldValues and .fieldValues.nodes' > /dev/null 2>&1; then
+              # Filter for the specific field by field ID
+              FIELD_VALUE_DATA=$(echo "$ITEM_DATA" | jq -c --arg field_id "$FIELD_ID" '.fieldValues.nodes[] | select(.field.id == $field_id) // ""' | head -n 1)
+            else
+              echo "ERROR: fieldValues property not found or not an object in ITEM_DATA"
+              FIELD_VALUE_DATA=""
+            fi
+          else
+            echo "ERROR: ITEM_DATA is not a valid JSON object"
+            FIELD_VALUE_DATA=""
+          fi
           
           if [ -n "$FIELD_VALUE_DATA" ] && [ "$FIELD_VALUE_DATA" != "null" ]; then
-            # Determine field type and extract value
-            FIELD_TYPE=$(echo "$FIELD_VALUE_DATA" | jq -r 'keys[0]')
-            
-            if [ "$FIELD_TYPE" = "text" ]; then
-              # Text field
-              FIELD_VALUE=$(echo "$FIELD_VALUE_DATA" | jq -r '.text')
-              echo "$FIELD_NAME (text field) value: $FIELD_VALUE"
-            elif [ "$FIELD_TYPE" = "name" ]; then
-              # Single select field
-              FIELD_VALUE=$(echo "$FIELD_VALUE_DATA" | jq -r '.name')
-              OPTION_ID=$(echo "$FIELD_VALUE_DATA" | jq -r '.optionId // "N/A"')
-              echo "$FIELD_NAME (single select field) value: $FIELD_VALUE (optionId: $OPTION_ID)"
-            elif [ "$FIELD_TYPE" = "date" ]; then
-              # Date field
-              FIELD_VALUE=$(echo "$FIELD_VALUE_DATA" | jq -r '.date')
-              echo "$FIELD_NAME (date field) value: $FIELD_VALUE"
-            elif [ "$FIELD_TYPE" = "number" ]; then
-              # Number field
-              FIELD_VALUE=$(echo "$FIELD_VALUE_DATA" | jq -r '.number')
-              echo "$FIELD_NAME (number field) value: $FIELD_VALUE"
-            elif [ "$FIELD_TYPE" = "title" ]; then
-              # Iteration field
-              FIELD_VALUE=$(echo "$FIELD_VALUE_DATA" | jq -r '.title')
-              echo "$FIELD_NAME (iteration field) value: $FIELD_VALUE"
+            # Check if FIELD_VALUE_DATA is a valid JSON object
+            if echo "$FIELD_VALUE_DATA" | jq -e 'type == "object"' > /dev/null 2>&1; then
+              # Debug: Show field value data structure
+              echo "DEBUG: FIELD_VALUE_DATA structure:"
+              echo "$FIELD_VALUE_DATA" | jq '.'
+              
+              # Safely determine field type
+              FIELD_TYPE=$(echo "$FIELD_VALUE_DATA" | jq -r 'try (keys[0]) catch "unknown"')
+              echo "DEBUG: Field type detected: $FIELD_TYPE"
+              
+              if [ "$FIELD_TYPE" = "text" ]; then
+                # Text field
+                FIELD_VALUE=$(echo "$FIELD_VALUE_DATA" | jq -r 'try (.text) catch ""')
+                echo "$FIELD_NAME (text field) value: $FIELD_VALUE"
+              elif [ "$FIELD_TYPE" = "name" ]; then
+                # Single select field
+                FIELD_VALUE=$(echo "$FIELD_VALUE_DATA" | jq -r 'try (.name) catch ""')
+                OPTION_ID=$(echo "$FIELD_VALUE_DATA" | jq -r 'try (.optionId // "N/A") catch "N/A"')
+                echo "$FIELD_NAME (single select field) value: $FIELD_VALUE (optionId: $OPTION_ID)"
+              elif [ "$FIELD_TYPE" = "date" ]; then
+                # Date field
+                FIELD_VALUE=$(echo "$FIELD_VALUE_DATA" | jq -r 'try (.date) catch ""')
+                echo "$FIELD_NAME (date field) value: $FIELD_VALUE"
+              elif [ "$FIELD_TYPE" = "number" ]; then
+                # Number field
+                FIELD_VALUE=$(echo "$FIELD_VALUE_DATA" | jq -r 'try (.number) catch ""')
+                echo "$FIELD_NAME (number field) value: $FIELD_VALUE"
+              elif [ "$FIELD_TYPE" = "title" ]; then
+                # Iteration field
+                FIELD_VALUE=$(echo "$FIELD_VALUE_DATA" | jq -r 'try (.title) catch ""')
+                echo "$FIELD_NAME (iteration field) value: $FIELD_VALUE"
+              else
+                echo "Field '$FIELD_NAME' found but has unsupported type: $FIELD_TYPE"
+                # Return empty string for unsupported types
+                FIELD_VALUE=""
+              fi
             else
-              echo "Field '$FIELD_NAME' found but has unsupported type: $FIELD_TYPE"
-              # Return empty string for unsupported types
+              echo "ERROR: FIELD_VALUE_DATA is not a valid JSON object: '$FIELD_VALUE_DATA'"
               FIELD_VALUE=""
             fi
             
@@ -182,13 +215,23 @@ runs:
           # We already checked that the issue exists and has project items,
           # so if we get here, the issue exists but is not in the specified project
           echo "Available projects for this issue:"
-          echo "$ITEM_QUERY" | jq -r '.data.node.projectItems.nodes[] | "- \(.project.title) (ID: \(.project.id))"'
+          # Safely extract project information with error handling
+          if echo "$ITEM_QUERY" | jq -e '.data.node.projectItems.nodes' > /dev/null 2>&1; then
+            echo "$ITEM_QUERY" | jq -r 'try (.data.node.projectItems.nodes[] | "- \(if .project and .project.title then .project.title else "Unknown" end) (ID: \(if .project and .project.id then .project.id else "Unknown" end))") catch "- Unable to extract project information"'
+          else
+            echo "- No project information available"
+          fi
         fi
         
         # Debug output for troubleshooting
         echo "Field value details:"
         if [ -n "$FIELD_VALUE_DATA" ] && [ "$FIELD_VALUE_DATA" != "null" ]; then
-          echo "$FIELD_VALUE_DATA" | jq -r '"Field: \(.field.name), Type: \(keys[0]), Value: \(.[keys[0]])"' || echo "No field value found or jq error"
+          # Safely extract field details with error handling
+          if echo "$FIELD_VALUE_DATA" | jq -e 'type == "object"' > /dev/null 2>&1; then
+            echo "$FIELD_VALUE_DATA" | jq -r 'try ("Field: \(if .field and .field.name then .field.name else "Unknown" end), Type: \(keys[0] // "Unknown"), Value: \(.[keys[0] // ""] // "None")") catch "Unable to extract field details"'
+          else
+            echo "Field value data is not a valid JSON object: '$FIELD_VALUE_DATA'"
+          fi
         else
           echo "No field value found for this issue and field"
         fi

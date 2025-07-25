@@ -49,16 +49,20 @@ runs:
           exit 1
         fi
         
-        # Get only the specific issue item from the project
         ITEM_QUERY=$(gh api graphql -f query='
-        query($project:ID!, $issue:ID!) {
-          node(id: $project) {
-            ... on ProjectV2 {
-              items(first: 1, where: {content: {id: {eq: $issue}}}) {
+        query($issueId: ID!) {
+          node(id: $issueId) {
+            ... on Issue {
+              projectItems(first: 20) {
                 nodes {
                   id
-                  fieldValues(first: 100) {
+                  project {
+                    id
+                    title
+                  }
+                  fieldValues(first: 20) {
                     nodes {
+                      __typename
                       ... on ProjectV2ItemFieldTextValue {
                         field {
                           ... on ProjectV2FieldCommon {
@@ -67,25 +71,6 @@ runs:
                           }
                         }
                         text
-                      }
-                      ... on ProjectV2ItemFieldSingleSelectValue {
-                        field {
-                          ... on ProjectV2FieldCommon {
-                            id
-                            name
-                          }
-                        }
-                        name
-                        optionId
-                      }
-                      ... on ProjectV2ItemFieldDateValue {
-                        field {
-                          ... on ProjectV2FieldCommon {
-                            id
-                            name
-                          }
-                        }
-                        date
                       }
                       ... on ProjectV2ItemFieldNumberValue {
                         field {
@@ -96,20 +81,60 @@ runs:
                         }
                         number
                       }
+                      ... on ProjectV2ItemFieldDateValue {
+                        field {
+                          ... on ProjectV2FieldCommon {
+                            id
+                            name
+                          }
+                        }
+                        date
+                      }
+                      ... on ProjectV2ItemFieldSingleSelectValue {
+                        field {
+                          ... on ProjectV2FieldCommon {
+                            id
+                            name
+                          }
+                        }
+                        name
+                      }
+                      ... on ProjectV2ItemFieldIterationValue {
+                        field {
+                          ... on ProjectV2FieldCommon {
+                            id
+                            name
+                          }
+                        }
+                        title
+                      }
                     }
                   }
                 }
               }
             }
           }
-        }' -f project=$PROJECT_ID -f issue=$ISSUE_NODE_ID)
+        }' -f issueId=$ISSUE_NODE_ID)
 
-        # Get the first (and should be only) item
-        ITEM_DATA=$(echo "$ITEM_QUERY" | jq -c '.data.node.items.nodes[0] // ""')
+        # Find the project item for the specified project
+        ITEM_DATA=$(echo "$ITEM_QUERY" | jq -c --arg project_id "$PROJECT_ID" '.data.node.projectItems.nodes[] | select(.project.id == $project_id) // ""' | head -n 1)
         
         FIELD_VALUE=""
+        
+        # Check if the issue exists
+        if [ -z "$(echo "$ITEM_QUERY" | jq -r '.data.node')" ] || [ "$(echo "$ITEM_QUERY" | jq -r '.data.node')" = "null" ]; then
+          echo "Issue with node ID '$ISSUE_NODE_ID' not found"
+          exit 1
+        fi
+        
+        # Check if the issue has any project items
+        if [ -z "$(echo "$ITEM_QUERY" | jq -r '.data.node.projectItems.nodes')" ] || [ "$(echo "$ITEM_QUERY" | jq -r '.data.node.projectItems.nodes')" = "null" ] || [ "$(echo "$ITEM_QUERY" | jq -r '.data.node.projectItems.nodes | length')" = "0" ]; then
+          echo "Issue with node ID '$ISSUE_NODE_ID' is not in any projects"
+          exit 1
+        fi
+        
         if [ -n "$ITEM_DATA" ] && [ "$ITEM_DATA" != "null" ]; then
-          echo "Found project item for issue"
+          echo "Found project item for issue in project '$(echo "$ITEM_DATA" | jq -r '.project.title')'"
           
           # Filter for the specific field by field ID
           FIELD_VALUE_DATA=$(echo "$ITEM_DATA" | jq -c --arg field_id "$FIELD_ID" '.fieldValues.nodes[] | select(.field.id == $field_id) // ""' | head -n 1)
@@ -125,7 +150,7 @@ runs:
             elif [ "$FIELD_TYPE" = "name" ]; then
               # Single select field
               FIELD_VALUE=$(echo "$FIELD_VALUE_DATA" | jq -r '.name')
-              OPTION_ID=$(echo "$FIELD_VALUE_DATA" | jq -r '.optionId')
+              OPTION_ID=$(echo "$FIELD_VALUE_DATA" | jq -r '.optionId // "N/A"')
               echo "$FIELD_NAME (single select field) value: $FIELD_VALUE (optionId: $OPTION_ID)"
             elif [ "$FIELD_TYPE" = "date" ]; then
               # Date field
@@ -135,6 +160,10 @@ runs:
               # Number field
               FIELD_VALUE=$(echo "$FIELD_VALUE_DATA" | jq -r '.number')
               echo "$FIELD_NAME (number field) value: $FIELD_VALUE"
+            elif [ "$FIELD_TYPE" = "title" ]; then
+              # Iteration field
+              FIELD_VALUE=$(echo "$FIELD_VALUE_DATA" | jq -r '.title')
+              echo "$FIELD_NAME (iteration field) value: $FIELD_VALUE"
             else
               echo "Field '$FIELD_NAME' found but has unsupported type: $FIELD_TYPE"
               # Return empty string for unsupported types
@@ -150,6 +179,10 @@ runs:
           fi
         else
           echo "Issue with node ID '$ISSUE_NODE_ID' not found in project '$PROJECT_ID'"
+          # We already checked that the issue exists and has project items,
+          # so if we get here, the issue exists but is not in the specified project
+          echo "Available projects for this issue:"
+          echo "$ITEM_QUERY" | jq -r '.data.node.projectItems.nodes[] | "- \(.project.title) (ID: \(.project.id))"'
         fi
         
         # Debug output for troubleshooting

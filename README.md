@@ -171,3 +171,17 @@ This reusable workflow collects test names from issues and processes them to ide
 
 **Description:**
 This reusable workflow runs Maven tests for a project, focusing on tests that should change from FAIL to PASS and tests that should remain PASS. It uses the Shared Collect and Process Tests workflow to collect and process tests, creates a placeholder comment on the issue, sets up Java/Maven and runs the tests, and updates the issue comment with the final test status. This workflow is designed to be called by other workflows that need to run Maven tests.
+
+### 9. Shared Maven Workflow
+
+**File:** [shared/.github/workflows/maven.yml](shared/.github/workflows/maven.yml)
+
+**Purpose:** Runs Maven tests for a project, focusing on tests that should change from FAIL to PASS and tests that should remain PASS.
+
+**Trigger:** 
+- Push to branches: main, scenario/*, eval/*, feature/*
+- Pull requests to branches: main, scenario/*, eval/*, feature/*
+- Issue comments (created)
+
+**Description:**
+This shared workflow is designed to be distributed to other repositories using the "Share Custom Workflows" workflow. It runs Maven tests for a project, focusing on tests that should change from FAIL to PASS and tests that should remain PASS. The workflow collects and processes test information from issues, creates a placeholder comment on the issue, sets up Java/Maven and runs the tests, and updates the issue comment with the final test status. Unlike the "Shared Run Tests Maven" workflow, this is a standalone workflow rather than a reusable workflow, making it easier to share across repositories.

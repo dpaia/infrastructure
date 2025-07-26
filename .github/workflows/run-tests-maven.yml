@@ -1,10 +1,32 @@
 name: Run Tests
 
 on:
-  push:
-    branches: [ "main", "scenario/*", "eval/*", "feature/*" ]
-  pull_request:
-    branches: [ "main", "scenario/*", "eval/*", "feature/*" ]
+  workflow_call:
+    inputs:
+      java-version:
+        description: 'Java version to set up'
+        required: false
+        type: string
+        default: '24'
+      distribution:
+        description: 'Java distribution to use'
+        required: false
+        type: string
+        default: 'temurin'
+      pom-file:
+        description: 'Path to the pom.xml file'
+        required: false
+        type: string
+        default: 'pom.xml'
+      issue-number:
+        description: 'Issue number to extract test names from'
+        required: false
+        type: string
+        default: ''
+    secrets:
+      github-token:
+        description: 'GitHub token for API access'
+        required: true
 
 jobs:
   build:
@@ -24,34 +46,38 @@ jobs:
         with:
           organization: ${{ github.repository_owner }}
           repository: ${{ github.repository }}
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          issue-number: ${{ github.event.pull_request.number || github.event.issue.number || 'unknown' }}
+          github-token: ${{ secrets.github-token }}
+          issue-number: ${{ inputs.issue-number || github.event.pull_request.number || github.event.issue.number || 'unknown' }}
 
       # ──────────── 3. post placeholder comment (EARLY) ────────────
       - name: Create placeholder issue comment
         id: create_comment
         uses: ./.github/actions/placeholder-comment
         with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
+          github-token: ${{ secrets.github-token }}
           fail-to-pass: ${{ steps.extract_tests.outputs.fail_to_pass }}
           pass-to-pass: ${{ steps.extract_tests.outputs.pass_to_pass }}
 
       # ──────────── 4. Java / Maven setup ────────────
       - name: Set up Java and Maven
         uses: ./.github/actions/setup-java-maven
+        with:
+          java-version: ${{ inputs.java-version }}
+          distribution: ${{ inputs.distribution }}
 
       # ──────────── 5. compile and run tests ────────────
       - name: Run Maven tests
         uses: ./.github/actions/run-maven-tests
         with:
           tests: ${{ steps.extract_tests.outputs.tests }}
+          pom-file: ${{ inputs.pom-file }}
 
       # ──────────── 6. update the same comment (FINAL) ────────────
       - name: Update issue comment with final status
         if: always()
         uses: ./.github/actions/update-issue-comment
         with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
+          github-token: ${{ secrets.github-token }}
           comment-id: ${{ steps.create_comment.outputs.comment_id }}
           job-status: ${{ job.status }}
           fail-to-pass: ${{ steps.extract_tests.outputs.fail_to_pass }}

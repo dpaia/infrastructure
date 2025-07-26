@@ -1,0 +1,17 @@
+name: Run Tests
+
+on:
+  push:
+    branches: [ "main", "scenario/*", "eval/*", "feature/*" ]
+  pull_request:
+    branches: [ "main", "scenario/*", "eval/*", "feature/*" ]
+  issue_comment:
+    types: [created]
+
+jobs:
+  run-tests:
+    uses: jetbrains-eval-lab/infrastructure/.github/workflows/shared-run-tests-maven.yml@main
+    if: ${{ github.event_name != 'issue_comment' || contains(github.event.comment.body, 'FAIL_TO_PASS') || contains(github.event.comment.body, 'PASS_TO_PASS') }}
+    secrets:
+      # Required: GitHub token for API access
+      github-token: ${{ secrets.GITHUB_TOKEN }}

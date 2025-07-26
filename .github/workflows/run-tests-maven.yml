@@ -49,6 +49,13 @@ jobs:
           github-token: ${{ secrets.github-token }}
           issue-number: ${{ inputs.issue-number || github.event.pull_request.number || github.event.issue.number || 'unknown' }}
 
+      # ──────────── 2.1 check if FAIL_TO_PASS or PASS_TO_PASS found ────────────
+      - name: Check if FAIL_TO_PASS or PASS_TO_PASS found
+        if: ${{ steps.extract_tests.outputs.fail_to_pass == '' && steps.extract_tests.outputs.pass_to_pass == '' }}
+        run: |
+          echo "::error::FAIL_TO_PASS or PASS_TO_PASS not found in commit messages or issue commits, please add FAIL_TO_PASS or PASS_TO_PASS to issue comment"
+          exit 1
+
       # ──────────── 3. post placeholder comment (EARLY) ────────────
       - name: Create placeholder issue comment
         id: create_comment

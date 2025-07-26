@@ -49,14 +49,14 @@ jobs:
           # Search for repositories
           if [ -n "$TOPIC" ]; then
             # If topic is specified, use it in the search
-            REPOS=$(gh search repos --owner $ORGANIZATION --topic $TOPIC --json fullName --include-forks=true --limit 200 | jq -c '.[].fullName')
+            # Get full JSON output first, then extract names properly with jq into an array
+            REPOS_JSON=$(gh search repos --owner $ORGANIZATION --topic $TOPIC --json name,fullName --include-forks=true --limit 200)
+            REPO_MATRIX=$(echo "$REPOS_JSON" | jq -c '[.[].fullName]')
           else
             # Otherwise, list all repos in the organization
-            REPOS=$(gh repo list $ORGANIZATION --json fullName --include-forks=true --limit 200 | jq -c '.[].fullName')
+            REPOS_JSON=$(gh repo list $ORGANIZATION --json name,fullName --include-forks=true --limit 200)
+            REPO_MATRIX=$(echo "$REPOS_JSON" | jq -c '[.[].fullName]')
           fi
-          
-          # Format as JSON array for matrix
-          REPO_MATRIX=$(echo "[$REPOS]" | sed 's/"\n"/","/g' | sed 's/\n/,/g')
           
           # Output the matrix
           echo "repo-matrix=$REPO_MATRIX" >> $GITHUB_OUTPUT

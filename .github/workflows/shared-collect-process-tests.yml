@@ -1,0 +1,204 @@
+name: Collect and Process Tests
+
+on:
+  workflow_call:
+    inputs:
+      issue-number:
+        description: 'Issue number to extract test names from'
+        required: false
+        type: string
+        default: ''
+    secrets:
+      github-token:
+        description: 'GitHub token for API access'
+        required: true
+    outputs:
+      fail_to_pass:
+        description: 'Comma-separated list of tests that should change from FAIL to PASS'
+        value: ${{ jobs.combine-results.outputs.fail_to_pass }}
+      pass_to_pass:
+        description: 'Comma-separated list of tests that should remain PASS'
+        value: ${{ jobs.combine-results.outputs.pass_to_pass }}
+      tests:
+        description: 'Comma-separated list of all tests to run'
+        value: ${{ jobs.combine-results.outputs.tests }}
+
+jobs:
+  # ──────────── 1. collect issue numbers based on event type ────────────
+  collect-issues:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      issue_numbers: ${{ steps.collect_issues.outputs.issue_numbers }}
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Collect issue numbers based on event type
+        id: collect_issues
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.github-token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          # Initialize issue numbers variable
+          ISSUE_NUMBERS=""
+          
+          # Handle different event types
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            echo "Collecting issue numbers from commits in PR #$PR_NUMBER"
+            
+            # Get all commits in the PR
+            COMMITS=$(gh api repos/$REPO/pulls/$PR_NUMBER/commits --jq '.[].sha')
+            
+            # Initialize an empty array for issue numbers
+            ISSUE_NUMBERS_ARRAY=()
+            
+            # For each commit, extract linked issue numbers
+            for COMMIT in $COMMITS; do
+              echo "Processing commit $COMMIT"
+              
+              # Get commit message
+              COMMIT_MSG=$(gh api repos/$REPO/commits/$COMMIT --jq '.commit.message')
+              
+              # Extract issue numbers using regex (e.g., #123, fixes #456, etc.)
+              ISSUES=$(echo "$COMMIT_MSG" | grep -o '#[0-9]\+' | sed 's/#//')
+              
+              if [ -n "$ISSUES" ]; then
+                echo "Found issues in commit $COMMIT: $ISSUES"
+                # Add to our array
+                for ISSUE in $ISSUES; do
+                  ISSUE_NUMBERS_ARRAY+=("$ISSUE")
+                done
+              fi
+            done
+            
+            # Remove duplicates and create JSON array
+            UNIQUE_ISSUES=$(echo "${ISSUE_NUMBERS_ARRAY[@]}" | tr ' ' '\n' | sort -u)
+            
+            if [ -z "$UNIQUE_ISSUES" ]; then
+              echo "No issue numbers found in commit messages, using PR number as fallback"
+              ISSUE_NUMBERS="[\"${{ github.event.pull_request.number }}\"]"
+            else
+              # Convert to JSON array
+              ISSUE_NUMBERS=$(echo "$UNIQUE_ISSUES" | jq -R . | jq -s .)
+            fi
+          elif [[ "${{ github.event_name }}" == "push" ]]; then
+            echo "Using issue number from commit event"
+            ISSUE_NUMBERS="[\"${{ github.event.issue.number }}\"]"
+          elif [[ "${{ github.event_name }}" == "issue_comment" ]]; then
+            echo "Using issue number from comment event"
+            ISSUE_NUMBERS="[\"${{ github.event.issue.number }}\"]"
+          else
+            echo "Using fallback issue number from inputs"
+            ISSUE_NUMBERS="[\"${{ inputs.issue-number }}\"]"
+          fi
+          
+          echo "Found issue numbers: $ISSUE_NUMBERS"
+          echo "issue_numbers=$ISSUE_NUMBERS" >> $GITHUB_OUTPUT
+
+  # ──────────── 2. extract FAIL_TO_PASS / PASS_TO_PASS ────────────
+  extract-tests:
+    needs: collect-issues
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      matrix:
+        issue_number: ${{ fromJson(needs.collect-issues.outputs.issue_numbers) }}
+      fail-fast: false
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Extract test names for issue ${{ matrix.issue_number }}
+        id: extract_tests
+        uses: ./.github/actions/extract-test-names
+        with:
+          organization: ${{ github.repository_owner }}
+          repository: ${{ github.repository }}
+          github-token: ${{ secrets.github-token }}
+          issue-number: ${{ matrix.issue_number }}
+      
+      # Create files with test results
+      - name: Create test result files
+        run: |
+          mkdir -p test-results
+          echo '${{ steps.extract_tests.outputs.fail_to_pass }}' > test-results/fail_to_pass.txt
+          echo '${{ steps.extract_tests.outputs.pass_to_pass }}' > test-results/pass_to_pass.txt
+          echo '${{ steps.extract_tests.outputs.tests }}' > test-results/tests.txt
+      
+      # Upload artifact with test results for this issue
+      - name: Upload test results
+        uses: actions/upload-artifact@v3
+        with:
+          name: test-results-${{ matrix.issue_number }}
+          path: test-results/
+          retention-days: 1
+
+  # ──────────── 2b. combine test results from all issues ────────────
+  combine-results:
+    needs: extract-tests
+    runs-on: ubuntu-latest
+    outputs:
+      fail_to_pass: ${{ steps.combine.outputs.fail_to_pass }}
+      pass_to_pass: ${{ steps.combine.outputs.pass_to_pass }}
+      tests: ${{ steps.combine.outputs.tests }}
+    steps:
+      - name: Download all test results
+        uses: actions/download-artifact@v3
+        with:
+          path: test-results
+      
+      - name: Combine test results
+        id: combine
+        run: |
+          # Initialize empty arrays
+          FAIL_TO_PASS=()
+          PASS_TO_PASS=()
+          TESTS=()
+          
+          # Process each artifact directory
+          for dir in test-results/test-results-*; do
+            if [ -f "$dir/fail_to_pass.txt" ]; then
+              FAIL_CONTENT=$(cat "$dir/fail_to_pass.txt")
+              if [ -n "$FAIL_CONTENT" ]; then
+                FAIL_TO_PASS+=("$FAIL_CONTENT")
+              fi
+            fi
+            
+            if [ -f "$dir/pass_to_pass.txt" ]; then
+              PASS_CONTENT=$(cat "$dir/pass_to_pass.txt")
+              if [ -n "$PASS_CONTENT" ]; then
+                PASS_TO_PASS+=("$PASS_CONTENT")
+              fi
+            fi
+            
+            if [ -f "$dir/tests.txt" ]; then
+              TESTS_CONTENT=$(cat "$dir/tests.txt")
+              if [ -n "$TESTS_CONTENT" ]; then
+                TESTS+=("$TESTS_CONTENT")
+              fi
+            fi
+          done
+          
+          # Join arrays and output
+          FAIL_TO_PASS_JOINED=$(IFS=,; echo "${FAIL_TO_PASS[*]}")
+          PASS_TO_PASS_JOINED=$(IFS=,; echo "${PASS_TO_PASS[*]}")
+          TESTS_JOINED=$(IFS=,; echo "${TESTS[*]}")
+          
+          echo "fail_to_pass=$FAIL_TO_PASS_JOINED" >> $GITHUB_OUTPUT
+          echo "pass_to_pass=$PASS_TO_PASS_JOINED" >> $GITHUB_OUTPUT
+          echo "tests=$TESTS_JOINED" >> $GITHUB_OUTPUT
+
+  # ──────────── 3. check if FAIL_TO_PASS or PASS_TO_PASS found ────────────
+  check-tests:
+    needs: combine-results
+    runs-on: ubuntu-latest
+    if: ${{ github.event_name == 'pull_request' }}
+    steps:
+      - name: Check if FAIL_TO_PASS or PASS_TO_PASS found
+        if: ${{ needs.combine-results.outputs.fail_to_pass == '' && needs.combine-results.outputs.pass_to_pass == '' }}
+        run: |
+          echo "::error::FAIL_TO_PASS or PASS_TO_PASS not found in commit messages or issue comments, please add FAIL_TO_PASS or PASS_TO_PASS to issue comment"
+          exit 1

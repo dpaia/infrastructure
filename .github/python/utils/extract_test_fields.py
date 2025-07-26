@@ -180,6 +180,7 @@ def fetch_linked_commit_messages(organization_repository, issue_number):
 def process_test_fields(organization_repository, issue_number):
     fail_to_pass_value = ""
     pass_to_pass_value = ""
+    comment_id = ""
 
     # Check for direct test environment variables first
     test_fail_to_pass = os.environ.get('TEST_FAIL_TO_PASS', '')
@@ -199,14 +200,17 @@ def process_test_fields(organization_repository, issue_number):
         print("Checking issue comments for test fields...", file=sys.stderr)
         comments = fetch_issue_comments(organization_repository, issue_number)
         for comment in reversed(comments):  # Start with the most recent comments
-            comment_fail, comment_pass = extract_test_fields(comment)
+            comment_body = comment["body"]
+            comment_fail, comment_pass = extract_test_fields(comment_body)
             if comment_fail:
                 fail_to_pass_value = comment_fail
-                print(f"Found FAIL_TO_PASS in issue comment: {fail_to_pass_value}", file=sys.stderr)
+                comment_id = str(comment["id"])
+                print(f"Found FAIL_TO_PASS in issue comment {comment_id}: {fail_to_pass_value}", file=sys.stderr)
 
             if comment_pass != "":
                 pass_to_pass_value = comment_pass
-                print(f"Found PASS_TO_PASS in issue comment: {pass_to_pass_value}", file=sys.stderr)
+                comment_id = str(comment["id"])
+                print(f"Found PASS_TO_PASS in issue comment {comment_id}: {pass_to_pass_value}", file=sys.stderr)
 
             if fail_to_pass_value or pass_to_pass_value:
                 break
@@ -256,7 +260,7 @@ def process_test_fields(organization_repository, issue_number):
     fail_to_pass_json = to_json_array(fail_to_pass_value) if fail_to_pass_value else "[]"
     pass_to_pass_json = to_json_array(pass_to_pass_value) if pass_to_pass_value else "[]"
 
-    return fail_to_pass_json, pass_to_pass_json
+    return fail_to_pass_json, pass_to_pass_json, comment_id
 
 # Function to fetch issue comments
 def fetch_issue_comments(organization_repository, issue_number):
@@ -266,7 +270,8 @@ def fetch_issue_comments(organization_repository, issue_number):
         test_comments = os.environ.get('TEST_ISSUE_COMMENTS', '')
         if test_comments:
             print(f"Using test issue comments from environment variable", file=sys.stderr)
-            return [test_comments]
+            # For test comments, we don't have an ID, so use a placeholder
+            return [{"id": "test_comment_id", "body": test_comments}]
 
         if issue_number == 'unknown' or not os.environ.get('GH_TOKEN', ''):
             return []
@@ -274,26 +279,36 @@ def fetch_issue_comments(organization_repository, issue_number):
         cmd = [
             'gh', 'api',
             f'repos/{organization_repository}/issues/{issue_number}/comments',
-            '--jq', '.[].body'
+            '--jq', '.[] | {id: .id, body: .body}'
         ]
 
         result = run_subprocess(cmd, capture_output=True, text=True, check=True)
-        comments = result.stdout.strip().split('\n')
-        return [comment for comment in comments if comment]
+        comments_json = result.stdout.strip().split('\n')
+        comments = []
+        for comment_json in comments_json:
+            if comment_json:
+                try:
+                    comment = json.loads(comment_json)
+                    comments.append(comment)
+                except json.JSONDecodeError as e:
+                    print(f"Error parsing comment JSON: {e}", file=sys.stderr)
+        return comments
     except Exception as e:
         print(f"Error fetching issue comments: {e}", file=sys.stderr)
         return []
 
 try:
     # Process test fields
-    fail_to_pass_json, pass_to_pass_json = process_test_fields(organization + "/" + repository, issue_number)
+    fail_to_pass_json, pass_to_pass_json, comment_id = process_test_fields(organization + "/" + repository, issue_number)
 
     # Output the results
     print(f"fail_to_pass={fail_to_pass_json}")
     print(f"pass_to_pass={pass_to_pass_json}")
+    print(f"comment_id={comment_id}")
     print("has_error=false")
 except Exception as e:
     print(f"Error extracting test fields: {e}", file=sys.stderr)
     print("fail_to_pass=[]")
     print("pass_to_pass=[]")
+    print("comment_id=")
     print("has_error=true")

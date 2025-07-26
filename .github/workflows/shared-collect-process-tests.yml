@@ -22,6 +22,9 @@ on:
       tests:
         description: 'Comma-separated list of all tests to run'
         value: ${{ jobs.combine-results.outputs.tests }}
+      comment_id:
+        description: 'ID of the comment where FAIL_TO_PASS or PASS_TO_PASS was manually described'
+        value: ${{ jobs.combine-results.outputs.comment_id }}
 
 jobs:
   # ──────────── 1. collect issue numbers based on event type ────────────
@@ -124,9 +127,14 @@ jobs:
       - name: Create test result files
         run: |
           mkdir -p test-results
-          echo '${{ steps.extract_tests.outputs.fail_to_pass }}' > test-results/fail_to_pass.txt
-          echo '${{ steps.extract_tests.outputs.pass_to_pass }}' > test-results/pass_to_pass.txt
-          echo '${{ steps.extract_tests.outputs.tests }}' > test-results/tests.txt
+          # Create a single JSON file with all test results
+          cat > test-results/test_results.json << EOF
+          {
+            "fail_to_pass": ${{ steps.extract_tests.outputs.fail_to_pass }},
+            "pass_to_pass": ${{ steps.extract_tests.outputs.pass_to_pass }},
+            "comment_id": "${{ steps.extract_tests.outputs.comment_id }}"
+          }
+          EOF          
       
       # Upload artifact with test results for this issue
       - name: Upload test results
@@ -150,6 +158,11 @@ jobs:
         with:
           path: test-results
       
+      - name: Install jq
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq
+      
       - name: Combine test results
         id: combine
         run: |
@@ -157,23 +170,40 @@ jobs:
           FAIL_TO_PASS=()
           PASS_TO_PASS=()
           TESTS=()
+          # Initialize comment_id variable
+          COMMENT_ID=""
+          
+          # Create a directory for combined results
+          mkdir -p combined-results
           
           # Process each artifact directory
           for dir in test-results/test-results-*; do
-            if [ -f "$dir/fail_to_pass.txt" ]; then
-              FAIL_CONTENT=$(cat "$dir/fail_to_pass.txt")
-              if [ -n "$FAIL_CONTENT" ]; then
+            # First check if JSON file exists
+            if [ -f "$dir/test_results.json" ]; then
+              echo "Processing JSON file: $dir/test_results.json"
+              
+              # Extract values from JSON
+              FAIL_CONTENT=$(jq -r '.fail_to_pass | if type=="array" then . | tostring else . end' "$dir/test_results.json")
+              PASS_CONTENT=$(jq -r '.pass_to_pass | if type=="array" then . | tostring else . end' "$dir/test_results.json")
+              CURRENT_COMMENT_ID=$(jq -r '.comment_id' "$dir/test_results.json")
+              
+              # Add to combined JSON results
+              if [ -n "$FAIL_CONTENT" ] && [ "$FAIL_CONTENT" != "null" ] && [ "$FAIL_CONTENT" != "[]" ]; then
                 FAIL_TO_PASS+=("$FAIL_CONTENT")
               fi
-            fi
-            
-            if [ -f "$dir/pass_to_pass.txt" ]; then
-              PASS_CONTENT=$(cat "$dir/pass_to_pass.txt")
-              if [ -n "$PASS_CONTENT" ]; then
+              
+              if [ -n "$PASS_CONTENT" ] && [ "$PASS_CONTENT" != "null" ] && [ "$PASS_CONTENT" != "[]" ]; then
                 PASS_TO_PASS+=("$PASS_CONTENT")
               fi
+              
+              # Store comment_id if it's not empty and we don't have one yet
+              if [ -n "$CURRENT_COMMENT_ID" ] && [ "$CURRENT_COMMENT_ID" != "null" ] && [ -z "$COMMENT_ID" ]; then
+                COMMENT_ID="$CURRENT_COMMENT_ID"
+                echo "Found comment_id: $COMMENT_ID"
+              fi              
             fi
             
+            # Always process tests.txt for backward compatibility
             if [ -f "$dir/tests.txt" ]; then
               TESTS_CONTENT=$(cat "$dir/tests.txt")
               if [ -n "$TESTS_CONTENT" ]; then
@@ -190,6 +220,7 @@ jobs:
           echo "fail_to_pass=$FAIL_TO_PASS_JOINED" >> $GITHUB_OUTPUT
           echo "pass_to_pass=$PASS_TO_PASS_JOINED" >> $GITHUB_OUTPUT
           echo "tests=$TESTS_JOINED" >> $GITHUB_OUTPUT
+          echo "comment_id=$COMMENT_ID" >> $GITHUB_OUTPUT      
 
   # ──────────── 3. check if FAIL_TO_PASS or PASS_TO_PASS found ────────────
   check-tests:

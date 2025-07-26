@@ -125,16 +125,12 @@ runs:
 
     - name: Extract FAIL_TO_PASS and PASS_TO_PASS
       id: extract-fields
-      shell: bash
-      env:
-        ISSUE_NUMBER: ${{ inputs.issue_id }}
-        REPOSITORY: ${{ inputs.repository }}
-        ORGANIZATION: ${{ inputs.organization }}
-        GH_TOKEN: ${{ inputs.github_token }}
-      run: |
-        chmod +x .github/python/utils/extract_test_fields.py
-        # Run the script and let it output directly to GITHUB_OUTPUT
-        .github/python/utils/extract_test_fields.py >> $GITHUB_OUTPUT
+      uses: ./.github/actions/extract-test-names
+      with:
+        github-token: ${{ inputs.github_token }}
+        issue-number: ${{ inputs.issue_id }}
+        repository: ${{ inputs.repository }}
+        organization: ${{ inputs.organization }}
 
     - name: Check if test fields are empty
       id: check-test-fields

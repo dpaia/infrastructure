@@ -21,6 +21,10 @@ inputs:
     description: 'Tests that remained passing'
     required: false
     default: ''
+  comment-id:
+    description: 'ID of an existing comment'
+    required: false
+    default: ''
 
 outputs:
   comment_id:

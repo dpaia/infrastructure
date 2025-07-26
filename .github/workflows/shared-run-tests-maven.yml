@@ -56,6 +56,7 @@ jobs:
           github-token: ${{ secrets.github-token }}
           fail-to-pass: ${{ needs.collect-process-tests.outputs.fail_to_pass }}
           pass-to-pass: ${{ needs.collect-process-tests.outputs.pass_to_pass }}
+          comment-id: ${{ needs.collect-process-tests.outputs.comment_id }}
 
   # ──────────── 3. Java / Maven setup and run tests ────────────
   run-tests:

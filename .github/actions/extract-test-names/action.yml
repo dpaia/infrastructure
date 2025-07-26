@@ -24,6 +24,9 @@ outputs:
   pass_to_pass:
     description: 'Comma-separated list of pass to pass test names'
     value: ${{ steps.extract-fields.outputs.pass_to_pass  }}
+  comment_id:
+    description: 'ID of the comment where FAIL_TO_PASS or PASS_TO_PASS was manually described'
+    value: ${{ steps.extract-fields.outputs.comment_id }}
 
 runs:
   using: "composite"

@@ -1,7 +1,19 @@
 name: 'Run Maven Tests'
-description: 'Compiles the project and runs Maven tests'
+description: 'Sets up Java and Maven with caching, then compiles the project and runs Maven tests'
 
 inputs:
+  java-version:
+    description: 'Java version to set up'
+    required: false
+    default: '24'
+  distribution:
+    description: 'Java distribution to use'
+    required: false
+    default: 'temurin'
+  cache:
+    description: 'Cache type to use'
+    required: false
+    default: 'maven'
   tests:
     description: 'Comma-separated list of tests to run (if empty, all tests will be run)'
     required: false
@@ -14,6 +26,15 @@ inputs:
 runs:
   using: 'composite'
   steps:
+    # Setup Java and Maven
+    - name: Set up Java
+      uses: actions/setup-java@v4
+      with:
+        java-version: ${{ inputs.java-version }}
+        distribution: ${{ inputs.distribution }}
+        cache: ${{ inputs.cache }}
+    
+    # Compile project
     - name: Compile project
       shell: bash
       run: mvn -B compile --file ${{ inputs.pom-file }}

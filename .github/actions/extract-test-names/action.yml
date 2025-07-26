@@ -37,6 +37,6 @@ runs:
         ORGANIZATION: ${{ inputs.organization }}
         GH_TOKEN: ${{ inputs.github_token }}
       run: |
-        chmod +x .github/python/extract_test_fields.py
+        chmod +x .github/python/utils/extract_test_fields.py
         # Run the script and let it output directly to GITHUB_OUTPUT
-        .github/python/extract_test_fields.py >> $GITHUB_OUTPUT
+        .github/python/utils/extract_test_fields.py >> $GITHUB_OUTPUT

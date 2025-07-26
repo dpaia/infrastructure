@@ -314,16 +314,12 @@ jobs:
           if [[ -n "$FAIL_TO_PASS_STR" || -n "$PASS_TO_PASS_STR" ]]; then
             TESTS_STR="$FAIL_TO_PASS_STR,$PASS_TO_PASS_STR"
             TESTS_STR=$(echo "$TESTS_STR" | sed 's/^,//;s/,$//')
-            # Convert to JSON array
-            TESTS_JSON=$(echo "$TESTS_STR" | jq -R -c 'split(",") | map(select(length > 0))')
-          else
-            TESTS_JSON="[]"
           fi
-
+          
           # Output results
           echo "fail_to_pass=$FAIL_TO_PASS_JSON" >> $GITHUB_OUTPUT
           echo "pass_to_pass=$PASS_TO_PASS_JSON" >> $GITHUB_OUTPUT
-          echo "tests=$TESTS_JSON" >> $GITHUB_OUTPUT
+          echo "tests=$TESTS_STR" >> $GITHUB_OUTPUT
           echo "comment_id=$COMMENT_ID" >> $GITHUB_OUTPUT
 
       # ─── 1.3 combine test results ───
@@ -345,20 +341,24 @@ jobs:
           echo "::error::FAIL_TO_PASS or PASS_TO_PASS not found in commit messages or issue comments, please add FAIL_TO_PASS or PASS_TO_PASS to issue comment"
           exit 1
 
-  # ──────────── 2. post placeholder comment (EARLY) ────────────
-  placeholder-comment:
+  # ──────────── 2. Run tests and handle comments ────────────
+  run-tests-and-comments:
     needs: collect-process-tests
     runs-on: ubuntu-latest
     permissions:
+      contents: read
       issues: write
-    if: ${{ github.event_name == 'push' || github.event_name == 'issue_comment' }}
+    if: ${{ always() && (github.event_name != 'pull_request' || needs.collect-process-tests.outputs.fail_to_pass != '[]' || needs.collect-process-tests.outputs.pass_to_pass != '[]') }}
     outputs:
       comment_id: ${{ steps.create_comment.outputs.comment_id }}
+      status: ${{ job.status }}
     steps:
       - uses: actions/checkout@v4
 
+      # Step 1: Create placeholder comment
       - name: Create placeholder issue comment
         id: create_comment
+        if: ${{ github.event_name == 'push' || github.event_name == 'issue_comment' }}
         uses: actions/github-script@v7
         env:
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
@@ -403,7 +403,7 @@ jobs:
                 const failToPassString = failToPassArray.join(', ');            
                 bodyContent += `FAIL_TO_PASS: ${failToPassString}\n`;
               }
-  
+            
               if (process.env.PASS_TO_PASS && process.env.PASS_TO_PASS !== '[]') {
                 // Parse JSON array and convert to comma-separated string
                 const passToPassArray = JSON.parse(process.env.PASS_TO_PASS);
@@ -415,7 +415,7 @@ jobs:
             bodyContent += `\n⏳ **[${process.env.WORKFLOW_NAME}](${process.env.RUN_URL})** has **started**…`;
 
             // If we have an existing comment ID, update it instead of creating a new one
-            if (process.env.COMMENT_ID) {
+            if (false && process.env.COMMENT_ID) {
               try {
                 // Get existing comment body
                 const { data: existingComment } = await github.rest.issues.getComment({
@@ -450,19 +450,7 @@ jobs:
             });
             core.setOutput('comment_id', comment.id.toString());
 
-  # ──────────── 3. Java / Maven setup and run tests ────────────
-  run-tests:
-    needs: [collect-process-tests, placeholder-comment]
-    if: ${{ always() && (github.event_name != 'pull_request' || needs.collect-process-tests.outputs.fail_to_pass != '[]' || needs.collect-process-tests.outputs.pass_to_pass != '[]') }}
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    outputs:
-      status: ${{ job.status }}
-    steps:
-      - uses: actions/checkout@v4
-
-      # Setup Java and Maven
+      # Step 2: Setup Java and Maven
       - name: Set up Java
         uses: actions/setup-java@v4
         with:
@@ -470,11 +458,12 @@ jobs:
           distribution: 'temurin'
           cache: 'maven'
 
-      # Compile project
+      # Step 3: Compile project
       - name: Compile project
         shell: bash
         run: mvn -B compile --file pom.xml
 
+      # Step 4: Run tests
       - name: Run selected tests
         if: ${{ needs.collect-process-tests.outputs.tests != '' }}
         shell: bash
@@ -485,23 +474,15 @@ jobs:
         shell: bash
         run: mvn -B test --file pom.xml
 
-  # ──────────── 4. update the same comment (FINAL) ────────────
-  update-comment:
-    needs: [collect-process-tests, placeholder-comment, run-tests]
-    runs-on: ubuntu-latest
-    permissions:
-      issues: write
-    if: ${{ always() && (github.event_name == 'push' || github.event_name == 'issue_comment') }}
-    steps:
-      - uses: actions/checkout@v4
-
+      # Step 5: Update comment with final status
       - name: Update issue comment with final status
+        if: ${{ always() && (github.event_name == 'push' || github.event_name == 'issue_comment') }}
         uses: actions/github-script@v7
         env:
-          COMMENT_ID: ${{ needs.placeholder-comment.outputs.comment_id }}
+          COMMENT_ID: ${{ steps.create_comment.outputs.comment_id }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           WORKFLOW_NAME: ${{ github.workflow }}
-          JOB_STATUS: ${{ needs.run-tests.outputs.status }}
+          JOB_STATUS: ${{ job.status }}
           FAIL_TO_PASS: ${{ needs.collect-process-tests.outputs.fail_to_pass }}
           PASS_TO_PASS: ${{ needs.collect-process-tests.outputs.pass_to_pass }}
         with:
@@ -517,19 +498,22 @@ jobs:
             }[process.env.JOB_STATUS] || '🟡';
             
             let bodyContent = '';
-
-            if (process.env.FAIL_TO_PASS && process.env.FAIL_TO_PASS !== '[]') {
-              // Parse JSON array and convert to comma-separated string
-              const failToPassArray = JSON.parse(process.env.FAIL_TO_PASS);
-              const failToPassString = failToPassArray.join(', ');
-              bodyContent += `FAIL_TO_PASS: ${failToPassString}\n`;
-            }
-
-            if (process.env.PASS_TO_PASS && process.env.PASS_TO_PASS !== '[]') {
-              // Parse JSON array and convert to comma-separated string
-              const passToPassArray = JSON.parse(process.env.PASS_TO_PASS);
-              const passToPassString = passToPassArray.join(', ');
-              bodyContent += `PASS_TO_PASS: ${passToPassString}\n`;
+            if (!process.env.COMMENT_ID){
+              if (process.env.FAIL_TO_PASS && process.env.FAIL_TO_PASS !== '[]') {
+                // Parse JSON array and convert to comma-separated string
+                const quoted = process.env.FAIL_TO_PASS.replace(/(\w+)/g, '"$1"');          
+                const failToPassArray = JSON.parse(quoted);                            
+                const failToPassString = failToPassArray.join(', ');
+                bodyContent += `FAIL_TO_PASS: ${failToPassString}\n`;
+              }
+  
+              if (process.env.PASS_TO_PASS && process.env.PASS_TO_PASS !== '[]') {
+                // Parse JSON array and convert to comma-separated string
+                const quoted = process.env.PASS_TO_PASS.replace(/(\w+)/g, '"$1"');
+                const passToPassArray = JSON.parse(quoted);
+                const passToPassString = passToPassArray.join(', ');
+                bodyContent += `PASS_TO_PASS: ${passToPassString}\n`;
+              }
             }
 
             bodyContent += `\n${statusEmoji} **[${process.env.WORKFLOW_NAME}](${process.env.RUN_URL})** finished with status **${process.env.JOB_STATUS.toUpperCase()}**.`;

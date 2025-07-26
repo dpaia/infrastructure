@@ -32,10 +32,10 @@ runs:
       id: extract-fields
       shell: bash
       env:
-        ISSUE_NUMBER: ${{ inputs.issue_id }}
+        ISSUE_NUMBER: ${{ inputs.issue-number }}
         REPOSITORY: ${{ inputs.repository }}
         ORGANIZATION: ${{ inputs.organization }}
-        GH_TOKEN: ${{ inputs.github_token }}
+        GH_TOKEN: ${{ inputs.github-token }}
       run: |
         chmod +x .github/python/utils/extract_test_fields.py
         # Run the script and let it output directly to GITHUB_OUTPUT

@@ -54,7 +54,7 @@ jobs:
             REPO_MATRIX=$(echo "$REPOS_JSON" | jq -c '[.[].fullName]')
           else
             # Otherwise, list all repos in the organization
-            REPOS_JSON=$(gh repo list $ORGANIZATION --json name,fullName --include-forks=true --limit 200)
+            REPOS_JSON=$(gh search repos --owner $ORGANIZATION --json name,fullName --include-forks=true --limit 200)
             REPO_MATRIX=$(echo "$REPOS_JSON" | jq -c '[.[].fullName]')
           fi
           

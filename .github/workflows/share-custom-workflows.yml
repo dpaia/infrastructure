@@ -153,12 +153,15 @@ jobs:
           # Extract workflow filename from path
           WORKFLOW_FILENAME=$(basename "${{ inputs.workflow_path }}")
           
+          # Create directory for PR artifacts first
+          mkdir -p "pr_artifacts"
+
           # Check if there are any changes to create a PR for
           if [ -z "$(git status --porcelain)" ]; then
             echo "No changes to create a PR for. The workflow file might already exist in the repository."
             echo "pr_url=no_changes" >> $GITHUB_OUTPUT
-            mkdir -p pr_artifacts
-            echo "No changes needed for ${{ matrix.repo }}" > "pr_artifacts/pr_${{ matrix.repo }}.txt"
+            # Create a simple file path without nested directories
+            echo "No changes needed for ${{ matrix.repo }}" > "pr_artifacts/no_changes_${{ matrix.repo }}.txt"
             exit 0
           fi
           
@@ -167,8 +170,8 @@ jobs:
           if [ -n "$EXISTING_PR" ]; then
             echo "A pull request already exists: $EXISTING_PR"
             echo "pr_url=$EXISTING_PR" >> $GITHUB_OUTPUT
-            mkdir -p pr_artifacts
-            echo "$EXISTING_PR" > "pr_artifacts/pr_${{ matrix.repo }}.txt"
+            # Directory already created earlier in the script
+            echo "$EXISTING_PR" > "pr_artifacts/existing_pr_${{ matrix.repo }}.txt"
             exit 0
           fi
           
@@ -183,21 +186,21 @@ jobs:
             --head $BRANCH_NAME) || {
               echo "Failed to create pull request"
               echo "pr_url=failed" >> $GITHUB_OUTPUT
-              mkdir -p pr_artifacts
-              echo "Failed to create PR for ${{ matrix.repo }}" > "pr_artifacts/pr_${{ matrix.repo }}.txt"
+              # Directory already created earlier in the script
+              echo "Failed to create PR for ${{ matrix.repo }}" > "pr_artifacts/failed_pr_${{ matrix.repo }}.txt"
               exit 0
             }
           
           echo "Pull request created: $PR_URL"
           echo "pr_url=$PR_URL" >> $GITHUB_OUTPUT
           
-          # Save PR URL to artifact
-          mkdir -p pr_artifacts
-          echo "$PR_URL" > "pr_artifacts/pr_${{ matrix.repo }}.txt"
+          # Save PR URL to artifact (directory already created earlier in the script)
+          echo "$PR_URL" > "pr_artifacts/success_pr_${{ matrix.repo }}.txt"
 
       - name: Upload PR URL artifact
         uses: actions/upload-artifact@v4
         with:
           name: pr-url-${{ matrix.repo }}
           path: target-repo/pr_artifacts/
-          retention-days: 7
+          retention-days: 1
+          if-no-files-found: warn

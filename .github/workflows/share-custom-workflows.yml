@@ -1,4 +1,4 @@
-name: Share Workflow
+name: Share Custom Workflows for Repositories
 run-name: "Share workflow: ${{ inputs.workflow_path || 'workflow' }} to ${{ inputs.organization || 'jetbrains-eval-lab' }} repos with topic: ${{ inputs.topic || 'all' }}"
 
 on:
@@ -15,7 +15,7 @@ on:
         type: string
         default: ''
       workflow_path:
-        description: 'Path to GitHub workflow file to share (relative to github/)'
+        description: 'Path to GitHub workflow file to share (relative to shared/)'
         required: true
         type: string
 
@@ -49,10 +49,10 @@ jobs:
           # Search for repositories
           if [ -n "$TOPIC" ]; then
             # If topic is specified, use it in the search
-            REPOS=$(gh search repos --owner $ORGANIZATION --topic $TOPIC --json nameWithOwner --limit 100 | jq -c '.[].nameWithOwner')
+            REPOS=$(gh search repos --owner $ORGANIZATION --topic $TOPIC --json fullName --limit 100 | jq -c '.[].fullName')
           else
             # Otherwise, list all repos in the organization
-            REPOS=$(gh repo list $ORGANIZATION --json nameWithOwner --limit 100 | jq -c '.[].nameWithOwner')
+            REPOS=$(gh repo list $ORGANIZATION --json fullName --limit 100 | jq -c '.[].fullName')
           fi
           
           # Format as JSON array for matrix
@@ -119,7 +119,7 @@ jobs:
           mkdir -p target-repo/.github/workflows
           
           # Copy the workflow file
-          cp "source-repo/shared/${{ inputs.workflow_path }}" "target-repo/.github/"
+          cp "source-repo/shared/${{ inputs.workflow_path }}" "target-repo/.github/workflows/"
           
           echo "Copied workflow file to target repository"
 

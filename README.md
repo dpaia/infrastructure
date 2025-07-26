@@ -108,7 +108,7 @@ This workflow automates the process of adding GitHub issues to a project board. 
 
 ### 6. Share Workflow
 
-**File:** [.github/workflows/share-workflow.yml](.github/workflows/share-workflow.yml)
+**File:** [.github/workflows/share-workflow.yml](.github/workflows/share-custom-workflows.yml)
 
 **Purpose:** Shares GitHub workflow files between repositories by creating pull requests.
 

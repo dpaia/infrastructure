@@ -1,0 +1,82 @@
+name: 'Create Placeholder Issue Comment'
+description: 'Creates a placeholder comment on a GitHub issue referenced in PR or commit'
+
+inputs:
+  github-token:
+    description: 'GitHub token for API access'
+    required: true
+  workflow-name:
+    description: 'Name of the workflow'
+    required: false
+    default: ${{ github.workflow }}
+  run-url:
+    description: 'URL of the workflow run'
+    required: false
+    default: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+  fail-to-pass:
+    description: 'Tests that changed from failing to passing'
+    required: false
+    default: ''
+  pass-to-pass:
+    description: 'Tests that remained passing'
+    required: false
+    default: ''
+
+outputs:
+  comment_id:
+    description: 'ID of the created comment'
+    value: ${{ steps.create_comment.outputs.comment_id }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Create placeholder issue comment
+      id: create_comment
+      uses: actions/github-script@v7
+      env:
+        RUN_URL: ${{ inputs.run-url }}
+        WORKFLOW_NAME: ${{ inputs.workflow-name }}
+        FAIL_TO_PASS: ${{ inputs.fail-to-pass }}
+        PASS_TO_PASS: ${{ inputs.pass-to-pass }}
+      with:
+        github-token: ${{ inputs.github-token }}
+        result-encoding: string
+        script: |
+          const issuePat = /#(\d+)/g;
+          let issueNum = null, m;
+          
+          // • PR context
+          if (context.payload.pull_request) {
+            const whole = `${context.payload.pull_request.title}\n${context.payload.pull_request.body}`;
+            if ((m = issuePat.exec(whole)) !== null) issueNum = +m[1];
+          }
+          
+          // • Push context
+          if (!issueNum && context.payload.commits) {
+            for (const c of context.payload.commits) {
+              if ((m = issuePat.exec(c.message)) !== null) { issueNum = +m[1]; break; }
+            }
+          }
+          
+          if (!issueNum) { core.info('No #issue reference found.'); return; }
+          
+          let bodyContent = '';
+
+          if (process.env.FAIL_TO_PASS) {
+            bodyContent += `FAIL_TO_PASS: ${process.env.FAIL_TO_PASS}\n`;
+          }
+
+          if (process.env.PASS_TO_PASS) {
+            bodyContent += `PASS_TO_PASS: ${process.env.PASS_TO_PASS}\n`;
+          }
+
+          bodyContent += `\n⏳ **[${process.env.WORKFLOW_NAME}](${process.env.RUN_URL})** has **started**…`;
+
+          const body = bodyContent;
+          const { data: comment } = await github.rest.issues.createComment({
+            owner: context.repo.owner,
+            repo:  context.repo.repo,
+            issue_number: issueNum,
+            body
+          });
+          core.setOutput('comment_id', comment.id.toString());

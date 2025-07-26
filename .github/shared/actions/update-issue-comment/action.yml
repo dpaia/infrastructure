@@ -1,0 +1,75 @@
+name: 'Update Issue Comment'
+description: 'Updates a previously created issue comment with the final status of the workflow'
+
+inputs:
+  github-token:
+    description: 'GitHub token for API access'
+    required: true
+  comment-id:
+    description: 'ID of the comment to update'
+    required: false
+    default: ''
+  workflow-name:
+    description: 'Name of the workflow'
+    required: false
+    default: ${{ github.workflow }}
+  run-url:
+    description: 'URL of the workflow run'
+    required: false
+    default: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+  job-status:
+    description: 'Status of the job (success, failure, cancelled)'
+    required: true
+  fail-to-pass:
+    description: 'Tests that changed from failing to passing'
+    required: false
+    default: ''
+  pass-to-pass:
+    description: 'Tests that remained passing'
+    required: false
+    default: ''
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Update issue comment with final status
+      uses: actions/github-script@v7
+      env:
+        COMMENT_ID: ${{ inputs.comment-id }}
+        RUN_URL: ${{ inputs.run-url }}
+        WORKFLOW_NAME: ${{ inputs.workflow-name }}
+        JOB_STATUS: ${{ inputs.job-status }}
+        FAIL_TO_PASS: ${{ inputs.fail-to-pass }}
+        PASS_TO_PASS: ${{ inputs.pass-to-pass }}
+      with:
+        github-token: ${{ inputs.github-token }}
+        script: |
+          if (!process.env.COMMENT_ID) {
+            core.info('No comment to update.'); return;
+          }
+          const statusEmoji = {
+            success: '✅',
+            failure: '❌',
+            cancelled: '🟡'
+          }[process.env.JOB_STATUS] || '🟡';
+          
+          let bodyContent = '';
+
+          if (process.env.FAIL_TO_PASS) {
+            bodyContent += `FAIL_TO_PASS: ${process.env.FAIL_TO_PASS}\n`;
+          }
+
+          if (process.env.PASS_TO_PASS) {
+            bodyContent += `PASS_TO_PASS: ${process.env.PASS_TO_PASS}\n`;
+          }
+
+          bodyContent += `\n${statusEmoji} **[${process.env.WORKFLOW_NAME}](${process.env.RUN_URL})** finished with status **${process.env.JOB_STATUS.toUpperCase()}**.`;
+
+          const body = bodyContent;
+          
+          await github.rest.issues.updateComment({
+            owner: context.repo.owner,
+            repo:  context.repo.repo,
+            comment_id: Number(process.env.COMMENT_ID),
+            body
+          });

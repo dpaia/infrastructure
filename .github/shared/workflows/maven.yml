@@ -30,89 +30,29 @@ jobs:
       # ──────────── 3. post placeholder comment (EARLY) ────────────
       - name: Create placeholder issue comment
         id: create_comment
-        uses: actions/github-script@v7
-        env:
-          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          FAIL_TO_PASS: ${{ steps.extract_tests.outputs.fail_to_pass }}
-          PASS_TO_PASS: ${{ steps.extract_tests.outputs.pass_to_pass }}
+        uses: ./.github/actions/placeholder-comment
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
-          result-encoding: string
-          script: |
-            const issuePat = /#(\d+)/g;
-            let issueNum = null, m;
-            
-            // • PR context
-            if (context.payload.pull_request) {
-              const whole = `${context.payload.pull_request.title}\n${context.payload.pull_request.body}`;
-              if ((m = issuePat.exec(whole)) !== null) issueNum = +m[1];
-            }
-            
-            // • Push context
-            if (!issueNum && context.payload.commits) {
-              for (const c of context.payload.commits) {
-                if ((m = issuePat.exec(c.message)) !== null) { issueNum = +m[1]; break; }
-              }
-            }
-            
-            if (!issueNum) { core.info('No #issue reference found.'); return; }
-            
-            const body = `⏳ **[${process.env.GITHUB_WORKFLOW}](${process.env.RUN_URL})** has **started**…`;
-            const { data: comment } = await github.rest.issues.createComment({
-              owner: context.repo.owner,
-              repo:  context.repo.repo,
-              issue_number: issueNum,
-              body
-            });
-            core.setOutput('comment_id', comment.id.toString());
+          fail-to-pass: ${{ steps.extract_tests.outputs.fail_to_pass }}
+          pass-to-pass: ${{ steps.extract_tests.outputs.pass_to_pass }}
 
       # ──────────── 4. Java / Maven setup ────────────
-      - name: Set up Java
-        uses: actions/setup-java@v4
+      - name: Set up Java and Maven
+        uses: ./.github/actions/setup-java-maven
+
+      # ──────────── 5. compile and run tests ────────────
+      - name: Run Maven tests
+        uses: ./.github/actions/run-maven-tests
         with:
-          java-version: 24
-          distribution: temurin
-          cache: maven
+          tests: ${{ steps.extract_tests.outputs.tests }}
 
-      # ──────────── 5. compile ────────────
-      - run: mvn -B compile --file pom.xml
-
-      # ──────────── 6. run tests ────────────
-      - name: Run selected tests
-        if: ${{ steps.extract_tests.outputs.tests }}
-        run: mvn -B -Dtest="${{ steps.extract_tests.outputs.tests }}" test
-
-      - name: Run all tests
-        if: ${{ steps.extract_tests.outputs.tests == '' }}
-        run: mvn -B test --file pom.xml
-
-      # ──────────── 7. update the same comment (FINAL) ────────────
+      # ──────────── 6. update the same comment (FINAL) ────────────
       - name: Update issue comment with final status
         if: always()
-        uses: actions/github-script@v7
-        env:
-          COMMENT_ID: ${{ steps.create_comment.outputs.comment_id }}
-          RUN_URL:    ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          JOB_STATUS: ${{ job.status }}
-          FAIL_TO_PASS: ${{ steps.extract_tests.outputs.fail_to_pass }}
-          PASS_TO_PASS: ${{ steps.extract_tests.outputs.pass_to_pass }}
+        uses: ./.github/actions/update-issue-comment
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
-          script: |
-            if (!process.env.COMMENT_ID) {
-              core.info('No comment to update.'); return;
-            }
-            const statusEmoji = {
-              success: '✅',
-              failure: '❌',
-              cancelled: '🟡'
-            }[process.env.JOB_STATUS] || '🟡';
-            
-            const body = `${statusEmoji} **[${process.env.GITHUB_WORKFLOW}](${process.env.RUN_URL})** finished with status **${process.env.JOB_STATUS.toUpperCase()}**.`;
-            
-            await github.rest.issues.updateComment({
-              owner: context.repo.owner,
-              repo:  context.repo.repo,
-              comment_id: Number(process.env.COMMENT_ID),
-              body
-            });
+          comment-id: ${{ steps.create_comment.outputs.comment_id }}
+          job-status: ${{ job.status }}
+          fail-to-pass: ${{ steps.extract_tests.outputs.fail_to_pass }}
+          pass-to-pass: ${{ steps.extract_tests.outputs.pass_to_pass }}

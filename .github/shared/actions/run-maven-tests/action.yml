@@ -1,0 +1,29 @@
+name: 'Run Maven Tests'
+description: 'Compiles the project and runs Maven tests'
+
+inputs:
+  tests:
+    description: 'Comma-separated list of tests to run (if empty, all tests will be run)'
+    required: false
+    default: ''
+  pom-file:
+    description: 'Path to the pom.xml file'
+    required: false
+    default: 'pom.xml'
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Compile project
+      shell: bash
+      run: mvn -B compile --file ${{ inputs.pom-file }}
+
+    - name: Run selected tests
+      if: ${{ inputs.tests != '' }}
+      shell: bash
+      run: mvn -B -Dtest="${{ inputs.tests }}" test
+
+    - name: Run all tests
+      if: ${{ inputs.tests == '' }}
+      shell: bash
+      run: mvn -B test --file ${{ inputs.pom-file }}

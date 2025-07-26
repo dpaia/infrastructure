@@ -32,7 +32,7 @@ jobs:
       - name: Find repositories by organization and topic
         id: find-repos
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.PROJECT_TOKEN }}
           ORGANIZATION: ${{ inputs.organization }}
           TOPIC: ${{ inputs.topic }}
         run: |
@@ -49,10 +49,10 @@ jobs:
           # Search for repositories
           if [ -n "$TOPIC" ]; then
             # If topic is specified, use it in the search
-            REPOS=$(gh search repos --owner $ORGANIZATION --topic $TOPIC --json fullName --limit 100 | jq -c '.[].fullName')
+            REPOS=$(gh search repos --owner $ORGANIZATION --topic $TOPIC --json fullName --include-forks=true --limit 200 | jq -c '.[].fullName')
           else
             # Otherwise, list all repos in the organization
-            REPOS=$(gh repo list $ORGANIZATION --json fullName --limit 100 | jq -c '.[].fullName')
+            REPOS=$(gh repo list $ORGANIZATION --json fullName --include-forks=true --limit 200 | jq -c '.[].fullName')
           fi
           
           # Format as JSON array for matrix
@@ -85,7 +85,7 @@ jobs:
         with:
           repository: ${{ matrix.repo }}
           path: target-repo
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.PROJECT_TOKEN }}
 
       - name: Verify workflow file exists
         id: verify-workflow
@@ -148,7 +148,7 @@ jobs:
         id: create-pr
         working-directory: target-repo
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.PROJECT_TOKEN }}
         run: |
           # Extract workflow filename from path
           WORKFLOW_FILENAME=$(basename "${{ inputs.workflow_path }}")

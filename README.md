@@ -106,9 +106,9 @@ This workflow helps maintain consistent issue labels across multiple repositorie
 **Description:**
 This workflow automates the process of adding GitHub issues to a project board. It searches for issues matching the specified query and adds them to the designated project. The workflow consists of three main jobs: finding issues that match the search criteria, retrieving the project data, and adding each matching issue to the project.
 
-### 6. Share Workflow
+### 6. Share Custom Workflows
 
-**File:** [.github/workflows/share-workflow.yml](.github/workflows/share-custom-workflows.yml)
+**File:** [.github/workflows/share-custom-workflows.yml](.github/workflows/share-custom-workflows.yml)
 
 **Purpose:** Shares GitHub workflow files between repositories by creating pull requests.
 
@@ -117,7 +117,7 @@ This workflow automates the process of adding GitHub issues to a project board. 
 **Inputs:**
 - `organization`: GitHub organization name (default: 'jetbrains-eval-lab')
 - `topic`: Repository topic filter (default: empty, which means all repositories)
-- `workflow_path`: Path to GitHub workflow file to share (relative to .github/workflows/)
+- `workflow_path`: Path to GitHub workflow file to share (relative to shared/)
 
 **Description:**
 This workflow automates the process of sharing GitHub workflow files across multiple repositories within an organization. It finds all repositories matching the specified organization and topic criteria, then creates pull requests to add the specified workflow file to each repository. The workflow consists of three main jobs: finding repositories that match the criteria, creating pull requests for each repository, and summarizing the results.
@@ -128,3 +128,46 @@ The workflow handles various scenarios gracefully:
 - If there's an error creating a pull request, it captures the error and continues with other repositories
 
 After completion, the workflow generates a summary report that categorizes the results into "Pull Requests Created", "Repositories with No Changes Needed", and "Failed Pull Requests", making it easy to see the outcome at a glance. This workflow is particularly useful for maintaining consistent CI/CD processes across multiple repositories in an organization.
+
+### 7. Shared Collect and Process Tests
+
+**File:** [.github/workflows/shared-collect-process-tests.yml](.github/workflows/shared-collect-process-tests.yml)
+
+**Purpose:** Collects and processes test information from issues to identify tests that should change from FAIL to PASS and tests that should remain PASS.
+
+**Trigger:** Reusable workflow (workflow_call)
+
+**Inputs:**
+- `issue-number`: Optional issue number to extract test names from (default: '')
+
+**Secrets:**
+- `github-token`: Required GitHub token for API access
+
+**Outputs:**
+- `fail_to_pass`: Comma-separated list of tests that should change from FAIL to PASS
+- `pass_to_pass`: Comma-separated list of tests that should remain PASS
+- `tests`: Comma-separated list of all tests to run
+- `comment_id`: ID of the comment where FAIL_TO_PASS or PASS_TO_PASS was manually described
+
+**Description:**
+This reusable workflow collects test names from issues and processes them to identify tests that should change from FAIL to PASS and tests that should remain PASS. It consists of several jobs: collecting issue numbers based on event type, extracting test names from issues, combining test results from all issues, and checking if FAIL_TO_PASS or PASS_TO_PASS were found. This workflow is designed to be called by other workflows, such as the Shared Run Tests Maven workflow.
+
+### 8. Shared Run Tests Maven
+
+**File:** [.github/workflows/shared-run-tests-maven.yml](.github/workflows/shared-run-tests-maven.yml)
+
+**Purpose:** Runs Maven tests for a project, focusing on tests that should change from FAIL to PASS and tests that should remain PASS.
+
+**Trigger:** Reusable workflow (workflow_call)
+
+**Inputs:**
+- `java-version`: Java version to set up (default: '24')
+- `distribution`: Java distribution to use (default: 'temurin')
+- `pom-file`: Path to the pom.xml file (default: 'pom.xml')
+- `issue-number`: Issue number to extract test names from (default: '')
+
+**Secrets:**
+- `github-token`: Required GitHub token for API access
+
+**Description:**
+This reusable workflow runs Maven tests for a project, focusing on tests that should change from FAIL to PASS and tests that should remain PASS. It uses the Shared Collect and Process Tests workflow to collect and process tests, creates a placeholder comment on the issue, sets up Java/Maven and runs the tests, and updates the issue comment with the final test status. This workflow is designed to be called by other workflows that need to run Maven tests.

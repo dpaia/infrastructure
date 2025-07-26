@@ -124,6 +124,8 @@ jobs:
           echo "Copied workflow file to target repository"
 
       - name: Commit and push changes
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
         working-directory: target-repo
         run: |
           # Check if there are changes

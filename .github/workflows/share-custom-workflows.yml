@@ -139,68 +139,16 @@ jobs:
             git push origin $BRANCH_NAME
             
             echo "Changes committed and pushed to branch $BRANCH_NAME"
+          
+            sleep 5
+        
+            # Create a pull request using the GitHub CLI
+            echo "Creating pull request..."
+            echo "Branch: $BRANCH_NAME"          
+            PR_URL=$(gh pr create --base main --head "$BRANCH_NAME" --title "Add workflow: $WORKFLOW_FILENAME" --body "This PR adds the $WORKFLOW_FILENAME workflow" --repo "${{ matrix.repo }}")
+            echo "Pull request created: $PR_URL"
+            echo "pull_request_url=$PR_URL" >> $GITHUB_OUTPUT
           else
             echo "No changes to commit"
             exit 0
           fi
-
-      - name: Create pull request
-        id: create-pr
-        working-directory: target-repo
-        env:
-          GITHUB_TOKEN: ${{ secrets.PROJECT_TOKEN }}
-        run: |
-          # Extract workflow filename from path
-          WORKFLOW_FILENAME=$(basename "${{ inputs.workflow_path }}")
-          
-          # Create directory for PR artifacts first
-          mkdir -p "pr_artifacts"
-
-          # Check if there are any changes to create a PR for
-          if [ -z "$(git status --porcelain)" ]; then
-            echo "No changes to create a PR for. The workflow file might already exist in the repository."
-            echo "pr_url=no_changes" >> $GITHUB_OUTPUT
-            # Create a simple file path without nested directories
-            echo "No changes needed for ${{ matrix.repo }}" > "pr_artifacts/no_changes_${{ matrix.repo }}.txt"
-            exit 0
-          fi
-          
-          # Check if a PR already exists
-          EXISTING_PR=$(gh pr list --head $BRANCH_NAME --json url --jq '.[0].url')
-          if [ -n "$EXISTING_PR" ]; then
-            echo "A pull request already exists: $EXISTING_PR"
-            echo "pr_url=$EXISTING_PR" >> $GITHUB_OUTPUT
-            # Directory already created earlier in the script
-            echo "$EXISTING_PR" > "pr_artifacts/existing_pr_${{ matrix.repo }}.txt"
-            exit 0
-          fi
-          
-          # Create pull request
-          echo "Creating pull request..."
-          PR_URL=$(gh pr create \
-            --title "Add workflow: $WORKFLOW_FILENAME" \
-            --body "This PR adds the $WORKFLOW_FILENAME workflow from the ${{ github.repository }} repository.
-            
-            Added by the Share Workflow action." \
-            --base main \
-            --head $BRANCH_NAME) || {
-              echo "Failed to create pull request"
-              echo "pr_url=failed" >> $GITHUB_OUTPUT
-              # Directory already created earlier in the script
-              echo "Failed to create PR for ${{ matrix.repo }}" > "pr_artifacts/failed_pr_${{ matrix.repo }}.txt"
-              exit 0
-            }
-          
-          echo "Pull request created: $PR_URL"
-          echo "pr_url=$PR_URL" >> $GITHUB_OUTPUT
-          
-          # Save PR URL to artifact (directory already created earlier in the script)
-          echo "$PR_URL" > "pr_artifacts/success_pr_${{ matrix.repo }}.txt"
-
-      - name: Upload PR URL artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: pr-url-${{ matrix.repo }}
-          path: target-repo/pr_artifacts/
-          retention-days: 1
-          if-no-files-found: warn

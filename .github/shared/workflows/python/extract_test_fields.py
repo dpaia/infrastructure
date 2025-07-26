@@ -8,8 +8,6 @@ import sys
 # Get required input parameters from environment variables
 issue_number = os.environ.get('ISSUE_NUMBER', 'unknown')
 repository = os.environ.get('REPOSITORY', 'unknown')
-organization = os.environ.get('ORGANIZATION', 'jetbrains-eval-lab')
-
 
 # Create a wrapper function for subprocess.run that won't be affected by mocks
 def run_subprocess(cmd, **kwargs):
@@ -286,7 +284,7 @@ def fetch_issue_comments(organization_repository, issue_number):
 
 try:
     # Process test fields
-    fail_to_pass_json, pass_to_pass_json = process_test_fields(organization + "/" + repository, issue_number)
+    fail_to_pass_json, pass_to_pass_json = process_test_fields(repository, issue_number)
 
     # Output the results
     print(f"fail_to_pass={fail_to_pass_json}")

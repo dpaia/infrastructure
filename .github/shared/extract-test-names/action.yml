@@ -1,0 +1,42 @@
+name: 'Extract Test Names'
+description: 'Extracts FAIL_TO_PASS and PASS_TO_PASS test names from commit messages and PR descriptions'
+inputs:
+  github-token:
+    description: 'GitHub token for API access'
+    required: true
+  issue-number:
+    description: 'Issue number to extract test names from'
+    required: false
+    default: 'unknown'
+  repository:
+    description: 'Repository name'
+    required: false
+    default: ${{ github.repository }}
+  organization:
+    description: 'Organization name'
+    required: false
+    default: ${{ github.repository_owner }}
+
+outputs:
+  fail_to_pass:
+    description: 'Comma-separated list of fail to pass test names'
+    value: ${{ steps.extract-fields.outputs.fail_to_pass  }}
+  pass_to_pass:
+    description: 'Comma-separated list of pass to pass test names'
+    value: ${{ steps.extract-fields.outputs.pass_to_pass  }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Extract FAIL_TO_PASS and PASS_TO_PASS
+      id: extract-fields
+      shell: bash
+      env:
+        ISSUE_NUMBER: ${{ inputs.issue_id }}
+        REPOSITORY: ${{ inputs.repository }}
+        ORGANIZATION: ${{ inputs.organization }}
+        GH_TOKEN: ${{ inputs.github_token }}
+      run: |
+        chmod +x .github/python/extract_test_fields.py
+        # Run the script and let it output directly to GITHUB_OUTPUT
+        .github/python/extract_test_fields.py >> $GITHUB_OUTPUT

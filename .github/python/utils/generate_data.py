@@ -249,6 +249,80 @@ def generate_patches_for_commit(organization, repository, commit_id, test_file_d
             print(f"Command stderr: {e.stderr}", file=sys.stderr)
         return "", ""
 
+# Function to extract issue labels via GitHub API
+def fetch_issue_labels(organization, repository, issue_number):
+    """
+    Extracts labels from a GitHub issue and returns them as a list.
+
+    Args:
+        organization (str): GitHub organization name
+        repository (str): GitHub repository name
+        issue_number (str): Issue number
+
+    Returns:
+        list: List of label names from the issue
+    """
+    try:
+        if issue_number == 'unknown' or not os.environ.get('GH_TOKEN', ''):
+            print("Missing issue number or GitHub token, skipping label fetch", file=sys.stderr)
+            return []
+
+        print(f"Fetching labels for issue #{issue_number} in {organization}/{repository}...", file=sys.stderr)
+
+        # Use GitHub CLI to fetch issue labels
+        cmd = [
+            'gh', 'api',
+            f'repos/{organization}/{repository}/issues/{issue_number}',
+            '--jq', '.labels[].name'
+        ]
+
+        print(f"Executing command: {' '.join(cmd)}", file=sys.stderr)
+        result = run_subprocess(cmd, capture_output=True, text=True, check=True)
+        labels = result.stdout.strip().split('\n')
+        labels = [label for label in labels if label]  # Filter out empty strings
+
+        if labels:
+            print(f"Found {len(labels)} labels: {', '.join(labels)}", file=sys.stderr)
+        else:
+            print(f"No labels found for issue #{issue_number}", file=sys.stderr)
+
+        return labels
+    except Exception as e:
+        print(f"Error fetching issue labels: {e}", file=sys.stderr)
+        if hasattr(e, 'stderr'):
+            print(f"Command stderr: {e.stderr}", file=sys.stderr)
+        return []
+
+# Function to read labels from common.json file
+def read_labels(labels_path='.github/labels/common.json'):
+    """
+    Reads label definitions from common.json file and returns them as a list of names.
+
+    Args:
+        labels_path (str): Path to the labels JSON file, defaults to '.github/labels/common.json'
+
+    Returns:
+        list: List of label names from the common.json file
+    """
+    try:
+        print(f"Reading labels from {labels_path}", file=sys.stderr)
+
+        with open(labels_path, 'r') as f:
+            labels_data = json.load(f)
+
+        # Extract just the names from the label objects
+        label_names = [label.get('name') for label in labels_data if label.get('name')]
+
+        if label_names:
+            print(f"Found {len(label_names)} labels in common.json: {', '.join(label_names)}", file=sys.stderr)
+        else:
+            print("No labels found in common.json", file=sys.stderr)
+
+        return label_names
+    except Exception as e:
+        print(f"Error reading labels from common.json: {e}", file=sys.stderr)
+        return []
+
 # Function to generate patches for all commits related to a ticket
 def generate_patches(organization, repository, issue_number, commit_ids, test_file_detector=is_test_file):
     """

@@ -136,11 +136,19 @@ try:
 
     # Detect build system at base_commit if available, otherwise use current state
     build_system = detect_build_system(organization, repository, base_commit if base_commit else None)
-    
+
+    # Fetch issue labels and common labels
+    issue_labels = fetch_issue_labels(organization, repository, issue_number)
+    common_labels = read_labels()
+
+    # Filter out common labels to create tags
+    tags = [label for label in issue_labels if label not in common_labels]
+
     # Create the JSON structure
     data = {
         "instance_id": generate_instance_id(organization, repository, issue_number),
         "issue_numbers": f"[\"{issue_number}\"]",
+        "tags": json.dumps(tags),
         "repo": f"{organization}/{repository}.git",
         "patch": f"{source_patch}",
         "test_patch": f"{test_patch}",
@@ -180,6 +188,7 @@ except Exception as e:
     error_data = {
         "instance_id": instance_id,
         "issue_numbers": f"[\"{issue_number}\"]",
+        "tags": "[]",
         "repo": f"{organization}/{repository}.git",
         "patch": "",
         "test_patch": "",

@@ -139,7 +139,7 @@ try:
 
     # Fetch issue labels and common labels
     issue_labels = fetch_issue_labels(organization, repository, issue_number)
-    common_labels = read_labels()
+    common_labels = read_labels('.github/labels/common.json')
 
     # Filter out common labels to create tags
     tags = [label for label in issue_labels if label not in common_labels]

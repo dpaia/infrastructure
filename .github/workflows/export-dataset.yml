@@ -221,15 +221,17 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: ${{ inputs.output_file }}
-          path: ./
+          path: ./datasets
           
       - name: Create branch
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           git config --global user.name "GitHub Actions"
           git config --global user.email "actions@github.com"
           BRANCH_NAME="dataset-$(date +%Y%m%d-%H%M%S)"
           git checkout -b $BRANCH_NAME
-          git add ${{ inputs.output_file }}
+          git add ./datasets/${{ inputs.output_file }}
           git commit -m "Add dataset: ${{ inputs.search_query }}"
           git push origin $BRANCH_NAME
           PR_URL=$(gh pr create --base main --head "$BRANCH_NAME" --title "Dataset: ${{ inputs.search_query }}" --body "Add dataset: ${{ inputs.search_query }}" --repo "${{ inputs.datasets_repository }}")

@@ -251,13 +251,14 @@ def fetch_commits(organization, repository, issue_number, github_token=None):
         sorted_commit_shas = []
         latest_commit = ""
     
-    # Get the commit before the latest commit (base commit)
+    # Get the commit before the earliest commit (base commit)
     base_commit = ""
-    if latest_commit:
-        print("Fetching base commit (parent of latest commit)...")
+    if sorted_commit_shas:
+        earliest_commit = sorted_commit_shas[0]  # First commit in sorted array (earliest by date)
+        print(f"Fetching base commit (parent of earliest commit: {earliest_commit})...")
         cmd = [
             'gh', 'api',
-            f'repos/{owner}/{repo_name}/commits/{latest_commit}',
+            f'repos/{owner}/{repo_name}/commits/{earliest_commit}',
             '--jq', '.parents[0].sha'
         ]
         

@@ -427,10 +427,13 @@ runs:
           echo "Error detected in data generation. Setting default version value."
           VERSION_VALUE="1"
         else
-          # Parse the version from the data JSON
-          echo "DATA: $DATA_VALUE"
-          VERSION_VALUE=$(echo "$DATA_VALUE" | jq -r '.version // "1"')
-          echo "Extracted version from data: $VERSION_VALUE"
+          # Parse the version from the data JSON and convert to number
+          VERSION_STRING=$(echo "$DATA_VALUE" | jq -r '.version // "1"')
+          echo "Extracted version string from data: $VERSION_STRING"
+          
+          # Convert version string to number (remove quotes and convert to float)
+          VERSION_VALUE=$(echo "$VERSION_STRING" | sed 's/^"\(.*\)"$/\1/' | awk '{print $1 + 0}')
+          echo "Converted version to number: $VERSION_VALUE"
         fi
         
         gh api graphql -f query='

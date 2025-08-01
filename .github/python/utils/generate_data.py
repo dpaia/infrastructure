@@ -323,47 +323,135 @@ def read_labels(labels_path='.github/labels/common.json'):
         print(f"Error reading labels from common.json: {e}", file=sys.stderr)
         return []
 
+# Function to merge patches for the same file from multiple commits
+def merge_file_patches(file_patches):
+    """
+    Merges multiple patches for the same file into a single patch.
+    
+    Args:
+        file_patches (list): List of patch strings for the same file
+        
+    Returns:
+        str: Merged patch for the file
+    """
+    if not file_patches:
+        return ""
+    
+    if len(file_patches) == 1:
+        return file_patches[0]
+    
+    # For now, we'll use a simple concatenation approach
+    # In a more sophisticated implementation, we could parse the hunks
+    # and merge them intelligently, but this requires complex logic
+    # to handle overlapping changes, context lines, etc.
+    
+    # Extract the header from the first patch
+    first_patch = file_patches[0]
+    header_match = re.search(r'(diff --git.*?(?=@@|\Z))', first_patch, re.DOTALL)
+    header = header_match.group(1) if header_match else ""
+    
+    # Collect all hunks from all patches
+    all_hunks = []
+    for patch in file_patches:
+        # Extract hunks (lines starting with @@)
+        hunks = re.findall(r'(@@.*?(?=@@|\Z))', patch, re.DOTALL)
+        all_hunks.extend(hunks)
+    
+    # Combine header with all hunks
+    if all_hunks:
+        return header + ''.join(all_hunks)
+    else:
+        return first_patch
+
 # Function to generate patches for all commits related to a ticket
 def generate_patches(organization, repository, issue_number, commit_ids, test_file_detector=is_test_file):
     """
     Generates source and test patches for all commits related to a ticket.
+    Merges changes for the same files across multiple commits into single patches.
     
     Args:
         organization (str): GitHub organization name
         repository (str): GitHub repository name
         issue_number (str): Issue number
+        commit_ids (list): List of commit IDs to process
+        test_file_detector (function): Function to determine if a file is a test file
         
     Returns:
         tuple: (source_patch, test_patch) containing the combined patches for source and test files
     """
-    # Get commit IDs for the ticket
-    # if not commit_ids:
-    #     commit_ids = fetch_commit_ids(organization, repository, issue_number)
-    
     if not commit_ids:
         print(f"No commits found for issue #{issue_number}", file=sys.stderr)
         return "", ""
     
     print(f"Generating patches for {len(commit_ids)} commits...", file=sys.stderr)
     
-    # Generate patches for each commit
-    all_source_patches = []
-    all_test_patches = []
+    # Dictionaries to store patches by file path
+    source_files = {}  # file_path -> list of patches
+    test_files = {}    # file_path -> list of patches
     
     for commit_id in commit_ids:
         print(f"Generating patches for commit {commit_id}...", file=sys.stderr)
         source_patch, test_patch = generate_patches_for_commit(organization, repository, commit_id, test_file_detector)
         
+        # Process source patches
         if source_patch:
-            all_source_patches.append(source_patch)
+            # Split the patch into individual file diffs
+            file_diffs = re.split(r'(diff --git )', source_patch)
+            
+            # Process the split result to get proper file diffs
+            for i in range(1, len(file_diffs), 2):
+                if i+1 < len(file_diffs):
+                    diff = file_diffs[i] + file_diffs[i+1]
+                    
+                    # Extract file path from the diff
+                    file_path_match = re.search(r'diff --git a/(.*) b/', diff)
+                    if file_path_match:
+                        file_path = file_path_match.group(1)
+                        
+                        if file_path not in source_files:
+                            source_files[file_path] = []
+                        source_files[file_path].append(diff)
+            
             print(f"Added source patch for commit {commit_id}", file=sys.stderr)
         
+        # Process test patches
         if test_patch:
-            all_test_patches.append(test_patch)
+            # Split the patch into individual file diffs
+            file_diffs = re.split(r'(diff --git )', test_patch)
+            
+            # Process the split result to get proper file diffs
+            for i in range(1, len(file_diffs), 2):
+                if i+1 < len(file_diffs):
+                    diff = file_diffs[i] + file_diffs[i+1]
+                    
+                    # Extract file path from the diff
+                    file_path_match = re.search(r'diff --git a/(.*) b/', diff)
+                    if file_path_match:
+                        file_path = file_path_match.group(1)
+                        
+                        if file_path not in test_files:
+                            test_files[file_path] = []
+                        test_files[file_path].append(diff)
+            
             print(f"Added test patch for commit {commit_id}", file=sys.stderr)
     
-    # Combine all patches
-    combined_source_patch = '\n\n'.join(all_source_patches)
-    combined_test_patch = '\n\n'.join(all_test_patches)
+    # Merge patches for each file and combine into final patches
+    merged_source_patches = []
+    for file_path, patches in source_files.items():
+        merged_patch = merge_file_patches(patches)
+        if merged_patch:
+            merged_source_patches.append(merged_patch)
+            print(f"Merged {len(patches)} patches for source file: {file_path}", file=sys.stderr)
+    
+    merged_test_patches = []
+    for file_path, patches in test_files.items():
+        merged_patch = merge_file_patches(patches)
+        if merged_patch:
+            merged_test_patches.append(merged_patch)
+            print(f"Merged {len(patches)} patches for test file: {file_path}", file=sys.stderr)
+    
+    # Combine all merged patches
+    combined_source_patch = '\n\n'.join(merged_source_patches)
+    combined_test_patch = '\n\n'.join(merged_test_patches)
     
     return combined_source_patch, combined_test_patch

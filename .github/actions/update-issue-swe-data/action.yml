@@ -416,6 +416,7 @@ runs:
           VERSION_VALUE="1"
         else
           # Parse the version from the data JSON
+          echo "DATA: $DATA_VALUE"
           VERSION_VALUE=$(echo "$DATA_VALUE" | jq -r '.version // "1"')
           echo "Extracted version from data: $VERSION_VALUE"
         fi

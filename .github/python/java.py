@@ -13,7 +13,8 @@ latest_commit = os.environ.get('LATEST_COMMIT', '')
 linked_commits = json.loads(os.environ.get('LINKED_COMMITS', '')) if os.environ.get('LINKED_COMMITS', '') else []
 fail_to_pass = os.environ.get('FAIL_TO_PASS', '')
 pass_to_pass = os.environ.get('PASS_TO_PASS', '')
-version = float(os.environ.get('VERSION', 0.0)) + 1
+version_str = os.environ.get('VERSION', '')
+version = float(version_str) + 1 if version_str.strip() else 1.0
 
 # Generate current timestamp in ISO format
 current_time = datetime.datetime.now().strftime('%Y-%m-%dT%H:%M:%S%z')

@@ -4,6 +4,7 @@ import json
 import os
 import re
 import sys
+from unidiff import PatchSet
 
 
 # Function to determine if a file is a test file based on its path
@@ -326,7 +327,7 @@ def read_labels(labels_path='.github/labels/common.json'):
 # Function to merge patches for the same file from multiple commits
 def merge_file_patches(file_patches):
     """
-    Merges multiple patches for the same file into a single patch.
+    Merges multiple patches for the same file into a single patch using unidiff.
     
     Args:
         file_patches (list): List of patch strings for the same file
@@ -340,28 +341,60 @@ def merge_file_patches(file_patches):
     if len(file_patches) == 1:
         return file_patches[0]
     
-    # For now, we'll use a simple concatenation approach
-    # In a more sophisticated implementation, we could parse the hunks
-    # and merge them intelligently, but this requires complex logic
-    # to handle overlapping changes, context lines, etc.
+    try:
+        # Parse all patches using unidiff
+        parsed_patches = []
+        for patch_str in file_patches:
+            try:
+                patch_set = PatchSet(patch_str)
+                if patch_set:
+                    parsed_patches.append(patch_set)
+            except Exception as e:
+                print(f"Warning: Failed to parse patch with unidiff: {e}", file=sys.stderr)
+                # Fall back to including the raw patch
+                continue
+        
+        if not parsed_patches:
+            # If no patches could be parsed, fall back to simple concatenation
+            print("Warning: No patches could be parsed with unidiff, using concatenation fallback", file=sys.stderr)
+            return '\n'.join(file_patches)
+        
+        # If we only have one successfully parsed patch, return it
+        if len(parsed_patches) == 1:
+            return str(parsed_patches[0])
+        
+        # Merge patches by combining hunks from the same file
+        # Start with the first patch as the base
+        merged_patch = parsed_patches[0]
+        
+        # For subsequent patches, merge their hunks
+        for patch_set in parsed_patches[1:]:
+            for patched_file in patch_set:
+                # Find corresponding file in merged_patch
+                merged_file = None
+                for existing_file in merged_patch:
+                    if existing_file.path == patched_file.path:
+                        merged_file = existing_file
+                        break
+                
+                if merged_file:
+                    # Merge hunks from this file
+                    for hunk in patched_file:
+                        # Add the hunk to the merged file
+                        # Note: This is a simplified merge - in practice, you might need
+                        # more sophisticated logic to handle overlapping hunks
+                        merged_file.append(hunk)
+                else:
+                    # File not found in merged patch, add the whole file
+                    merged_patch.append(patched_file)
+        
+        return str(merged_patch)
     
-    # Extract the header from the first patch
-    first_patch = file_patches[0]
-    header_match = re.search(r'(diff --git.*?(?=@@|\Z))', first_patch, re.DOTALL)
-    header = header_match.group(1) if header_match else ""
-    
-    # Collect all hunks from all patches
-    all_hunks = []
-    for patch in file_patches:
-        # Extract hunks (lines starting with @@)
-        hunks = re.findall(r'(@@.*?(?=@@|\Z))', patch, re.DOTALL)
-        all_hunks.extend(hunks)
-    
-    # Combine header with all hunks
-    if all_hunks:
-        return header + ''.join(all_hunks)
-    else:
-        return first_patch
+    except Exception as e:
+        print(f"Error merging patches with unidiff: {e}", file=sys.stderr)
+        # Fall back to simple concatenation
+        print("Falling back to simple concatenation", file=sys.stderr)
+        return '\n'.join(file_patches)
 
 # Function to generate patches for all commits related to a ticket
 def generate_patches(organization, repository, issue_number, commit_ids, test_file_detector=is_test_file):

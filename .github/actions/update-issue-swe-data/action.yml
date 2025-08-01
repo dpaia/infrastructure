@@ -126,7 +126,7 @@ runs:
         project_id: ${{ steps.get-project-id.outputs.project_id }}
         issue_node_id: ${{ steps.fetch-issue-id.outputs.issue_node_id }}
         field_name: "Version"
-        github_token: ${{ secrets.PROJECT_TOKEN }}
+        github_token: ${{ inputs.github_token }}
 
     - name: Add Issue to Project
       id: add-to-project

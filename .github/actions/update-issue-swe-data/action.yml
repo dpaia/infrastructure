@@ -119,6 +119,15 @@ runs:
         field_name: "Version"
         github_token: ${{ inputs.github_token }}
 
+    - name: Get version field value
+      id: get-version-value
+      uses: ./.github/actions/get-project-field-value
+      with:
+        project_id: ${{ steps.get-project-id.outputs.project_id }}
+        issue_node_id: ${{ steps.fetch-issue-id.outputs.issue_node_id }}
+        field_name: "Version"
+        github_token: ${{ secrets.PROJECT_TOKEN }}
+
     - name: Add Issue to Project
       id: add-to-project
       uses: ./.github/actions/add-issue-to-project
@@ -182,7 +191,7 @@ runs:
         GH_TOKEN: ${{ inputs.github_token }}
         FAIL_TO_PASS: ${{ steps.extract-fields.outputs.fail_to_pass }}
         PASS_TO_PASS: ${{ steps.extract-fields.outputs.pass_to_pass }}
-        VERSION: ${{ steps.get-version-field-id.outputs.field_id }}
+        VERSION: ${{ steps.get-version-value.outputs.field_value }}
       run: |
         chmod +x .github/python/${{ inputs.generator }}.py
         echo "data_value<<EOF" >> $GITHUB_OUTPUT

@@ -39,7 +39,7 @@ def verify_commit_exists(owner, repo_name, commit_hash):
     cmd = [
         'gh', 'api',
         f'repos/{owner}/{repo_name}/commits/{commit_hash}/branches-where-head',
-        '--jq', '.name'
+        '--jq', '.[].name'
     ]
 
     result = run_subprocess(cmd, capture_output=True, text=True, check=False)

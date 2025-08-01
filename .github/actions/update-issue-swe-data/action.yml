@@ -421,7 +421,7 @@ runs:
         fi
         
         gh api graphql -f query='
-        mutation($projectId:ID!, $itemId:ID!, $fieldId:ID!, $value:Int!) {
+        mutation($projectId:ID!, $itemId:ID!, $fieldId:ID!, $value:Float!) {
           updateProjectV2ItemFieldValue(input: {
             projectId: $projectId,
             itemId: $itemId,

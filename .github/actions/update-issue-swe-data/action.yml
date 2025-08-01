@@ -421,19 +421,19 @@ runs:
         fi
         
         gh api graphql -f query='
-        mutation($projectId:ID!, $itemId:ID!, $fieldId:ID!, $value:String!) {
+        mutation($projectId:ID!, $itemId:ID!, $fieldId:ID!, $value:Int!) {
           updateProjectV2ItemFieldValue(input: {
             projectId: $projectId,
             itemId: $itemId,
             fieldId: $fieldId,
             value: {
-              text: $value
+              number: $value
             }
           }) {
             projectV2Item {
               id
             }
           }
-        }' -f projectId=$PROJECT_ID -f itemId=$ITEM_ID -f fieldId=$VERSION_FIELD_ID -f value="$VERSION_VALUE"
+        }' -f projectId=$PROJECT_ID -f itemId=$ITEM_ID -f fieldId=$VERSION_FIELD_ID -F value="$VERSION_VALUE"
 
         echo "✅ Version field updated with value: $VERSION_VALUE"

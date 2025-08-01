@@ -110,6 +110,15 @@ runs:
         field_name: "Status"
         github_token: ${{ inputs.github_token }}
 
+    - name: Get version field ID
+      id: get-version-field-id
+      if: inputs.update_status == 'true'
+      uses: ./.github/actions/get-project-field-id
+      with:
+        project_id: ${{ steps.get-project-id.outputs.project_id }}
+        field_name: "Version"
+        github_token: ${{ inputs.github_token }}
+
     - name: Add Issue to Project
       id: add-to-project
       uses: ./.github/actions/add-issue-to-project
@@ -161,6 +170,7 @@ runs:
         GH_TOKEN: ${{ inputs.github_token }}
         FAIL_TO_PASS: ${{ steps.extract-fields.outputs.fail_to_pass }}
         PASS_TO_PASS: ${{ steps.extract-fields.outputs.pass_to_pass }}
+        VERSION: ${{ steps.get-version-field-id.outputs.field_id }}
       run: |
         chmod +x .github/python/${{ inputs.generator }}.py
         echo "data_value<<EOF" >> $GITHUB_OUTPUT
@@ -386,3 +396,44 @@ runs:
         }' -f projectId=$PROJECT_ID -f itemId=$ITEM_ID -f fieldId=$COMMIT_FIELD_ID -f value="$LATEST_COMMIT"
 
         echo "✅ Commit field updated with latest commit hash: $LATEST_COMMIT"
+
+    - name: Update Version field
+      if: inputs.update_status == 'true'
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github_token }}
+        PROJECT_ID: ${{ steps.get-project-id.outputs.project_id }}
+        ITEM_ID: ${{ steps.add-to-project.outputs.item_id }}
+        VERSION_FIELD_ID: ${{ steps.get-version-field-id.outputs.field_id }}
+        DATA_VALUE: ${{ steps.generate-data.outputs.data_value }}
+        HAS_ERROR: ${{ steps.check-error.outputs.has_error }}
+      run: |
+        echo "Setting Version field value..."
+        
+        # Extract version value from data JSON
+        if [ "$HAS_ERROR" == "true" ]; then
+          echo "Error detected in data generation. Setting default version value."
+          VERSION_VALUE="1"
+        else
+          # Parse the version from the data JSON
+          VERSION_VALUE=$(echo "$DATA_VALUE" | jq -r '.version // "1"')
+          echo "Extracted version from data: $VERSION_VALUE"
+        fi
+        
+        gh api graphql -f query='
+        mutation($projectId:ID!, $itemId:ID!, $fieldId:ID!, $value:String!) {
+          updateProjectV2ItemFieldValue(input: {
+            projectId: $projectId,
+            itemId: $itemId,
+            fieldId: $fieldId,
+            value: {
+              text: $value
+            }
+          }) {
+            projectV2Item {
+              id
+            }
+          }
+        }' -f projectId=$PROJECT_ID -f itemId=$ITEM_ID -f fieldId=$VERSION_FIELD_ID -f value="$VERSION_VALUE"
+
+        echo "✅ Version field updated with value: $VERSION_VALUE"

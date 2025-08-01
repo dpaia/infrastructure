@@ -13,6 +13,7 @@ latest_commit = os.environ.get('LATEST_COMMIT', '')
 linked_commits = json.loads(os.environ.get('LINKED_COMMITS', '')) if os.environ.get('LINKED_COMMITS', '') else []
 fail_to_pass = os.environ.get('FAIL_TO_PASS', '')
 pass_to_pass = os.environ.get('PASS_TO_PASS', '')
+version = os.environ.get('VERSION', '')
 
 # Generate current timestamp in ISO format
 current_time = datetime.datetime.now().strftime('%Y-%m-%dT%H:%M:%S%z')
@@ -157,7 +158,7 @@ try:
         "created_at": current_time,
         "base_commit": os.environ.get('BASE_COMMIT', ''),
         "problem_statement": fetch_problem_statement(organization, repository, issue_number).get('body', ''),
-        "version": "0.1",
+        "version": f"{version if version else '1'}",
         "is_maven": f"{build_system == "maven"}",
         "build_system": build_system
     }
@@ -197,7 +198,7 @@ except Exception as e:
         "created_at": current_time,
         "base_commit": os.environ.get('BASE_COMMIT', ''),
         "problem_statement": "",  # Already an empty string, no need to change
-        "version": "0.1",
+        "version": f"{version if version else '1'}",
         "is_maven": build_system == "maven",
         "build_system": build_system,
         "error": str(e),

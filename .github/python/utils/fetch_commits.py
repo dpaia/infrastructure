@@ -26,7 +26,8 @@ from generate_data import *
 
 def verify_commit_exists(owner, repo_name, commit_hash):
     """
-    Verify if a commit exists in the repository.
+    Verify if a commit exists in the repository by checking if it's reachable from any branch.
+    First tries branches-where-head API, then falls back to checking all branches if needed.
 
     Args:
         owner (str): GitHub organization name
@@ -34,16 +35,78 @@ def verify_commit_exists(owner, repo_name, commit_hash):
         commit_hash (str): The commit hash to verify
 
     Returns:
-        str: The full commit hash if it exists, empty string otherwise
+        str: The full commit hash if it exists and is reachable from any branch, empty string otherwise
     """
+    if not commit_hash:
+        return ""
+    
+    # First, try to get the commit directly to verify it exists
+    cmd = [
+        'gh', 'api',
+        f'repos/{owner}/{repo_name}/commits/{commit_hash}',
+        '--jq', '.sha'
+    ]
+    
+    result = run_subprocess(cmd, capture_output=True, text=True, check=False)
+    if result.returncode != 0:
+        return ""  # Commit doesn't exist
+        
+    full_commit_hash = result.stdout.strip()
+    
+    # Step 1: Check if commit is the head of any branch using branches-where-head API
+    print(f"Checking if commit {commit_hash} is head of any branch...")
     cmd = [
         'gh', 'api',
         f'repos/{owner}/{repo_name}/commits/{commit_hash}/branches-where-head',
         '--jq', '.[].name'
     ]
-
+    
     result = run_subprocess(cmd, capture_output=True, text=True, check=False)
-    return result.stdout.strip() if result.returncode == 0 else ""
+    if result.returncode == 0 and result.stdout.strip():
+        branches_where_head = result.stdout.strip().split('\n')
+        print(f"Commit {commit_hash} is head of branches: {', '.join(branches_where_head)}")
+        return full_commit_hash
+    
+    print(f"Commit {commit_hash} is not head of any branch, checking all branches...")
+    
+    # Step 2: If not head of any branch, check all branches with pagination (100 per page)
+    cmd = [
+        'gh', 'api',
+        '-H', 'X-GitHub-Api-Version: 2022-11-28',
+        f'repos/{owner}/{repo_name}/branches?per_page=100',
+        '--paginate',
+        '--jq', '.[].name'
+    ]
+    
+    result = run_subprocess(cmd, capture_output=True, text=True, check=False)
+    if result.returncode != 0:
+        print(f"Warning: Could not fetch branches for repository {owner}/{repo_name}")
+        return full_commit_hash  # If we can't get branches but commit exists, assume it's valid
+    
+    branches = result.stdout.strip().split('\n') if result.stdout.strip() else []
+    
+    # Check if commit is reachable from any branch
+    for branch in branches:
+        if not branch:
+            continue
+            
+        cmd = [
+            'gh', 'api',
+            '-H', 'X-GitHub-Api-Version: 2022-11-28',
+            f'repos/{owner}/{repo_name}/compare/{commit_hash}...{branch}',
+            '--jq', '.status'
+        ]
+        
+        result = run_subprocess(cmd, capture_output=True, text=True, check=False)
+        if result.returncode == 0:
+            status = result.stdout.strip()
+            # If status is "ahead" or "identical", the commit is reachable from this branch
+            if status in ["ahead", "identical"]:
+                print(f"Commit {commit_hash} found in branch: {branch}")
+                return full_commit_hash
+    
+    print(f"Warning: Commit {commit_hash} exists but is not reachable from any branch")
+    return ""
 
 def fetch_commits(organization, repository, issue_number, github_token=None):
     """

@@ -1,0 +1,112 @@
+[
+  {
+    "name": "Models",
+    "color": "CA905E",
+    "description": "Issues related to Django ORM models"
+  },
+  {
+    "name": "Views",
+    "color": "A619A6",
+    "description": "Issues related to Django views (function-based or class-based)"
+  },
+  {
+    "name": "Templates",
+    "color": "CD32B5",
+    "description": "Issues related to Django templates and rendering"
+  },
+  {
+    "name": "Forms",
+    "color": "05E9A7",
+    "description": "Issues related to Django forms and validation"
+  },
+  {
+    "name": "Admin",
+    "color": "940CA5",
+    "description": "Issues related to Django admin site"
+  },
+  {
+    "name": "Signals",
+    "color": "cad54b",
+    "description": "Django signal handling issues"
+  },
+  {
+    "name": "Serializers",
+    "color": "CD3228",
+    "description": "Issues related to Django REST Framework serializers"
+  },
+  {
+    "name": "Security",
+    "color": "5A372E",
+    "description": "Security issues or enhancements"
+  },
+  {
+    "name": "API",
+    "color": "A60BE4",
+    "description": "Issues related to REST or GraphQL APIs"
+  },
+  {
+    "name": "URLs",
+    "color": "5ce015",
+    "description": "Issues related to URL routing and path resolution"
+  },
+  {
+    "name": "Middleware",
+    "color": "5d1f9d",
+    "description": "Custom or built-in middleware issues"
+  },
+  {
+    "name": "Caching",
+    "color": "ee6cb7",
+    "description": "Caching logic and backend issues"
+  },
+  {
+    "name": "Migrations",
+    "color": "fa3d0a",
+    "description": "Database migration problems (makemigrations, migrate)"
+  },
+  {
+    "name": "Exceptions",
+    "color": "829ad3",
+    "description": "Custom or unexpected exception handling"
+  },
+  {
+    "name": "Database",
+    "color": "1d76db",
+    "description": "Raw SQL or database backend issues"
+  },
+  {
+    "name": "Logging",
+    "color": "c94cbf",
+    "description": "Issues related to logging or monitoring"
+  },
+  {
+    "name": "Celery",
+    "color": "4f3ee4",
+    "description": "Background tasks and async workers"
+  },
+  {
+    "name": "Transactions",
+    "color": "24866d",
+    "description": "Database transaction handling and rollbacks"
+  },
+  {
+    "name": "Testing",
+    "color": "11c8c2",
+    "description": "Unit, integration, and system tests"
+  },
+  {
+    "name": "i18n/L10n",
+    "color": "8b4513",
+    "description": "Internationalization and localization issues"
+  },
+  {
+    "name": "Deployment",
+    "color": "3c9b8c",
+    "description": "Issues with Docker, WSGI, or production setup"
+  },
+  {
+    "name": "Static/Media",
+    "color": "a4a4a4",
+    "description": "Handling of static files and media uploads"
+  }
+]

@@ -334,85 +334,42 @@ def read_labels(labels_path='.github/labels/common.json'):
 # Function to merge patches for the same file from multiple commits
 def merge_file_patches(file_patches):
     """
-    Merges multiple patches for the same file into a single patch.
-    Uses unidiff if available, otherwise falls back to simple merging logic.
-    
+    Merges multiple patches for the same file into a single patch string by
+    concatenating complete diff blocks. We intentionally avoid merging hunks
+    from different commits into one file-level diff because hunks are based on
+    different base versions and such merging often produces non-applicable
+    patches. Instead, we preserve each "diff --git" block intact and return
+    them in order, allowing patch tools to apply them sequentially.
+
     Args:
         file_patches (list): List of patch strings for the same file
-        
+
     Returns:
-        str: Merged patch for the file
+        str: Concatenated patch blocks for the file
     """
-    if not file_patches:
+    # Filter out empty entries
+    patches = [p for p in (file_patches or []) if p and p.strip()]
+    if not patches:
         return ""
-    
-    if len(file_patches) == 1:
-        return file_patches[0]
-    
-    # Try to use unidiff if available
-    if UNIDIFF_AVAILABLE:
-        try:
-            # Parse all patches using unidiff
-            parsed_patches = []
-            for patch_str in file_patches:
-                try:
-                    patch_set = PatchSet(patch_str)
-                    if patch_set:
-                        parsed_patches.append(patch_set)
-                except Exception as e:
-                    print(f"Warning: Failed to parse patch with unidiff: {e}", file=sys.stderr)
-                    continue
-            
-            if not parsed_patches:
-                print("Warning: No patches could be parsed with unidiff, using fallback", file=sys.stderr)
-            elif len(parsed_patches) == 1:
-                return str(parsed_patches[0])
-            else:
-                # Merge patches by combining hunks from the same file
-                merged_patch = parsed_patches[0]
-                
-                for patch_set in parsed_patches[1:]:
-                    for patched_file in patch_set:
-                        # Find corresponding file in merged_patch
-                        merged_file = None
-                        for existing_file in merged_patch:
-                            if existing_file.path == patched_file.path:
-                                merged_file = existing_file
-                                break
-                        
-                        if merged_file:
-                            # Merge hunks from this file
-                            for hunk in patched_file:
-                                merged_file.append(hunk)
-                        else:
-                            # File not found in merged patch, add the whole file
-                            merged_patch.append(patched_file)
-                
-                return str(merged_patch)
-        
-        except Exception as e:
-            print(f"Error merging patches with unidiff: {e}", file=sys.stderr)
-    
-    # Fallback implementation without unidiff
-    print("Using simple patch merging (unidiff not available or failed)", file=sys.stderr)
-    
-    # Extract the header from the first patch
-    first_patch = file_patches[0]
-    header_match = re.search(r'(diff --git.*?(?=@@|\Z))', first_patch, re.DOTALL)
-    header = header_match.group(1) if header_match else ""
-    
-    # Collect all hunks from all patches
-    all_hunks = []
-    for patch in file_patches:
-        # Extract hunks (lines starting with @@)
-        hunks = re.findall(r'(@@.*?(?=@@|\Z))', patch, re.DOTALL)
-        all_hunks.extend(hunks)
-    
-    # Combine header with all hunks
-    if all_hunks:
-        return header + ''.join(all_hunks)
-    else:
-        return first_patch
+
+    if len(patches) == 1:
+        return patches[0]
+
+    # Sanitize and deduplicate while preserving order
+    sanitized = []
+    seen = set()
+    for p in patches:
+        # Ensure we keep only from 'diff --git' header onward
+        m = re.search(r'(diff --git[^\n]*\n.*)', p.strip(), re.DOTALL)
+        block = m.group(1) if m else p.strip()
+        if block and block not in seen:
+            sanitized.append(block)
+            seen.add(block)
+
+    # Join as separate diff blocks. This produces a single patch text that
+    # contains multiple complete diffs for the same file, which patch tools can
+    # apply sequentially.
+    return '\n\n'.join(sanitized)
 
 # Function to generate patches for all commits related to a ticket
 def generate_patches(organization, repository, issue_number, commit_ids, test_file_detector=is_test_file):

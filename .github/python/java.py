@@ -133,6 +133,10 @@ def _find_files_with_github_api(organization, repository, filename, commit=None)
 try:
     # Generate source and test patches
     source_patch, test_patch = generate_patches(organization, repository, issue_number, linked_commits, is_test_file)
+
+    if source_patch == "":
+        source_patch = test_patch
+        test_patch = ""
     
     # Get base commit from environment variables
     base_commit = os.environ.get('BASE_COMMIT', '')

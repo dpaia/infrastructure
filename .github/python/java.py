@@ -15,6 +15,7 @@ fail_to_pass = os.environ.get('FAIL_TO_PASS', '')
 pass_to_pass = os.environ.get('PASS_TO_PASS', '')
 version_str = os.environ.get('VERSION', '')
 test_args = os.environ.get('TEST_ARGS', '')
+java_version = os.environ.get('SDK_VERSION', '')
 version = float(version_str) + 1 if version_str.strip() else 1.0
 
 # Generate current timestamp in ISO format
@@ -167,6 +168,7 @@ try:
         "version": f"{version if version else 1}",
         "is_maven": f"{build_system == "maven"}",
         "build_system": build_system,
+        "java_version": java_version,
         "test_args": test_args
     }
 
@@ -208,6 +210,7 @@ except Exception as e:
         "version": f"{version if version else 1}",
         "is_maven": build_system == "maven",
         "build_system": build_system,
+        "java_version": java_version,
         "test_args": test_args,
         "error": str(e),
         "has_error": True  # Flag to indicate error

@@ -27,6 +27,9 @@ outputs:
   test_args:
     description: 'Test arguments extracted from comments with FAIL_TO_PASS or PASS_TO_PASS'
     value: ${{ steps.extract-fields.outputs.test_args }}
+  test_sdk_version:
+    description: 'SDK version extracted from comments with FAIL_TO_PASS or PASS_TO_PASS'
+    value: ${{ steps.extract-fields.outputs.test_sdk_version }}
   comment_id:
     description: 'ID of the comment where FAIL_TO_PASS or PASS_TO_PASS was manually described'
     value: ${{ steps.extract-fields.outputs.comment_id }}

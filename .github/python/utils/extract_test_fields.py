@@ -49,6 +49,7 @@ def extract_test_fields(text):
     fail_to_pass = ""
     pass_to_pass = ""
     test_args = ""
+    sdk_version = ""
 
     if text:
         # Find FAIL_TO_PASS pattern
@@ -67,7 +68,13 @@ def extract_test_fields(text):
             if args_matches:
                 test_args = args_matches.group(1).strip()
 
-    return fail_to_pass, pass_to_pass, test_args
+        # Find SDK_VERSION pattern in the same comment
+        if fail_to_pass or pass_to_pass:
+            args_matches = re.search(r'SDK_VERSION:\s*(.+?)(?:\n|$)', text)
+            if args_matches:
+                sdk_version = args_matches.group(1).strip()
+
+    return fail_to_pass, pass_to_pass, test_args, sdk_version
 
 
 # Function to fetch commit messages for linked commits
@@ -188,12 +195,14 @@ def process_test_fields(organization_repository, issue_number):
     fail_to_pass_value = ""
     pass_to_pass_value = ""
     test_args_value = ""
+    sdk_version_value = ""
     comment_id = ""
 
     # Check for direct test environment variables first
     test_fail_to_pass = os.environ.get('TEST_FAIL_TO_PASS', '')
     test_pass_to_pass = os.environ.get('TEST_PASS_TO_PASS', '')
     test_args = os.environ.get('TEST_ARGS', '')
+    sdk_version = os.environ.get('SDK_VERSION', '')
 
     if test_fail_to_pass:
         fail_to_pass_value = test_fail_to_pass
@@ -207,6 +216,10 @@ def process_test_fields(organization_repository, issue_number):
         test_args_value = test_args
         print(f"Using TEST_ARGS from TEST_ARGS environment variable: {test_args_value}", file=sys.stderr)
 
+    if sdk_version:
+        sdk_version_value = sdk_version
+        print(f"Using SDK_VERSION from SDK_VERSION environment variable: {sdk_version_value}", file=sys.stderr)
+
     # If not found in environment variables, check issue comments
     if not test_fail_to_pass and not test_pass_to_pass:
         # First check issue comments
@@ -214,7 +227,7 @@ def process_test_fields(organization_repository, issue_number):
         comments = fetch_issue_comments(organization_repository, issue_number)
         for comment in reversed(comments):  # Start with the most recent comments
             comment_body = comment["body"]
-            comment_fail, comment_pass, comment_args = extract_test_fields(comment_body)
+            comment_fail, comment_pass, comment_args, comment_sdk_version = extract_test_fields(comment_body)
             if comment_fail:
                 fail_to_pass_value = comment_fail
                 comment_id = str(comment["id"])
@@ -228,6 +241,10 @@ def process_test_fields(organization_repository, issue_number):
             if comment_args and (comment_fail or comment_pass):
                 test_args_value = comment_args
                 print(f"Found TEST_ARGS in issue comment {comment_id}: {test_args_value}", file=sys.stderr)
+
+            if comment_sdk_version and (comment_fail or comment_pass):
+                sdk_version_value = comment_sdk_version
+                print(f"Found TEST_ARGS in issue comment {comment_id}: {sdk_version_value}", file=sys.stderr)
 
             if fail_to_pass_value or pass_to_pass_value:
                 break
@@ -260,7 +277,7 @@ def process_test_fields(organization_repository, issue_number):
                 if "TEST_ARGS:" in message:
                     print(f"Found TEST_ARGS pattern in message", file=sys.stderr)
 
-                commit_fail, commit_pass, commit_args = extract_test_fields(message)
+                commit_fail, commit_pass, commit_args, commit_sdk_version = extract_test_fields(message)
                 print(f"Extract returned: FAIL_TO_PASS='{commit_fail}', PASS_TO_PASS='{commit_pass}', TEST_ARGS='{commit_args}'", file=sys.stderr)
 
                 # Always update if we found values, regardless of previous values
@@ -276,6 +293,10 @@ def process_test_fields(organization_repository, issue_number):
                     test_args_value = commit_args
                     print(f"Updated TEST_ARGS from commit message to: '{test_args_value}'", file=sys.stderr)
 
+                if commit_sdk_version and (commit_fail or commit_pass):
+                    sdk_version_value = commit_sdk_version
+                    print(f"Updated TEST_ARGS from commit message to: '{sdk_version_value}'", file=sys.stderr)
+
                 if fail_to_pass_value or pass_to_pass_value:
                     break
 
@@ -283,7 +304,7 @@ def process_test_fields(organization_repository, issue_number):
     fail_to_pass_json = to_json_array(fail_to_pass_value) if fail_to_pass_value else "[]"
     pass_to_pass_json = to_json_array(pass_to_pass_value) if pass_to_pass_value else "[]"
 
-    return fail_to_pass_json, pass_to_pass_json, test_args_value, comment_id
+    return fail_to_pass_json, pass_to_pass_json, test_args_value, sdk_version_value, comment_id
 
 # Function to fetch issue comments
 def fetch_issue_comments(organization_repository, issue_number):
@@ -322,12 +343,13 @@ def fetch_issue_comments(organization_repository, issue_number):
 
 try:
     # Process test fields
-    fail_to_pass_json, pass_to_pass_json, test_args_value, comment_id = process_test_fields(organization + "/" + repository, issue_number)
+    fail_to_pass_json, pass_to_pass_json, test_args_value, sdk_version_value, comment_id = process_test_fields(organization + "/" + repository, issue_number)
 
     # Output the results
     print(f"fail_to_pass={fail_to_pass_json}")
     print(f"pass_to_pass={pass_to_pass_json}")
     print(f"test_args={test_args_value}")
+    print(f"test_sdk_version={sdk_version_value}")
     print(f"comment_id={comment_id}")
     print("has_error=false")
 except Exception as e:
@@ -335,5 +357,6 @@ except Exception as e:
     print("fail_to_pass=[]")
     print("pass_to_pass=[]")
     print("test_args=")
+    print("test_sdk_version=")
     print("comment_id=")
     print("has_error=true")

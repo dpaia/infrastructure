@@ -191,8 +191,7 @@ runs:
         GH_TOKEN: ${{ inputs.github_token }}
         FAIL_TO_PASS: ${{ steps.extract-fields.outputs.fail_to_pass }}
         PASS_TO_PASS: ${{ steps.extract-fields.outputs.pass_to_pass }}
-        TEST_ARGS: ${{ steps.extract-fields.outputs.test_args || '' }}
-        SDK_VERSION: ${{ steps.extract-fields.outputs.test_sdk_version || '' }}
+        METADATA: ${{ steps.extract-fields.outputs.metadata || '' }}
         VERSION: ${{ steps.get-version-value.outputs.field_value }}
       run: |
         chmod +x .github/python/${{ inputs.generator }}.py

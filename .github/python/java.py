@@ -14,8 +14,7 @@ linked_commits = json.loads(os.environ.get('LINKED_COMMITS', '')) if os.environ.
 fail_to_pass = os.environ.get('FAIL_TO_PASS', '')
 pass_to_pass = os.environ.get('PASS_TO_PASS', '')
 version_str = os.environ.get('VERSION', '')
-test_args = os.environ.get('TEST_ARGS', '')
-java_version = os.environ.get('SDK_VERSION', '')
+metadata = os.environ.get('METADATA', '')
 version = float(version_str) + 1 if version_str.strip() else 1.0
 
 # Generate current timestamp in ISO format
@@ -167,10 +166,21 @@ try:
         "problem_statement": fetch_problem_statement(organization, repository, issue_number).get('body', ''),
         "version": f"{version if version else 1}",
         "is_maven": f"{build_system == "maven"}",
-        "build_system": build_system,
-        "java_version": java_version,
-        "test_args": test_args
+        "build_system": build_system
     }
+
+    # Merge extra fields from METADATA JSON if provided
+    try:
+        if metadata:
+            extra = json.loads(metadata)
+            if isinstance(extra, dict):
+                for k, v in extra.items():
+                    if k not in data:
+                        data[k] = v
+            else:
+                print("METADATA is not a JSON object; ignoring", file=sys.stderr)
+    except Exception as e:
+        print(f"Failed to parse METADATA: {e}", file=sys.stderr)
 
     # Output the value as JSON string
     print(json.dumps(data))
@@ -210,11 +220,22 @@ except Exception as e:
         "version": f"{version if version else 1}",
         "is_maven": build_system == "maven",
         "build_system": build_system,
-        "java_version": java_version,
-        "test_args": test_args,
         "error": str(e),
         "has_error": True  # Flag to indicate error
     }
+
+    # Merge extra fields from METADATA JSON into error_data if provided
+    try:
+        if metadata:
+            extra = json.loads(metadata)
+            if isinstance(extra, dict):
+                for k, v in extra.items():
+                    if k not in error_data:
+                        error_data[k] = v
+            else:
+                print("METADATA is not a JSON object; ignoring", file=sys.stderr)
+    except Exception as e2:
+        print(f"Failed to parse METADATA in error handler: {e2}", file=sys.stderr)
 
     # Output the error data as JSON
     print(json.dumps(error_data))

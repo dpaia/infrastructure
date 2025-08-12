@@ -15,7 +15,7 @@ on:
         type: string
         default: ''
       workflow_path:
-        description: 'Path to GitHub workflow file to share (relative to shared/)'
+        description: 'Path(s) to GitHub workflow file(s) to share (relative to shared/). Use comma to separate multiple paths.'
         required: true
         type: string
 
@@ -87,24 +87,50 @@ jobs:
           path: target-repo
           token: ${{ secrets.PROJECT_TOKEN }}
 
-      - name: Verify workflow file exists
+      - name: Verify workflow file(s) exist
         id: verify-workflow
         run: |
-          WORKFLOW_FILE="source-repo/shared/${{ inputs.workflow_path }}"
-          if [ ! -f "$WORKFLOW_FILE" ]; then
-            echo "Error: Workflow file not found at $WORKFLOW_FILE"
+          # Support multiple comma-separated paths
+          RAW_PATHS="${{ inputs.workflow_path }}"
+          IFS=',' read -ra PATHS <<< "$RAW_PATHS"
+          FILES_TO_COPY=()
+          BASENAMES=()
+          for p in "${PATHS[@]}"; do
+            # trim spaces
+            p="$(echo "$p" | xargs)"
+            if [ -z "$p" ]; then
+              continue
+            fi
+            F="source-repo/shared/$p"
+            if [ ! -f "$F" ]; then
+              echo "Error: Workflow file not found at $F"
+              exit 1
+            fi
+            FILES_TO_COPY+=("$F")
+            BASENAMES+=("$(basename "$p")")
+            echo "Workflow file found at $F"
+          done
+          COUNT=${#FILES_TO_COPY[@]}
+          if [ "$COUNT" -eq 0 ]; then
+            echo "Error: No valid workflow paths provided"
             exit 1
           fi
-          echo "Workflow file found at $WORKFLOW_FILE"
+          # Export for subsequent steps
+          echo "WORKFLOW_FILES=${FILES_TO_COPY[*]}" >> $GITHUB_ENV
+          echo "WORKFLOW_BASENAMES=$(IFS=,; echo "${BASENAMES[*]}")" >> $GITHUB_ENV
+          echo "WORKFLOW_COUNT=$COUNT" >> $GITHUB_ENV
 
       - name: Create branch for changes
         working-directory: target-repo
         run: |
-          # Extract workflow filename from path
-          WORKFLOW_FILENAME=$(basename "${{ inputs.workflow_path }}")
-          
-          # Create a new branch
-          BRANCH_NAME="add-workflow-${WORKFLOW_FILENAME%.*}-$(date +%Y%m%d%H%M%S)"
+          # Determine branch name based on single vs multiple files
+          if [ "${WORKFLOW_COUNT}" = "1" ]; then
+            IFS=',' read -r FIRST_NAME _ <<< "${WORKFLOW_BASENAMES}"
+            BASE="${FIRST_NAME%.*}"
+            BRANCH_NAME="add-workflow-${BASE}-$(date +%Y%m%d%H%M%S)"
+          else
+            BRANCH_NAME="add-workflows-multiple-${WORKFLOW_COUNT}-$(date +%Y%m%d%H%M%S)"
+          fi
           git checkout -b $BRANCH_NAME
           
           # Set git config
@@ -113,15 +139,16 @@ jobs:
           
           echo "BRANCH_NAME=$BRANCH_NAME" >> $GITHUB_ENV
 
-      - name: Copy workflow file
+      - name: Copy workflow file(s)
         run: |
           # Create .github/workflows directory if it doesn't exist
           mkdir -p target-repo/.github/workflows
           
-          # Copy the workflow file
-          cp "source-repo/shared/${{ inputs.workflow_path }}" "target-repo/.github/workflows/"
-          
-          echo "Copied workflow file to target repository"
+          # Copy each workflow file
+          for F in ${WORKFLOW_FILES}; do
+            cp "$F" "target-repo/.github/workflows/"
+            echo "Copied $F to target repository"
+          done
 
       - name: Commit and push changes
         env:
@@ -133,9 +160,21 @@ jobs:
             # Add changes
             git add .github/
             
+            # Prepare messages
+            if [ "${WORKFLOW_COUNT}" = "1" ]; then
+              IFS=',' read -r FIRST_NAME _ <<< "${WORKFLOW_BASENAMES}"
+              COMMIT_MSG="Add workflow: ${FIRST_NAME}"
+              PR_TITLE="$COMMIT_MSG"
+              PR_BODY="This PR adds the ${FIRST_NAME} workflow"
+            else
+              NAMES="${WORKFLOW_BASENAMES}"
+              COMMIT_MSG="Add files (${WORKFLOW_COUNT}): ${NAMES}"
+              PR_TITLE="Add files: ${NAMES}"
+              PR_BODY="This PR adds ${WORKFLOW_COUNT} files: ${NAMES}"
+            fi
+            
             # Commit changes
-            WORKFLOW_FILENAME=$(basename "${{ inputs.workflow_path }}")
-            git commit -m "Add workflow: $WORKFLOW_FILENAME"
+            git commit -m "$COMMIT_MSG"
             
             # Push changes
             git push origin $BRANCH_NAME
@@ -147,7 +186,7 @@ jobs:
             # Create a pull request using the GitHub CLI
             echo "Creating pull request..."
             echo "Branch: $BRANCH_NAME"          
-            PR_URL=$(gh pr create --base main --head "$BRANCH_NAME" --title "Add workflow: $WORKFLOW_FILENAME" --body "This PR adds the $WORKFLOW_FILENAME workflow" --repo "${{ matrix.repo }}")
+            PR_URL=$(gh pr create --base main --head "$BRANCH_NAME" --title "$PR_TITLE" --body "$PR_BODY" --repo "${{ matrix.repo }}")
             echo "Pull request created: $PR_URL"
             echo "pull_request_url=$PR_URL" >> $GITHUB_OUTPUT
           else

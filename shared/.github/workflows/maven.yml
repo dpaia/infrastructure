@@ -421,365 +421,6 @@ jobs:
           echo "::error::FAIL_TO_PASS or PASS_TO_PASS not found in commit messages or issue comments, please add FAIL_TO_PASS or PASS_TO_PASS to issue comment"
           exit 1
 
-  # ──────────── 2. Run tests and handle comments ────────────
-  run-tests-and-comments:
-    needs: collect-process-tests
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      issues: write
-    if: ${{ false }}
-    outputs:
-      comment_id: ${{ steps.create_comment.outputs.comment_id }}
-      status: ${{ job.status }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      # Step 1: Create placeholder comment
-      - name: Create placeholder issue comment
-        id: create_comment
-        if: ${{ github.event_name == 'push' || github.event_name == 'issue_comment' }}
-        uses: actions/github-script@v7
-        env:
-          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          WORKFLOW_NAME: ${{ github.workflow }}
-          FAIL_TO_PASS: ${{ needs.collect-process-tests.outputs.fail_to_pass }}
-          PASS_TO_PASS: ${{ needs.collect-process-tests.outputs.pass_to_pass }}
-          COMMENT_ID: ${{ needs.collect-process-tests.outputs.comment_id }}
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          result-encoding: string
-          script: |
-            const issuePat = /#(\d+)/g;
-            let issueNum = null, m;
-            
-            // • PR context
-            if (context.payload.pull_request) {
-              const whole = `${context.payload.pull_request.title}\n${context.payload.pull_request.body}`;
-              if ((m = issuePat.exec(whole)) !== null) issueNum = +m[1];
-            }
-            
-            // • Push context
-            if (!issueNum && context.payload.commits) {
-              for (const c of context.payload.commits) {
-                if ((m = issuePat.exec(c.message)) !== null) { issueNum = +m[1]; break; }
-              }
-            }
-            
-            // • Issue comment context
-            if (!issueNum && context.payload.issue) {
-              issueNum = context.payload.issue.number;
-            }
-            
-            if (!issueNum) { core.info('No #issue reference found.'); return; }
-            
-            let bodyContent = '';
-
-            if (!process.env.COMMENT_ID){
-              if (process.env.FAIL_TO_PASS && process.env.FAIL_TO_PASS !== '[]') {
-                // Parse JSON array and convert to comma-separated string
-                core.info('FAIL_TO_PASS: '+process.env.FAIL_TO_PASS);
-                const failToPassArray = JSON.parse(process.env.FAIL_TO_PASS);              
-                const failToPassString = failToPassArray.join(', ');            
-                bodyContent += `FAIL_TO_PASS: ${failToPassString}\n`;
-              }
-            
-              if (process.env.PASS_TO_PASS && process.env.PASS_TO_PASS !== '[]') {
-                // Parse JSON array and convert to comma-separated string
-                const passToPassArray = JSON.parse(process.env.PASS_TO_PASS);
-                const passToPassString = passToPassArray.join(', ');
-                bodyContent += `PASS_TO_PASS: ${passToPassString}\n`;
-              }
-            }
-
-            bodyContent += `\n⏳ **[${process.env.WORKFLOW_NAME}](${process.env.RUN_URL})** has **started**…`;
-
-            // If we have an existing comment ID, update it instead of creating a new one
-            if (false && process.env.COMMENT_ID) {
-              try {
-                // Get existing comment body
-                const { data: existingComment } = await github.rest.issues.getComment({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  comment_id: Number(process.env.COMMENT_ID)
-                });
-
-                // Append new content to existing body
-                const updatedBody = existingComment.body + '\n' + bodyContent;
-
-                await github.rest.issues.updateComment({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  comment_id: Number(process.env.COMMENT_ID),
-                  body: updatedBody
-                });
-                core.setOutput('comment_id', process.env.COMMENT_ID);
-                return;
-              } catch (error) {
-                core.warning(`Failed to update comment ${process.env.COMMENT_ID}: ${error.message}`);
-                // Fall through to create a new comment
-              }
-            }
-
-            // Create a new comment
-            const { data: comment } = await github.rest.issues.createComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: issueNum,
-              body: bodyContent
-            });
-            core.setOutput('comment_id', comment.id.toString());
-
-      # Step 2: Prepare parameters for dataset verification
-      - name: Prepare dataset verification parameters
-        id: prepare_params
-        shell: bash
-        env:
-          EVENT_NAME: ${{ github.event_name }}
-          REPO: ${{ github.repository }}
-          CT_TEST_ARGS: ${{ needs.collect-process-tests.outputs.test_args }}
-          CT_JAVA_VERSION: ${{ needs.collect-process-tests.outputs.java_version }}
-        run: |
-          set -e
-          # Ensure we have history before computing SHAs
-          git fetch --prune --unshallow || true
-          git fetch --all --tags || true
-
-          # Determine base and head SHAs
-          if [[ "$EVENT_NAME" == "pull_request" ]]; then
-            BASE_SHA="${{ github.event.pull_request.base.sha }}"
-            HEAD_SHA="${{ github.event.pull_request.head.sha }}"
-            ISSUE_NUMBER="${{ github.event.pull_request.number }}"
-          elif [[ "$EVENT_NAME" == "push" ]]; then
-            BASE_SHA="${{ github.event.before }}"
-            HEAD_SHA="${{ github.sha }}"
-            ISSUE_NUMBER="$(echo "${{ github.event.head_commit.message }}" | grep -oE '#[0-9]+' | head -n1 | tr -d '#')"
-          elif [[ "$EVENT_NAME" == "issue_comment" ]]; then
-            HEAD_SHA="${{ github.sha }}"
-            BASE_SHA="$(git rev-parse HEAD~1 2>/dev/null || true)"
-            if [[ -z "$BASE_SHA" ]]; then
-              if git rev-parse --verify origin/main >/dev/null 2>&1; then
-                BASE_SHA="$(git merge-base HEAD origin/main || true)"
-              elif git rev-parse --verify origin/master >/dev/null 2>&1; then
-                BASE_SHA="$(git merge-base HEAD origin/master || true)"
-              fi
-            fi
-            if [[ -z "$BASE_SHA" ]]; then
-              BASE_SHA="$HEAD_SHA"
-            fi
-            ISSUE_NUMBER="${{ github.event.issue.number }}"
-          else
-            HEAD_SHA="${{ github.sha }}"
-            BASE_SHA="$(git rev-parse HEAD~1 2>/dev/null || true)"
-            if [[ -z "$BASE_SHA" ]]; then BASE_SHA="$HEAD_SHA"; fi
-            ISSUE_NUMBER=""
-          fi
-          echo "Base: $BASE_SHA"
-          echo "Head: $HEAD_SHA"
-
-          # Build patches only from commits related to the issue(s)
-          export GH_TOKEN="${{ secrets.GITHUB_TOKEN }}"
-          ISSUE_NUMBERS_JSON='${{ needs.collect-process-tests.outputs.issue_numbers }}'
-
-          REPO_FULL="$REPO"
-
-          # Helper: classify per-file diffs into source vs test
-          classify_and_append() {
-            awk -v source_out="$1" -v tests_out="$2" '
-              function basename(p,   n, arr){ n=split(p, arr, "/"); return arr[n]; }
-              function is_test_path(p,    pl, bl) {
-                pl=tolower(p); bl=tolower(basename(p));
-                return (index(pl, "/test/") || index(pl, "/tests/") || index(pl, "/src/test/") || index(pl, "/main/test/") ||
-                        index(pl, "/spec/") || index(pl, "/specs/") || index(pl, "__tests__") || index(pl, "__test__") ||
-                        pl ~ /_test[._]/ || pl ~ /_spec[._]/ || bl ~ /^test_/ || bl ~ /tests\./ || bl ~ /test\./ || bl ~ /spec\./);
-              }
-              /^diff --git / {
-                if (block != "") { if (current_is_test) print block >> tests_out; else print block >> source_out; }
-                path=""; if (match($0, /^diff --git a\/([^ ]+) b\//, m)) { path=m[1]; }
-                current_is_test=is_test_path(path); block=$0 "\n"; next;
-              }
-              { block = block $0 "\n"; }
-              END { if (block != "") { if (current_is_test) print block >> tests_out; else print block >> source_out; } }
-            '
-          }
-
-          TMP_COMMITS="$(mktemp)"
-
-          if [[ -n "$ISSUE_NUMBERS_JSON" && "$ISSUE_NUMBERS_JSON" != "null" ]]; then
-            for ISSUE in $(echo "$ISSUE_NUMBERS_JSON" | jq -r '.[]?'); do
-              [[ -z "$ISSUE" || "$ISSUE" == "null" ]] && continue
-
-              # From timeline referenced commits
-              COMMITS=$(gh api repos/$REPO_FULL/issues/$ISSUE/timeline --jq '.[] | select(.event == "referenced" and .commit_id != null) | .commit_id' || true)
-              for C in $COMMITS; do
-                [[ -z "$C" ]] && continue
-                DATE=$(gh api repos/$REPO_FULL/commits/$C --jq '.commit.committer.date' 2>/dev/null || true)
-                [[ -n "$DATE" ]] && echo "$C $DATE" >> "$TMP_COMMITS"
-              done
-
-              # From issue body
-              BODY=$(gh api repos/$REPO_FULL/issues/$ISSUE --jq '.body' 2>/dev/null || true)
-              if [[ -n "$BODY" ]]; then
-                for C in $(echo "$BODY" | grep -oE '\b[0-9a-f]{40}\b' | sort -u); do
-                  DATE=$(gh api repos/$REPO_FULL/commits/$C --jq '.commit.committer.date' 2>/dev/null || true)
-                  [[ -n "$DATE" ]] && echo "$C $DATE" >> "$TMP_COMMITS"
-                done
-              fi
-
-              # From comments
-              while IFS= read -r COMMENT; do
-                [[ -z "$COMMENT" ]] && continue
-                for C in $(echo "$COMMENT" | grep -oE '\b[0-9a-f]{40}\b' | sort -u); do
-                  DATE=$(gh api repos/$REPO_FULL/commits/$C --jq '.commit.committer.date' 2>/dev/null || true)
-                  [[ -n "$DATE" ]] && echo "$C $DATE" >> "$TMP_COMMITS"
-                done
-              done <<< "$(gh api repos/$REPO_FULL/issues/$ISSUE/comments --jq '.[].body' 2>/dev/null || true)"
-
-              # From cross-referenced PRs
-              PRS=$(gh api repos/$REPO_FULL/issues/$ISSUE/timeline --jq '.[] | select(.event == "cross-referenced" and .source.issue.pull_request != null) | .source.issue.number' 2>/dev/null || true)
-              for PR in $PRS; do
-                PR_COMMITS=$(gh api repos/$REPO_FULL/pulls/$PR/commits --jq '.[].sha' 2>/dev/null || true)
-                for C in $PR_COMMITS; do
-                  DATE=$(gh api repos/$REPO_FULL/commits/$C --jq '.commit.committer.date' 2>/dev/null || true)
-                  [[ -n "$DATE" ]] && echo "$C $DATE" >> "$TMP_COMMITS"
-                done
-              done
-            done
-          fi
-
-          PATCH_CONTENT=""; TEST_PATCH_CONTENT=""
-          if [[ -s "$TMP_COMMITS" ]]; then
-            # Dedupe by SHA, keep first date, then sort by date asc
-            SORTED=$(awk '!seen[$1]++{print}' "$TMP_COMMITS" | sort -k2)
-            EARLIEST_SHA=$(echo "$SORTED" | head -n1 | awk '{print $1}')
-            LATEST_SHA=$(echo "$SORTED" | tail -n1 | awk '{print $1}')
-            if [[ -n "$EARLIEST_SHA" ]]; then
-              BASE_PARENT=$(gh api repos/$REPO_FULL/commits/$EARLIEST_SHA --jq '.parents[0].sha' 2>/dev/null || true)
-              [[ -n "$BASE_PARENT" ]] && BASE_SHA="$BASE_PARENT"
-            fi
-            [[ -n "$LATEST_SHA" ]] && HEAD_SHA="$LATEST_SHA"
-
-            SRC_FILE="$(mktemp)"; TEST_FILE="$(mktemp)"; : > "$SRC_FILE"; : > "$TEST_FILE"
-            while read -r SHA DATE; do
-              [[ -z "$SHA" ]] && continue
-              PATCH_TEXT=$(gh api repos/$REPO_FULL/commits/$SHA -H 'Accept: application/vnd.github.v3.patch' 2>/dev/null || true)
-              if [[ -n "$PATCH_TEXT" ]]; then
-                echo "$PATCH_TEXT" | classify_and_append "$SRC_FILE" "$TEST_FILE"
-              fi
-            done <<< "$SORTED"
-            PATCH_CONTENT="$(cat "$SRC_FILE" || true)"
-            TEST_PATCH_CONTENT="$(cat "$TEST_FILE" || true)"
-            rm -f "$SRC_FILE" "$TEST_FILE"
-          else
-            # Fallback to full diff between BASE and HEAD
-            FULL_DIFF="$(git diff "$BASE_SHA" "$HEAD_SHA" || true)"
-            SRC_FILE="$(mktemp)"; TEST_FILE="$(mktemp)"; : > "$SRC_FILE"; : > "$TEST_FILE"
-            echo "$FULL_DIFF" | classify_and_append "$SRC_FILE" "$TEST_FILE"
-            PATCH_CONTENT="$(cat "$SRC_FILE" || true)"
-            TEST_PATCH_CONTENT="$(cat "$TEST_FILE" || true)"
-            rm -f "$SRC_FILE" "$TEST_FILE"
-          fi
-          rm -f "$TMP_COMMITS" 2>/dev/null || true
-
-          # Derived parameters
-          TEST_ARGS="${CT_TEST_ARGS}"
-          JAVA_VERSION="${CT_JAVA_VERSION}"
-          if [[ "$TEST_ARGS" == "null" ]]; then TEST_ARGS=""; fi
-          if [[ -z "$JAVA_VERSION" || "$JAVA_VERSION" == "null" ]]; then JAVA_VERSION="24"; fi
-          OWNER="${{ github.repository_owner }}"; REPO_NAME="${REPO#*/}"
-          if [[ -n "$ISSUE_NUMBER" ]]; then INSTANCE_ID="${OWNER}__${REPO_NAME}__${ISSUE_NUMBER}"; else INSTANCE_ID=""; fi
-
-          { echo "base_sha=$BASE_SHA"; echo "head_sha=$HEAD_SHA"; echo "instance_id=$INSTANCE_ID"; } >> "$GITHUB_OUTPUT"
-          { echo "PATCH<<EOF"; printf "%s\n" "$PATCH_CONTENT"; echo "EOF"; } >> "$GITHUB_OUTPUT"
-          { echo "TEST_PATCH<<EOF"; printf "%s\n" "$TEST_PATCH_CONTENT"; echo "EOF"; } >> "$GITHUB_OUTPUT"
-          echo "test_args=$TEST_ARGS" >> "$GITHUB_OUTPUT"
-          echo "java_version=$JAVA_VERSION" >> "$GITHUB_OUTPUT"
-
-      # Step 3: Run dataset verifier script
-      - name: Run dataset verifier
-        id: run_verifier
-        shell: bash
-        env:
-          REPO: ${{ github.repository }}
-          FAIL_TO_PASS: ${{ needs.collect-process-tests.outputs.fail_to_pass }}
-          PASS_TO_PASS: ${{ needs.collect-process-tests.outputs.pass_to_pass }}
-          PATCH: ${{ steps.prepare_params.outputs.PATCH }}
-          TEST_PATCH: ${{ steps.prepare_params.outputs.TEST_PATCH }}
-          COMMIT: ${{ steps.prepare_params.outputs.base_sha }}
-          TEST_ARGS: ${{ steps.prepare_params.outputs.test_args }}
-          JAVA_VERSION: ${{ steps.prepare_params.outputs.java_version }}
-          INSTANCE_ID: ${{ steps.prepare_params.outputs.instance_id }}
-        run: |
-          set -e
-          chmod +x .github/workflows/verify_java_dataset_instance.sh
-          OUTPUT_FILE="$(mktemp)"
-          .github/workflows/verify_java_dataset_instance.sh \
-            "$REPO" \
-            "$COMMIT" \
-            "$PATCH" \
-            "$TEST_PATCH" \
-            "$FAIL_TO_PASS" \
-            "$PASS_TO_PASS" \
-            "$TEST_ARGS" \
-            "true" \
-            "$JAVA_VERSION" \
-            "$INSTANCE_ID" \
-            false \
-            true | tee "$OUTPUT_FILE"
-          VERDICT="$(tail -n1 "$OUTPUT_FILE")"
-          echo "verdict=$VERDICT" >> $GITHUB_OUTPUT
-          if [[ "$VERDICT" == "✅" ]]; then
-            echo "result=success" >> $GITHUB_OUTPUT
-            echo "emoji=✅" >> $GITHUB_OUTPUT
-            echo "reason=All checks passed" >> $GITHUB_OUTPUT
-          else
-            echo "result=failure" >> $GITHUB_OUTPUT
-            echo "emoji=❌" >> $GITHUB_OUTPUT
-            CLEAN_REASON="${VERDICT#❌ }"
-            echo "reason=$CLEAN_REASON" >> $GITHUB_OUTPUT
-          fi
-
-      # Step 4: Update comment with final status from verifier
-      - name: Update issue comment with final status
-        if: ${{ always() && (github.event_name == 'push' || github.event_name == 'issue_comment') }}
-        uses: actions/github-script@v7
-        env:
-          COMMENT_ID: ${{ steps.create_comment.outputs.comment_id }}
-          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          WORKFLOW_NAME: ${{ github.workflow }}
-          RESULT: ${{ steps.run_verifier.outputs.result }}
-          EMOJI: ${{ steps.run_verifier.outputs.emoji }}
-          REASON: ${{ steps.run_verifier.outputs.reason }}
-          FAIL_TO_PASS: ${{ needs.collect-process-tests.outputs.fail_to_pass }}
-          PASS_TO_PASS: ${{ needs.collect-process-tests.outputs.pass_to_pass }}
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          script: |
-            if (!process.env.COMMENT_ID) { core.info('No comment to update.'); return; }
-            let bodyContent = '';
-            if (!process.env.COMMENT_ID){
-              if (process.env.FAIL_TO_PASS && process.env.FAIL_TO_PASS !== '[]') {
-                const failToPassArray = JSON.parse(process.env.FAIL_TO_PASS);
-                const failToPassString = failToPassArray.join(', ');
-                bodyContent += `FAIL_TO_PASS: ${failToPassString}\n`;
-              }
-              if (process.env.PASS_TO_PASS && process.env.PASS_TO_PASS !== '[]') {
-                const passToPassArray = JSON.parse(process.env.PASS_TO_PASS);
-                const passToPassString = passToPassArray.join(', ');
-                bodyContent += `PASS_TO_PASS: ${passToPassString}\n`;
-              }
-            }
-            const emoji = process.env.EMOJI || '🟡';
-            const reason = process.env.REASON ? `: ${process.env.REASON}` : '';
-            bodyContent += `\n${emoji} **[${process.env.WORKFLOW_NAME}](${process.env.RUN_URL})** finished${reason}`;
-            await github.rest.issues.updateComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              comment_id: Number(process.env.COMMENT_ID),
-              body: bodyContent
-            });
 
   # ──────────── 2.a Create placeholder comment (split) ────────────
   create-comment:
@@ -845,9 +486,125 @@ jobs:
             });
             core.setOutput('comment_id', comment.id.toString());
 
+  # ──────────── 2.b Find base and commits (split) ────────────
+  find-commits:
+    needs: collect-process-tests
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    if: ${{ github.event_name != 'pull_request' || needs.collect-process-tests.outputs.fail_to_pass != '[]' || needs.collect-process-tests.outputs.pass_to_pass != '[]' }}
+    outputs:
+      base_sha: ${{ steps.find.outputs.base_sha }}
+      head_sha: ${{ steps.find.outputs.head_sha }}
+      commits_json: ${{ steps.find.outputs.commits_json }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Find base/head and commits for issues
+        id: find
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ISSUE_NUMBERS_JSON: ${{ needs.collect-process-tests.outputs.issue_numbers }}
+        run: |
+          set -e
+          git fetch --prune --unshallow || true
+          git fetch --all --tags || true
+
+          # Determine initial base and head SHAs by event
+          if [[ "$EVENT_NAME" == "pull_request" ]]; then
+            BASE_SHA="${{ github.event.pull_request.base.sha }}"
+            HEAD_SHA="${{ github.event.pull_request.head.sha }}"
+          elif [[ "$EVENT_NAME" == "push" ]]; then
+            BASE_SHA="${{ github.event.before }}"
+            HEAD_SHA="${{ github.sha }}"
+          elif [[ "$EVENT_NAME" == "issue_comment" ]]; then
+            HEAD_SHA="${{ github.sha }}"
+            BASE_SHA="$(git rev-parse HEAD~1 2>/dev/null || true)"
+            if [[ -z "$BASE_SHA" ]]; then
+              if git rev-parse --verify origin/main >/dev/null 2>&1; then
+                BASE_SHA="$(git merge-base HEAD origin/main || true)"
+              elif git rev-parse --verify origin/master >/dev/null 2>&1; then
+                BASE_SHA="$(git merge-base HEAD origin/master || true)"
+              fi
+            fi
+            if [[ -z "$BASE_SHA" ]]; then BASE_SHA="$HEAD_SHA"; fi
+          else
+            HEAD_SHA="${{ github.sha }}"
+            BASE_SHA="$(git rev-parse HEAD~1 2>/dev/null || true)"
+            if [[ -z "$BASE_SHA" ]]; then BASE_SHA="$HEAD_SHA"; fi
+          fi
+
+          REPO_FULL="$REPO"
+          TMP_COMMITS="$(mktemp)"
+
+          # Collect commits associated with issues
+          if [[ -n "$ISSUE_NUMBERS_JSON" && "$ISSUE_NUMBERS_JSON" != "null" ]]; then
+            for ISSUE in $(echo "$ISSUE_NUMBERS_JSON" | jq -r '.[]?'); do
+              [[ -z "$ISSUE" || "$ISSUE" == "null" ]] && continue
+
+              # Referenced commits from issue timeline
+              COMMITS=$(gh api repos/$REPO_FULL/issues/$ISSUE/timeline --jq '.[] | select(.event == "referenced" and .commit_id != null) | .commit_id' 2>/dev/null || true)
+              for C in $COMMITS; do
+                [[ -z "$C" ]] && continue
+                DATE=$(gh api repos/$REPO_FULL/commits/$C --jq '.commit.committer.date' 2>/dev/null || true)
+                [[ -n "$DATE" ]] && echo "$C $DATE" >> "$TMP_COMMITS"
+              done
+
+              # SHAs in issue body
+              BODY=$(gh api repos/$REPO_FULL/issues/$ISSUE --jq '.body' 2>/dev/null || true)
+              if [[ -n "$BODY" ]]; then
+                for C in $(echo "$BODY" | grep -oE '\b[0-9a-f]{40}\b' | sort -u); do
+                  DATE=$(gh api repos/$REPO_FULL/commits/$C --jq '.commit.committer.date' 2>/dev/null || true)
+                  [[ -n "$DATE" ]] && echo "$C $DATE" >> "$TMP_COMMITS"
+                done
+              fi
+
+              # SHAs in comments
+              while IFS= read -r COMMENT; do
+                [[ -z "$COMMENT" ]] && continue
+                for C in $(echo "$COMMENT" | grep -oE '\b[0-9a-f]{40}\b' | sort -u); do
+                  DATE=$(gh api repos/$REPO_FULL/commits/$C --jq '.commit.committer.date' 2>/dev/null || true)
+                  [[ -n "$DATE" ]] && echo "$C $DATE" >> "$TMP_COMMITS"
+                done
+              done <<< "$(gh api repos/$REPO_FULL/issues/$ISSUE/comments --jq '.[].body' 2>/dev/null || true)"
+
+              # Commits from cross-referenced PRs
+              PRS=$(gh api repos/$REPO_FULL/issues/$ISSUE/timeline --jq '.[] | select(.event == "cross-referenced" and .source.issue.pull_request != null) | .source.issue.number' 2>/dev/null || true)
+              for PR in $PRS; do
+                PR_COMMITS=$(gh api repos/$REPO_FULL/pulls/$PR/commits --jq '.[].sha' 2>/dev/null || true)
+                for C in $PR_COMMITS; do
+                  DATE=$(gh api repos/$REPO_FULL/commits/$C --jq '.commit.committer.date' 2>/dev/null || true)
+                  [[ -n "$DATE" ]] && echo "$C $DATE" >> "$TMP_COMMITS"
+                done
+              done
+            done
+          fi
+
+          COMMITS_JSON="[]"
+          if [[ -s "$TMP_COMMITS" ]]; then
+            SORTED=$(awk '!seen[$1]++{print}' "$TMP_COMMITS" | sort -k2)
+            EARLIEST_SHA=$(echo "$SORTED" | head -n1 | awk '{print $1}')
+            LATEST_SHA=$(echo "$SORTED" | tail -n1 | awk '{print $1}')
+            if [[ -n "$EARLIEST_SHA" ]]; then
+              BASE_PARENT=$(gh api repos/$REPO_FULL/commits/$EARLIEST_SHA --jq '.parents[0].sha' 2>/dev/null || true)
+              [[ -n "$BASE_PARENT" ]] && BASE_SHA="$BASE_PARENT"
+            fi
+            [[ -n "$LATEST_SHA" ]] && HEAD_SHA="$LATEST_SHA"
+            COMMITS_JSON=$(echo "$SORTED" | awk '{print $1}' | jq -R . | jq -s .)
+          fi
+          rm -f "$TMP_COMMITS" 2>/dev/null || true
+
+          echo "base_sha=$BASE_SHA" >> "$GITHUB_OUTPUT"
+          echo "head_sha=$HEAD_SHA" >> "$GITHUB_OUTPUT"
+          echo "commits_json=$COMMITS_JSON" >> "$GITHUB_OUTPUT"
+
   # ──────────── 2.b Prepare params (split) ────────────
   prepare-params:
-    needs: collect-process-tests
+    needs: [collect-process-tests, find-commits]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -859,6 +616,7 @@ jobs:
       TEST_PATCH: ${{ steps.prepare_params.outputs.TEST_PATCH }}
       test_args: ${{ steps.prepare_params.outputs.test_args }}
       java_version: ${{ steps.prepare_params.outputs.java_version }}
+      is_maven: ${{ steps.prepare_params.outputs.is_maven }}
       instance_id: ${{ steps.prepare_params.outputs.instance_id }}
     steps:
       - uses: actions/checkout@v4
@@ -872,6 +630,9 @@ jobs:
           REPO: ${{ github.repository }}
           CT_TEST_ARGS: ${{ needs.collect-process-tests.outputs.test_args }}
           CT_JAVA_VERSION: ${{ needs.collect-process-tests.outputs.java_version }}
+          FOUND_BASE_SHA: ${{ needs.find-commits.outputs.base_sha }}
+          FOUND_HEAD_SHA: ${{ needs.find-commits.outputs.head_sha }}
+          COMMITS_JSON: ${{ needs.find-commits.outputs.commits_json }}
         run: |
           set -e
           git fetch --prune --unshallow || true
@@ -905,12 +666,14 @@ jobs:
             if [[ -z "$BASE_SHA" ]]; then BASE_SHA="$HEAD_SHA"; fi
             ISSUE_NUMBER=""
           fi
+          # Override with resolved SHAs from find-commits if available
+          if [[ -n "${FOUND_BASE_SHA}" ]]; then BASE_SHA="${FOUND_BASE_SHA}"; fi
+          if [[ -n "${FOUND_HEAD_SHA}" ]]; then HEAD_SHA="${FOUND_HEAD_SHA}"; fi
           echo "Base: $BASE_SHA"
           echo "Head: $HEAD_SHA"
 
           # Build patches only from commits related to the issue(s)
           export GH_TOKEN="${{ secrets.GITHUB_TOKEN }}"
-          ISSUE_NUMBERS_JSON='${{ needs.collect-process-tests.outputs.issue_numbers }}'
 
           REPO_FULL="$REPO"
 
@@ -933,65 +696,16 @@ jobs:
             '
           }
 
-          TMP_COMMITS="$(mktemp)"
-
-          if [[ -n "$ISSUE_NUMBERS_JSON" && "$ISSUE_NUMBERS_JSON" != "null" ]]; then
-            for ISSUE in $(echo "$ISSUE_NUMBERS_JSON" | jq -r '.[]?'); do
-              [[ -z "$ISSUE" || "$ISSUE" == "null" ]] && continue
-
-              COMMITS=$(gh api repos/$REPO_FULL/issues/$ISSUE/timeline --jq '.[] | select(.event == "referenced" and .commit_id != null) | .commit_id' || true)
-              for C in $COMMITS; do
-                [[ -z "$C" ]] && continue
-                DATE=$(gh api repos/$REPO_FULL/commits/$C --jq '.commit.committer.date' 2>/dev/null || true)
-                [[ -n "$DATE" ]] && echo "$C $DATE" >> "$TMP_COMMITS"
-              done
-
-              BODY=$(gh api repos/$REPO_FULL/issues/$ISSUE --jq '.body' 2>/dev/null || true)
-              if [[ -n "$BODY" ]]; then
-                for C in $(echo "$BODY" | grep -oE '\b[0-9a-f]{40}\b' | sort -u); do
-                  DATE=$(gh api repos/$REPO_FULL/commits/$C --jq '.commit.committer.date' 2>/dev/null || true)
-                  [[ -n "$DATE" ]] && echo "$C $DATE" >> "$TMP_COMMITS"
-                done
-              fi
-
-              while IFS= read -r COMMENT; do
-                [[ -z "$COMMENT" ]] && continue
-                for C in $(echo "$COMMENT" | grep -oE '\b[0-9a-f]{40}\b' | sort -u); do
-                  DATE=$(gh api repos/$REPO_FULL/commits/$C --jq '.commit.committer.date' 2>/dev/null || true)
-                  [[ -n "$DATE" ]] && echo "$C $DATE" >> "$TMP_COMMITS"
-                done
-              done <<< "$(gh api repos/$REPO_FULL/issues/$ISSUE/comments --jq '.[].body' 2>/dev/null || true)"
-
-              PRS=$(gh api repos/$REPO_FULL/issues/$ISSUE/timeline --jq '.[] | select(.event == "cross-referenced" and .source.issue.pull_request != null) | .source.issue.number' 2>/dev/null || true)
-              for PR in $PRS; do
-                PR_COMMITS=$(gh api repos/$REPO_FULL/pulls/$PR/commits --jq '.[].sha' 2>/dev/null || true)
-                for C in $PR_COMMITS; do
-                  DATE=$(gh api repos/$REPO_FULL/commits/$C --jq '.commit.committer.date' 2>/dev/null || true)
-                  [[ -n "$DATE" ]] && echo "$C $DATE" >> "$TMP_COMMITS"
-                done
-              done
-            done
-          fi
-
           PATCH_CONTENT=""; TEST_PATCH_CONTENT=""
-          if [[ -s "$TMP_COMMITS" ]]; then
-            SORTED=$(awk '!seen[$1]++{print}' "$TMP_COMMITS" | sort -k2)
-            EARLIEST_SHA=$(echo "$SORTED" | head -n1 | awk '{print $1}')
-            LATEST_SHA=$(echo "$SORTED" | tail -n1 | awk '{print $1}')
-            if [[ -n "$EARLIEST_SHA" ]]; then
-              BASE_PARENT=$(gh api repos/$REPO_FULL/commits/$EARLIEST_SHA --jq '.parents[0].sha' 2>/dev/null || true)
-              [[ -n "$BASE_PARENT" ]] && BASE_SHA="$BASE_PARENT"
-            fi
-            [[ -n "$LATEST_SHA" ]] && HEAD_SHA="$LATEST_SHA"
-
+          if [[ -n "$COMMITS_JSON" && "$COMMITS_JSON" != "[]" && "$COMMITS_JSON" != "null" ]]; then
             SRC_FILE="$(mktemp)"; TEST_FILE="$(mktemp)"; : > "$SRC_FILE"; : > "$TEST_FILE"
-            while read -r SHA DATE; do
-              [[ -z "$SHA" ]] && continue
+            for SHA in $(echo "$COMMITS_JSON" | jq -r '.[]'); do
+              [[ -z "$SHA" || "$SHA" == "null" ]] && continue
               PATCH_TEXT=$(gh api repos/$REPO_FULL/commits/$SHA -H 'Accept: application/vnd.github.v3.patch' 2>/dev/null || true)
               if [[ -n "$PATCH_TEXT" ]]; then
                 echo "$PATCH_TEXT" | classify_and_append "$SRC_FILE" "$TEST_FILE"
               fi
-            done <<< "$SORTED"
+            done
             PATCH_CONTENT="$(cat "$SRC_FILE" || true)"
             TEST_PATCH_CONTENT="$(cat "$TEST_FILE" || true)"
             rm -f "$SRC_FILE" "$TEST_FILE"
@@ -1003,7 +717,6 @@ jobs:
             TEST_PATCH_CONTENT="$(cat "$TEST_FILE" || true)"
             rm -f "$SRC_FILE" "$TEST_FILE"
           fi
-          rm -f "$TMP_COMMITS" 2>/dev/null || true
 
           TEST_ARGS="${CT_TEST_ARGS}"; JAVA_VERSION="${CT_JAVA_VERSION}"
           if [[ "$TEST_ARGS" == "null" ]]; then TEST_ARGS=""; fi
@@ -1011,11 +724,24 @@ jobs:
           OWNER="${{ github.repository_owner }}"; REPO_NAME="${REPO#*/}"
           if [[ -n "$ISSUE_NUMBER" ]]; then INSTANCE_ID="${OWNER}__${REPO_NAME}__${ISSUE_NUMBER}"; else INSTANCE_ID=""; fi
 
+          # Detect build tool (Maven vs Gradle)
+          IS_MAVEN="true"
+          if git ls-files | grep -E '(^|/)(settings\.gradle(\.kts)?)$' -q; then
+            IS_MAVEN="false"
+          elif git ls-files | grep -E '(^|/)pom\.xml$' -q; then
+            IS_MAVEN="true"
+          elif [[ -f "settings.gradle" || -f "settings.gradle.kts" ]]; then
+            IS_MAVEN="false"
+          elif [[ -f "pom.xml" ]]; then
+            IS_MAVEN="true"
+          fi
+
           { echo "base_sha=$BASE_SHA"; echo "head_sha=$HEAD_SHA"; echo "instance_id=$INSTANCE_ID"; } >> "$GITHUB_OUTPUT"
           { echo "PATCH<<EOF"; printf "%s\n" "$PATCH_CONTENT"; echo "EOF"; } >> "$GITHUB_OUTPUT"
           { echo "TEST_PATCH<<EOF"; printf "%s\n" "$TEST_PATCH_CONTENT"; echo "EOF"; } >> "$GITHUB_OUTPUT"
           echo "test_args=$TEST_ARGS" >> "$GITHUB_OUTPUT"
           echo "java_version=$JAVA_VERSION" >> "$GITHUB_OUTPUT"
+          echo "is_maven=$IS_MAVEN" >> "$GITHUB_OUTPUT"
 
   # ──────────── 2.c Run verifier (split) ────────────
   run-verifier:
@@ -1046,6 +772,7 @@ jobs:
           TEST_ARGS: ${{ needs.prepare-params.outputs.test_args }}
           JAVA_VERSION: ${{ needs.prepare-params.outputs.java_version }}
           INSTANCE_ID: ${{ needs.prepare-params.outputs.instance_id }}
+          IS_MAVEN: ${{ needs.prepare-params.outputs.is_maven }}
         run: |
           set -e
           chmod +x .github/workflows/verify_java_dataset_instance.sh
@@ -1058,7 +785,7 @@ jobs:
             "$FAIL_TO_PASS" \
             "$PASS_TO_PASS" \
             "$TEST_ARGS" \
-            "true" \
+            "$IS_MAVEN" \
             "$JAVA_VERSION" \
             "$INSTANCE_ID" \
             false \

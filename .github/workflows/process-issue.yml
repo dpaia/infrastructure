@@ -1,0 +1,152 @@
+name: Process issue via GitHub App
+
+on:
+  workflow_dispatch:
+    inputs:
+      organization:
+        description: 'GitHub organization name of the target repo'
+        required: true
+        type: string
+      repository:
+        description: 'Repository name (without org) of the target repo'
+        required: true
+        type: string
+      issue_id:
+        description: 'Issue number to process'
+        required: true
+        type: string
+      dataset_repo:
+        description: 'Repository where dataset files are stored (org/repo)'
+        required: true
+        type: string
+      generator:
+        description: 'Profile for data generation'
+        required: false
+        default: 'java'
+        type: choice
+        options:
+          - java
+      auto_merge:
+        description: 'Automatically merge dataset update PRs'
+        required: false
+        default: false
+        type: boolean
+
+jobs:
+  process:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout infra repository
+        uses: actions/checkout@v4
+
+      - name: Run data generation/update
+        id: update
+        uses: ./.github/actions/update-issue-swe-data
+        with:
+          generator: ${{ inputs.generator }}
+          organization: ${{ inputs.organization }}
+          repository: ${{ inputs.repository }}
+          issue_id: ${{ inputs.issue_id }}
+          github_token: ${{ secrets.PROJECT_TOKEN }}
+          dataset_repo: ${{ inputs.dataset_repo }}
+          update_status: 'true'
+          auto_merge: ${{ inputs.auto_merge }}
+          create_dataset_pr: 'false'
+
+      - name: Comment when FAIL_TO_PASS and PASS_TO_PASS are missing
+        if: steps.update.outputs.empty_test_fields == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
+          ORG: ${{ inputs.organization }}
+          REPO: ${{ inputs.repository }}
+          ISSUE: ${{ inputs.issue_id }}
+        run: |
+          gh api repos/$ORG/$REPO/issues/$ISSUE/comments \
+            -f body='It looks like both FAIL_TO_PASS and PASS_TO_PASS were not provided. Please add a comment to this issue with lines like:\n\nFAIL_TO_PASS: FullyQualifiedTest#name, OtherTest#name\nPASS_TO_PASS: SomeTest#name\n\nAfter you add this, the app will re-run and verify the dataset.'
+
+      - name: Stop if missing tests
+        if: steps.update.outputs.empty_test_fields == 'true'
+        run: echo "Skipping verification due to missing test fields" && exit 0
+
+      - name: Comment if data generation failed
+        if: steps.update.outputs.has_error == 'true' && steps.update.outputs.empty_test_fields != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
+          ORG: ${{ inputs.organization }}
+          REPO: ${{ inputs.repository }}
+          ISSUE: ${{ inputs.issue_id }}
+        run: |
+          gh api repos/$ORG/$REPO/issues/$ISSUE/comments \
+            -f body='There was an error during data generation or field extraction. Please check linked commits and try again.'
+
+      - name: Stop on error
+        if: steps.update.outputs.has_error == 'true'
+        run: echo "Stopping due to error" && exit 1
+
+      - name: Prepare verification inputs
+        id: prep
+        shell: bash
+        env:
+          DATA_VALUE: ${{ steps.update.outputs.data_value }}
+          LATEST_COMMIT: ${{ steps.update.outputs.latest_commit_hash }}
+          BASE_COMMIT: ${{ steps.update.outputs.base_commit_hash }}
+        run: |
+          echo "$DATA_VALUE" | jq . >/dev/null 2>&1 || { echo "Invalid JSON from data_value"; exit 1; }
+          REPO=$(echo "$DATA_VALUE" | jq -r .repo)
+          PATCH=$(echo "$DATA_VALUE" | jq -r .patch)
+          TEST_PATCH=$(echo "$DATA_VALUE" | jq -r .test_patch)
+          FAIL_TO_PASS=$(echo "$DATA_VALUE" | jq -r .FAIL_TO_PASS)
+          PASS_TO_PASS=$(echo "$DATA_VALUE" | jq -r .PASS_TO_PASS)
+          IS_MAVEN=$(echo "$DATA_VALUE" | jq -r .is_maven | tr '[:upper:]' '[:lower:]')
+          INSTANCE_ID=$(echo "$DATA_VALUE" | jq -r .instance_id)
+
+          # Choose commit: prefer base_commit if present, else latest
+          COMMIT="$BASE_COMMIT"
+          if [ -z "$COMMIT" ] || [ "$COMMIT" = "null" ]; then
+            COMMIT="$LATEST_COMMIT"
+          fi
+
+          echo "repo=$REPO" >> $GITHUB_OUTPUT
+          echo "patch<<EOF" >> $GITHUB_OUTPUT
+          echo "$PATCH" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+          echo "test_patch<<EOF" >> $GITHUB_OUTPUT
+          echo "$TEST_PATCH" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+          echo "fail_to_pass=$FAIL_TO_PASS" >> $GITHUB_OUTPUT
+          echo "pass_to_pass=$PASS_TO_PASS" >> $GITHUB_OUTPUT
+          echo "is_maven=$IS_MAVEN" >> $GITHUB_OUTPUT
+          echo "commit=$COMMIT" >> $GITHUB_OUTPUT
+          echo "instance_id=$INSTANCE_ID" >> $GITHUB_OUTPUT
+
+      - name: Verify dataset instance
+        id: verify
+        shell: bash
+        env:
+          REPO: ${{ steps.prep.outputs.repo }}
+          COMMIT: ${{ steps.prep.outputs.commit }}
+          PATCH: ${{ steps.prep.outputs.patch }}
+          TEST_PATCH: ${{ steps.prep.outputs.test_patch }}
+          FAIL_TO_PASS: ${{ steps.prep.outputs.fail_to_pass }}
+          PASS_TO_PASS: ${{ steps.prep.outputs.pass_to_pass }}
+          IS_MAVEN: ${{ steps.prep.outputs.is_maven }}
+          JAVA_VERSION: '24'
+          INSTANCE_ID: ${{ steps.prep.outputs.instance_id }}
+        run: |
+          chmod +x .github/scripts/verify_java_dataset_instance.sh
+          set +e
+          .github/scripts/verify_java_dataset_instance.sh "$REPO" "$COMMIT" "$PATCH" "$TEST_PATCH" "$FAIL_TO_PASS" "$PASS_TO_PASS" "" "$IS_MAVEN" "$JAVA_VERSION" "$INSTANCE_ID" | tee verify_output.txt
+          echo "exit_code=${PIPESTATUS[0]}" >> $GITHUB_OUTPUT
+
+      - name: Post verification result as comment
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
+          ORG: ${{ inputs.organization }}
+          REPO: ${{ inputs.repository }}
+          ISSUE: ${{ inputs.issue_id }}
+        run: |
+          STATUS="Success"
+          if [ "${{ steps.verify.outputs.exit_code }}" != "0" ]; then STATUS="Failure"; fi
+          BODY=$(printf "Verification status: %s\n\n<details><summary>Logs</summary>\n\n\n\n%s\n\n</details>" "$STATUS" "$(sed 's/\r$//' verify_output.txt | sed 's/\x1b\[[0-9;]*m//g')")
+          gh api repos/$ORG/$REPO/issues/$ISSUE/comments -f body="$BODY"

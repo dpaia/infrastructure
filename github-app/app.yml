@@ -1,0 +1,27 @@
+# GitHub App manifest (for creation via GitHub UI)
+# After creating the app, set APP_ID, PRIVATE_KEY, and WEBHOOK_SECRET in environment variables
+# and ensure the app is installed on:
+#  - All repositories you want to monitor (source repos)
+#  - The infra repository specified by INFRA_REPO (to allow workflow dispatch)
+
+name: EE Benchmark App
+url: https://github.com/
+description: Triggers dataset processing workflow for issues based on commits, PRs, and comments
+
+# Events the app subscribes to
+# Ensure these match index.js handlers
+default_events:
+  - push
+  - pull_request
+  - issue_comment
+
+# Minimal permissions
+# The app reads repo metadata and content, and writes Actions in the infra repo
+# Granting Actions:write is necessary for dispatching workflows
+# Note: The app must be installed on the infra repository too.
+default_permissions:
+  metadata: read
+  contents: read
+  issues: read
+  pull_requests: read
+  actions: write

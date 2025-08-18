@@ -30,6 +30,10 @@ inputs:
     description: 'Automatically merge the pull request'
     required: false
     default: 'false'
+  create_dataset_pr:
+    description: 'Create PR in dataset repository with generated JSON'
+    required: false
+    default: 'true'
 
 outputs:
   file_url:
@@ -41,6 +45,21 @@ outputs:
   pull_request_url:
     description: 'The URL of the created pull request'
     value: ${{ steps.create-dataset-file.outputs.pull_request_url }}
+  data_value:
+    description: 'Generated data JSON'
+    value: ${{ steps.generate-data.outputs.data_value }}
+  empty_test_fields:
+    description: 'Whether FAIL_TO_PASS and PASS_TO_PASS were both empty'
+    value: ${{ steps.check-test-fields.outputs.empty_test_fields }}
+  latest_commit_hash:
+    description: 'Latest linked commit hash for this issue'
+    value: ${{ steps.get-commits.outputs.commit_hash }}
+  base_commit_hash:
+    description: 'Base commit hash (earliest linked commit or base)'
+    value: ${{ steps.get-commits.outputs.base_commit_hash }}
+  commits:
+    description: 'All linked commits as JSON array'
+    value: ${{ steps.get-commits.outputs.commits }}
 
 runs:
   using: 'composite'
@@ -223,7 +242,7 @@ runs:
 
     - name: Generate commit message
       id: generate-commit-message
-      if: steps.check-error.outputs.has_error != 'true'
+      if: inputs.create_dataset_pr == 'true' && steps.check-error.outputs.has_error != 'true'
       shell: bash
       env:
         GH_TOKEN: ${{ inputs.github_token }}
@@ -245,7 +264,7 @@ runs:
 
     - name: Create or update data file
       id: create-dataset-file
-      if: steps.check-error.outputs.has_error != 'true'
+      if: inputs.create_dataset_pr == 'true' && steps.check-error.outputs.has_error != 'true'
       uses: ./.github/actions/update-data-file
       with:
         organization: ${{ inputs.organization }}
@@ -259,6 +278,7 @@ runs:
         auto_merge: ${{ inputs.auto_merge }}
 
     - name: Update Data field
+      if: inputs.create_dataset_pr == 'true'
       shell: bash
       env:
         GH_TOKEN: ${{ inputs.github_token }}

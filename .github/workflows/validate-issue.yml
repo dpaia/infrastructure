@@ -34,7 +34,7 @@ jobs:
 
       - name: Generate instance data (no PR)
         id: generate
-        uses: ./.github/actions/update-issue-swe-data
+        uses: .github/actions/update-issue-swe-data
         with:
           generator: ${{ github.event.inputs.generator }}
           organization: ${{ github.event.inputs.organization }}
@@ -64,7 +64,7 @@ jobs:
           bash ./.github/scripts/apply-swe-benchmark-docker.sh "$(cat instance.json)" 2>&1 | tee "$LOG_FILE"
 
           # Determine result from the last log line
-          LAST_LINE=$(tail -n 1 "$LOG_FILE" | tr -d '\r')
+          LAST_LINE=$(tail -n 1 "$FINAL_LOG_FILE" | tr -d '\r')
           echo "Last line: $LAST_LINE"
 
           if [[ "$LAST_LINE" == "✅" ]]; then
@@ -94,4 +94,4 @@ jobs:
           if [ "${{ steps.run-verification.outputs.message }}" != "" ]; then
             echo "Message: ${{ steps.run-verification.outputs.message }}" >> $GITHUB_STEP_SUMMARY
           fi
-          echo "\n<details><summary>Raw last line</summary>\n\n\`${{ steps.run-verification.outputs.message }}\`\n\n</details>" >> $GITHUB_STEP_SUMMARY
+          echo "<details><summary>Raw last line</summary>\n\n\`${{ steps.run-verification.outputs.message }}\`\n\n</details>" >> $GITHUB_STEP_SUMMARY

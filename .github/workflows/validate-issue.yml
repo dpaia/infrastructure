@@ -119,14 +119,13 @@ jobs:
             exit 1
           fi
       
-          # Execute the verification script without creating files; capture output
-          OUTPUT=$(bash ./.github/scripts/apply-swe-benchmark-docker.sh "$INSTANCE_JSON" 2>&1)
+          # Stream verification script output in real-time and capture the last line
+          LAST_LINE=""
+          while IFS= read -r line; do
+            echo "$line"
+            LAST_LINE="$line"
+          done < <(stdbuf -oL -eL bash ./.github/scripts/apply-swe-benchmark-docker.sh "$INSTANCE_JSON" 2>&1)
 
-          # Echo full output to job logs for visibility
-          echo "$OUTPUT"
-        
-          # Determine result from the last log line
-          LAST_LINE=$(printf "%s\n" "$OUTPUT" | tail -n 1 | tr -d '\r')
           echo "Last line: $LAST_LINE"
 
           if [[ "$LAST_LINE" == "✅" ]]; then
@@ -156,4 +155,4 @@ jobs:
           if [ "${{ steps.run-verification.outputs.message }}" != "" ]; then
             echo "Message: ${{ steps.run-verification.outputs.message }}" >> $GITHUB_STEP_SUMMARY
           fi
-          echo "<details><summary>Raw last line</summary>\n\n\`${{ steps.run-verification.outputs.message }}\`\n\n</details>" >> $GITHUB_STEP_SUMMARY
+          echo "<details><summary>Raw last line</summary>`${{ steps.run-verification.outputs.message }}\`</details>" >> $GITHUB_STEP_SUMMARY

@@ -1,0 +1,119 @@
+name: 'Update Project Field'
+description: 'Updates a GitHub Projects (v2) field value for an item by project number, field name, and value'
+author: 'JetBrains'
+
+inputs:
+  organization:
+    description: 'GitHub organization name'
+    required: true
+  repository:
+    description: 'Repository name (used to resolve issue number to node id)'
+    required: false
+  issue_id:
+    description: 'Issue number (required if item_id is not provided)'
+    required: false
+  item_id:
+    description: 'Project item node ID (optional if issue_id provided)'
+    required: false
+  project_number:
+    description: 'Project number within the organization'
+    required: true
+  field_name:
+    description: 'Name of the project field to update'
+    required: true
+  value:
+    description: 'Value to set. For text fields pass plain string; for number pass numeric; for single-select pass option name.'
+    required: true
+  value_type:
+    description: 'Type of the field value: text | number | single_select'
+    required: true
+    default: 'text'
+  github_token:
+    description: 'GitHub token for API access'
+    required: true
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Get project ID
+      id: get-project-id
+      uses: ./.github/actions/get-project-id
+      with:
+        organization: ${{ inputs.organization }}
+        project_number: ${{ inputs.project_number }}
+        github_token: ${{ inputs.github_token }}
+
+    - name: Resolve item id from issue number
+      id: resolve-item
+      if: inputs.item_id == ''
+      uses: ./.github/actions/get-issue-node-id
+      with:
+        repository: ${{ inputs.repository }}
+        organization: ${{ inputs.organization }}
+        issue_number: ${{ inputs.issue_id }}
+        github_token: ${{ inputs.github_token }}
+
+    - name: Add issue to project (idempotent)
+      id: add-to-project
+      if: inputs.item_id == ''
+      uses: ./.github/actions/add-issue-to-project
+      with:
+        project_id: ${{ steps.get-project-id.outputs.project_id }}
+        issue_node_id: ${{ steps.resolve-item.outputs.issue_node_id }}
+        github_token: ${{ inputs.github_token }}
+
+    - name: Determine item id
+      id: item
+      shell: bash
+      run: |
+        if [ -n "${{ inputs.item_id }}" ]; then
+          echo "item_id=${{ inputs.item_id }}" >> $GITHUB_OUTPUT
+        else
+          echo "item_id=${{ steps.add-to-project.outputs.item_id }}" >> $GITHUB_OUTPUT
+        fi
+
+    - name: Get field id
+      id: get-field-id
+      uses: ./.github/actions/get-project-field-id
+      with:
+        project_id: ${{ steps.get-project-id.outputs.project_id }}
+        field_name: ${{ inputs.field_name }}
+        github_token: ${{ inputs.github_token }}
+
+    - name: Update field value
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github_token }}
+        PROJECT_ID: ${{ steps.get-project-id.outputs.project_id }}
+        ITEM_ID: ${{ steps.item.outputs.item_id }}
+        FIELD_ID: ${{ steps.get-field-id.outputs.field_id }}
+        VALUE: ${{ inputs.value }}
+        VALUE_TYPE: ${{ inputs.value_type }}
+      run: |
+        case "$VALUE_TYPE" in
+          text)
+            QUERY='mutation($projectId:ID!, $itemId:ID!, $fieldId:ID!, $value:String!) {\n  updateProjectV2ItemFieldValue(input: {\n    projectId: $projectId,\n    itemId: $itemId,\n    fieldId: $fieldId,\n    value: { text: $value }\n  }) { projectV2Item { id } }\n}'
+            gh api graphql -f query="$QUERY" -f projectId=$PROJECT_ID -f itemId=$ITEM_ID -f fieldId=$FIELD_ID -f value="$VALUE"
+            ;;
+          number)
+            QUERY='mutation($projectId:ID!, $itemId:ID!, $fieldId:ID!, $value:Float!) {\n  updateProjectV2ItemFieldValue(input: {\n    projectId: $projectId,\n    itemId: $itemId,\n    fieldId: $fieldId,\n    value: { number: $value }\n  }) { projectV2Item { id } }\n}'
+            gh api graphql -f query="$QUERY" -f projectId=$PROJECT_ID -f itemId=$ITEM_ID -f fieldId=$FIELD_ID -F value="$VALUE"
+            ;;
+          single_select)
+            echo "Resolving single-select option id for '$VALUE'..."
+            OPTIONS=$(gh api graphql -f query='query($project:ID!){ node(id:$project){ ... on ProjectV2 { fields(first:100){ nodes { ... on ProjectV2SingleSelectField { id name options { id name } } } } } } }' -f project=$PROJECT_ID)
+            OPTION_ID=$(echo "$OPTIONS" | jq -r --arg FID "$FIELD_ID" --arg NAME "$VALUE" '.data.node.fields.nodes[] | select(.id == $FID) | .options[] | select(.name == $NAME) | .id')
+            if [ -z "$OPTION_ID" ] || [ "$OPTION_ID" = "null" ]; then
+              echo "Single-select option '$VALUE' not found" >&2
+              exit 1
+            fi
+            QUERY='mutation($projectId:ID!, $itemId:ID!, $fieldId:ID!, $optionId:String!) {\n  updateProjectV2ItemFieldValue(input: {\n    projectId: $projectId,\n    itemId: $itemId,\n    fieldId: $fieldId,\n    value: { singleSelectOptionId: $optionId }\n  }) { projectV2Item { id } }\n}'
+            gh api graphql -f query="$QUERY" -f projectId=$PROJECT_ID -f itemId=$ITEM_ID -f fieldId=$FIELD_ID -f optionId="$OPTION_ID"
+            ;;
+          *)
+            echo "Unsupported value_type: $VALUE_TYPE" >&2
+            exit 1
+            ;;
+        esac
+
+        echo "✅ Updated field '$FIELD_ID' on item '$ITEM_ID' in project '$PROJECT_ID' with type '$VALUE_TYPE'"

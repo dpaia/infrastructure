@@ -1,0 +1,97 @@
+name: Validate SWE Issue
+run-name: "[${{ github.event.inputs.organization }}/${{ github.event.inputs.repository }}][${{ github.event.inputs.generator }}] Validate issue #${{ github.event.inputs.issue_id }}"
+
+on:
+  workflow_dispatch:
+    inputs:
+      generator:
+        description: 'Profile'
+        required: true
+        default: 'java'
+        type: choice
+        options:
+          - java
+      organization:
+        description: 'GitHub organization name'
+        required: true
+        default: 'jetbrains-eval-lab'
+        type: string
+      repository:
+        description: 'Repository name (repo)'
+        required: true
+        type: string
+      issue_id:
+        description: 'Issue number'
+        required: true
+        type: string
+
+jobs:
+  validate-issue:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Generate instance data (no PR)
+        id: generate
+        uses: ./.github/actions/update-issue-swe-data
+        with:
+          generator: ${{ github.event.inputs.generator }}
+          organization: ${{ github.event.inputs.organization }}
+          repository: ${{ github.event.inputs.repository }}
+          issue_id: ${{ github.event.inputs.issue_id }}
+          github_token: ${{ secrets.PROJECT_TOKEN }}
+          dataset_repo: ${{ vars.DATASET_REPO }}
+          create_dataset_pr: 'false'
+          update_status: 'false'
+          auto_merge: 'false'
+
+      - name: Run verification
+        id: run-verification
+        shell: bash
+        env:
+          INSTANCE_JSON: ${{ steps.generate.outputs.data_value }}
+        run: |
+          set -e
+          # Write instance JSON to file to preserve quoting
+          echo "$INSTANCE_JSON" > instance.json
+          echo "--- Instance JSON preview (first 200 chars) ---"
+          head -c 200 instance.json || true
+          echo "\n----------------------------------------------"
+
+          # Execute the verification script and capture logs
+          LOG_FILE="validation_run.log"
+          bash ./.github/scripts/apply-swe-benchmark-docker.sh "$(cat instance.json)" 2>&1 | tee "$LOG_FILE"
+
+          # Determine result from the last log line
+          LAST_LINE=$(tail -n 1 "$LOG_FILE" | tr -d '\r')
+          echo "Last line: $LAST_LINE"
+
+          if [[ "$LAST_LINE" == "✅" ]]; then
+            echo "result=success" >> $GITHUB_OUTPUT
+            echo "message=Validation passed" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          if echo "$LAST_LINE" | grep -q "Failed:"; then
+            REASON=$(echo "$LAST_LINE" | sed 's/^.*Failed: //')
+            echo "result=failure" >> $GITHUB_OUTPUT
+            echo "message=$REASON" >> $GITHUB_OUTPUT
+            echo "::error::Validation failed: $REASON"
+            exit 1
+          fi
+
+          echo "result=unknown" >> $GITHUB_OUTPUT
+          echo "message=Unknown outcome. See logs." >> $GITHUB_OUTPUT
+          echo "::error::Unknown outcome. Expected final line '✅' or 'Failed: <reason>' but got: $LAST_LINE"
+          exit 1
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "# Validation Summary" >> $GITHUB_STEP_SUMMARY
+          echo "Result: ${{ steps.run-verification.outputs.result }}" >> $GITHUB_STEP_SUMMARY
+          if [ "${{ steps.run-verification.outputs.message }}" != "" ]; then
+            echo "Message: ${{ steps.run-verification.outputs.message }}" >> $GITHUB_STEP_SUMMARY
+          fi
+          echo "\n<details><summary>Raw last line</summary>\n\n\`${{ steps.run-verification.outputs.message }}\`\n\n</details>" >> $GITHUB_STEP_SUMMARY

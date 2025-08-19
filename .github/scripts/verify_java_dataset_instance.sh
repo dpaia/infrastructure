@@ -818,7 +818,6 @@ build_and_run_setup_container() {
     -e TESTCONTAINERS_RYUK_DISABLED=true \
     -e TESTCONTAINERS_CHECKS_DISABLE=true \
     -e DOCKER_HOST=unix:///var/run/docker.sock \
-    -e TESTCONTAINERS_HOST_OVERRIDE=host.docker.internal \
     --name "$SETUP_CONTAINER_NAME" \
     "$docker_image_name-base" \
     bash -c "/workspace/setup_project.sh '$repo_url' '$commit' '$is_maven' && sleep infinity"
@@ -896,7 +895,6 @@ run_tests_in_container() {
     -e TESTCONTAINERS_RYUK_DISABLED=true \
     -e TESTCONTAINERS_CHECKS_DISABLE=true \
     -e DOCKER_HOST=unix:///var/run/docker.sock \
-    -e TESTCONTAINERS_HOST_OVERRIDE=host.docker.internal \
     "$docker_image_name-base" \
     bash -c "/workspace/run_tests.sh" 2>&1 | tee "$TEMP_OUTPUT_FILE"
   RUN_EXIT_CODE=${PIPESTATUS[0]}

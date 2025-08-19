@@ -320,20 +320,21 @@ def fetch_issue_comments(organization_repository, issue_number):
         print(f"Error fetching issue comments: {e}", file=sys.stderr)
         return []
 
-try:
-    # Process test fields
-    fail_to_pass_json, pass_to_pass_json, metadata_value, comment_id = process_test_fields(organization + "/" + repository, issue_number)
+if __name__ == "__main__":
+    try:
+        # Process test fields
+        fail_to_pass_json, pass_to_pass_json, metadata_value, comment_id = process_test_fields(organization + "/" + repository, issue_number)
 
-    # Output the results
-    print(f"fail_to_pass={fail_to_pass_json}")
-    print(f"pass_to_pass={pass_to_pass_json}")
-    print(f"metadata={metadata_value}")
-    print(f"comment_id={comment_id}")
-    print("has_error=false")
-except Exception as e:
-    print(f"Error extracting test fields: {e}", file=sys.stderr)
-    print("fail_to_pass=[]")
-    print("pass_to_pass=[]")
-    print("metadata=")
-    print("comment_id=")
-    print("has_error=true")
+        # Output the results
+        print(f"fail_to_pass={fail_to_pass_json}")
+        print(f"pass_to_pass={pass_to_pass_json}")
+        print(f"metadata={metadata_value}")
+        print(f"comment_id={comment_id}")
+        print("has_error=false")
+    except Exception as e:
+        print(f"Error extracting test fields: {e}", file=sys.stderr)
+        print("fail_to_pass=[]")
+        print("pass_to_pass=[]")
+        print("metadata=")
+        print("comment_id=")
+        print("has_error=true")

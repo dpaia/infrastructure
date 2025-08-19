@@ -118,5 +118,10 @@
     "name": "Boot-2.x",
     "color": "f29d3e",
     "description": ""
+  },
+  {
+    "name": "CRUD",
+    "color": "ab763c",
+    "description": ""
   }
 ]

@@ -32,39 +32,101 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Generate instance data (no PR)
-        id: generate
-        uses: .github/actions/update-issue-swe-data
+      - name: Get latest commit
+        id: get-commits
+        uses: ./.github/actions/get-commits
         with:
-          generator: ${{ github.event.inputs.generator }}
           organization: ${{ github.event.inputs.organization }}
           repository: ${{ github.event.inputs.repository }}
           issue_id: ${{ github.event.inputs.issue_id }}
           github_token: ${{ secrets.PROJECT_TOKEN }}
-          dataset_repo: ${{ vars.DATASET_REPO }}
-          create_dataset_pr: 'false'
-          update_status: 'false'
-          auto_merge: 'false'
+
+      - name: Extract FAIL_TO_PASS and PASS_TO_PASS
+        id: extract-fields
+        uses: ./.github/actions/extract-test-names
+        with:
+          github-token: ${{ secrets.PROJECT_TOKEN }}
+          issue-number: ${{ github.event.inputs.issue_id }}
+          repository: ${{ github.event.inputs.repository }}
+          organization: ${{ github.event.inputs.organization }}
+
+      - name: Check if test fields are empty
+        id: check-test-fields
+        shell: bash
+        env:
+          FAIL_TO_PASS: ${{ steps.extract-fields.outputs.fail_to_pass }}
+          PASS_TO_PASS: ${{ steps.extract-fields.outputs.pass_to_pass }}
+        run: |
+          if [ "$FAIL_TO_PASS" == "[]" ] && [ "$PASS_TO_PASS" == "[]" ]; then
+            echo "Both FAIL_TO_PASS and PASS_TO_PASS are empty. Skipping data generation."
+            echo "empty_test_fields=true" >> $GITHUB_OUTPUT
+          else
+            echo "Test fields are not empty. Proceeding with data generation."
+            echo "empty_test_fields=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Install generator dependencies
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip
+          pip install unidiff
+
+      - name: Make script executable
+        run: chmod +x ./.github/scripts/apply-swe-benchmark-docker.sh
+
+      - name: Generate data
+        id: generate-data
+        if: steps.check-test-fields.outputs.empty_test_fields != 'true'
+        shell: bash
+        env:
+          ISSUE_NUMBER: ${{ github.event.inputs.issue_id }}
+          REPOSITORY: ${{ github.event.inputs.repository }}
+          ORGANIZATION: ${{ github.event.inputs.organization }}
+          LATEST_COMMIT: ${{ steps.get-commits.outputs.commit_hash }}
+          BASE_COMMIT: ${{ steps.get-commits.outputs.base_commit_hash }}
+          LINKED_COMMITS: ${{ steps.get-commits.outputs.commits }}
+          GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
+          FAIL_TO_PASS: ${{ steps.extract-fields.outputs.fail_to_pass }}
+          PASS_TO_PASS: ${{ steps.extract-fields.outputs.pass_to_pass }}
+          METADATA: ${{ steps.extract-fields.outputs.metadata }}
+          VERSION: '1'
+        run: |
+          chmod +x .github/python/${{ github.event.inputs.generator }}.py
+          echo "data_value<<EOF" >> $GITHUB_OUTPUT
+          .github/python/${{ github.event.inputs.generator }}.py >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
 
       - name: Run verification
         id: run-verification
         shell: bash
         env:
-          INSTANCE_JSON: ${{ steps.generate.outputs.data_value }}
+          INSTANCE_JSON: ${{ steps.generate-data.outputs.data_value }}
+          EMPTY_TEST_FIELDS: ${{ steps.check-test-fields.outputs.empty_test_fields }}
         run: |
           set -e
-          # Write instance JSON to file to preserve quoting
-          echo "$INSTANCE_JSON" > instance.json
-          echo "--- Instance JSON preview (first 200 chars) ---"
-          head -c 200 instance.json || true
-          echo "\n----------------------------------------------"
 
-          # Execute the verification script and capture logs
-          LOG_FILE="validation_run.log"
-          bash ./.github/scripts/apply-swe-benchmark-docker.sh "$(cat instance.json)" 2>&1 | tee "$LOG_FILE"
+          if [[ "$EMPTY_TEST_FIELDS" == "true" ]]; then
+            echo "result=failure" >> $GITHUB_OUTPUT
+            echo "message=Both FAIL_TO_PASS and PASS_TO_PASS are empty. Nothing to validate." >> $GITHUB_OUTPUT
+            echo "::error::Both FAIL_TO_PASS and PASS_TO_PASS are empty. Nothing to validate."
+            exit 1
+          fi
 
+          if [[ -z "$INSTANCE_JSON" ]]; then
+            echo "result=failure" >> $GITHUB_OUTPUT
+            echo "message=No instance JSON generated." >> $GITHUB_OUTPUT
+            echo "::error::No instance JSON generated."
+            exit 1
+          fi
+      
+          # Execute the verification script without creating files; capture output
+          OUTPUT=$(bash ./.github/scripts/apply-swe-benchmark-docker.sh "$INSTANCE_JSON" 2>&1)
+
+          # Echo full output to job logs for visibility
+          echo "$OUTPUT"
+        
           # Determine result from the last log line
-          LAST_LINE=$(tail -n 1 "$FINAL_LOG_FILE" | tr -d '\r')
+          LAST_LINE=$(printf "%s\n" "$OUTPUT" | tail -n 1 | tr -d '\r')
           echo "Last line: $LAST_LINE"
 
           if [[ "$LAST_LINE" == "✅" ]]; then

@@ -107,15 +107,15 @@ jobs:
 
           if [[ "$EMPTY_TEST_FIELDS" == "true" ]]; then
             echo "result=failure" >> $GITHUB_OUTPUT
-            echo "message=Both FAIL_TO_PASS and PASS_TO_PASS are empty. Nothing to validate." >> $GITHUB_OUTPUT
-            echo "::error::Both FAIL_TO_PASS and PASS_TO_PASS are empty. Nothing to validate."
+            echo "message=❌ Failed: Both FAIL_TO_PASS and PASS_TO_PASS are empty. Nothing to validate." >> $GITHUB_OUTPUT
+            echo "::error::❌ Failed: Both FAIL_TO_PASS and PASS_TO_PASS are empty. Nothing to validate."
             exit 1
           fi
 
           if [[ -z "$INSTANCE_JSON" ]]; then
             echo "result=failure" >> $GITHUB_OUTPUT
-            echo "message=No instance JSON generated." >> $GITHUB_OUTPUT
-            echo "::error::No instance JSON generated."
+            echo "message=❌ Failed: No instance JSON generated." >> $GITHUB_OUTPUT
+            echo "::error::❌ Failed: No instance JSON generated."
             exit 1
           fi
       

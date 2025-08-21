@@ -123,5 +123,10 @@
     "name": "CRUD",
     "color": "ab763c",
     "description": ""
+  },
+  {
+    "name": "AI",
+    "color": "e61471",
+    "description": ""
   }
 ]

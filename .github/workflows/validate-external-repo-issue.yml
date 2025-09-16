@@ -41,6 +41,8 @@ jobs:
   validate-issue:
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
       - name: Install generator dependencies
         shell: bash
@@ -97,6 +99,15 @@ jobs:
           echo "data_json_path=$PWD/data.json" >> $GITHUB_OUTPUT
           BASE_COMMIT=$(jq -r '.base_commit // empty' data.json)
           echo "base_commit=$BASE_COMMIT" >> $GITHUB_OUTPUT
+
+      - name: Upload Data JSON artifact
+        if: steps.get-data-field.outputs.field_value != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: data-json
+          path: ${{ steps.download-data-json.outputs.data_json_path }}
+          if-no-files-found: error
+          retention-days: 7
 
       - name: Collect commits from base_commit to external head
         id: collect-commits

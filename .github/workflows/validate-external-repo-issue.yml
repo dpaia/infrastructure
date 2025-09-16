@@ -38,21 +38,27 @@ on:
         type: string
 
 jobs:
-  validate-issue:
+  prepare:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-
       - name: Install generator dependencies
         shell: bash
         run: |
           python -m pip install --upgrade pip
           pip install unidiff
-
       - name: Make script executable
         run: chmod +x ./.github/scripts/apply-swe-benchmark-docker.sh
 
+  get-issue-node-id:
+    runs-on: ubuntu-latest
+    needs: prepare
+    outputs:
+      issue_node_id: ${{ steps.issue-node.outputs.issue_node_id }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
       - name: Get Issue Node ID
         id: issue-node
         uses: ./.github/actions/get-issue-node-id
@@ -62,6 +68,14 @@ jobs:
           issue_number: ${{ github.event.inputs.issue_id }}
           github_token: ${{ secrets.PROJECT_TOKEN }}
 
+  get-project-id:
+    runs-on: ubuntu-latest
+    needs: prepare
+    outputs:
+      project_id: ${{ steps.project-id.outputs.project_id }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
       - name: Get Project ID
         id: project-id
         uses: ./.github/actions/get-project-id
@@ -70,22 +84,37 @@ jobs:
           project_number: '3'
           github_token: ${{ secrets.PROJECT_TOKEN }}
 
+  get-data-field:
+    runs-on: ubuntu-latest
+    needs: [get-issue-node-id, get-project-id]
+    outputs:
+      field_value: ${{ steps.get-data-field.outputs.field_value }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
       - name: Get Data field from Project
         id: get-data-field
         uses: ./.github/actions/get-project-field-value
         with:
-          project_id: ${{ steps.project-id.outputs.project_id }}
-          issue_node_id: ${{ steps.issue-node.outputs.issue_node_id }}
+          project_id: ${{ needs.get-project-id.outputs.project_id }}
+          issue_node_id: ${{ needs.get-issue-node-id.outputs.issue_node_id }}
           field_name: Data
           github_token: ${{ secrets.PROJECT_TOKEN }}
 
+  download-data-json:
+    runs-on: ubuntu-latest
+    needs: get-data-field
+    if: needs.get-data-field.outputs.field_value != ''
+    outputs:
+      data_json_path: ${{ steps.download-data-json.outputs.data_json_path }}
+      base_commit: ${{ steps.download-data-json.outputs.base_commit }}
+    steps:
       - name: Download Data JSON
         id: download-data-json
-        if: steps.get-data-field.outputs.field_value != ''
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
-          DATA_URL: ${{ steps.get-data-field.outputs.field_value }}
+          DATA_URL: ${{ needs.get-data-field.outputs.field_value }}
         run: |
           if [ -z "$DATA_URL" ]; then
             echo "::error::Data field is empty"
@@ -131,23 +160,28 @@ jobs:
           echo "base_commit=$BASE_COMMIT" >> $GITHUB_OUTPUT
 
       - name: Upload Data JSON artifact
-        if: steps.get-data-field.outputs.field_value != ''
         uses: actions/upload-artifact@v4
         with:
           name: data-json
-          path: ${{ steps.download-data-json.outputs.data_json_path }}
+          path: data.json
           if-no-files-found: error
           retention-days: 7
 
+  collect-commits:
+    runs-on: ubuntu-latest
+    needs: [download-data-json, get-data-field]
+    if: needs.get-data-field.outputs.field_value != ''
+    outputs:
+      commits: ${{ steps.collect-commits.outputs.commits }}
+    steps:
       - name: Collect commits from base_commit to external head
         id: collect-commits
-        if: steps.get-data-field.outputs.field_value != ''
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
           ORG: ${{ github.event.inputs.organization }}
           REPO: ${{ github.event.inputs.repository }}
-          BASE_COMMIT: ${{ steps.download-data-json.outputs.base_commit }}
+          BASE_COMMIT: ${{ needs.download-data-json.outputs.base_commit }}
           EXTERNAL_ORG: ${{ github.event.inputs.external_org }}
           EXTERNAL_BRANCH: ${{ github.event.inputs.external_branch }}
         run: |
@@ -161,29 +195,48 @@ jobs:
           echo "$COMMITS" >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
 
+  generate-data:
+    runs-on: ubuntu-latest
+    needs: [collect-commits, get-data-field]
+    if: needs.get-data-field.outputs.field_value != ''
+    outputs:
+      data_value: ${{ steps.generate-data.outputs.data_value }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Download Data JSON artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: data-json
+          path: .
       - name: Generate data (modify JSON from Project Data)
         id: generate-data
-        if: steps.get-data-field.outputs.field_value != ''
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
           EXT_GH_TOKEN: ${{ secrets.EXTERNAL_REPO_TOKEN }}
-          DATA_JSON_PATH: ${{ steps.download-data-json.outputs.data_json_path }}
+          DATA_JSON_PATH: ${{ github.workspace }}/data.json
           EXTERNAL_ORG: ${{ github.event.inputs.external_org }}
           EXTERNAL_REPO: ${{ github.event.inputs.external_repo }}
           EXTERNAL_BRANCH: ${{ github.event.inputs.external_branch }}
-          COMMITS: ${{ steps.collect-commits.outputs.commits }}
+          COMMITS: ${{ needs.collect-commits.outputs.commits }}
         run: |
           chmod +x .github/python/java_verify_ext.py
           echo "data_value<<EOF" >> $GITHUB_OUTPUT
           .github/python/java_verify_ext.py >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
 
+  run-verification:
+    runs-on: ubuntu-latest
+    needs: generate-data
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
       - name: Run verification
         id: run-verification
         shell: bash
         env:
-          INSTANCE_JSON: ${{ steps.generate-data.outputs.data_value }}
+          INSTANCE_JSON: ${{ needs.generate-data.outputs.data_value }}
         run: |
           set -e
 
@@ -220,7 +273,6 @@ jobs:
           echo "message=Unknown outcome. See logs." >> $GITHUB_OUTPUT
           echo "::error::Unknown outcome. Expected final line '✅' or 'Failed: <reason>' but got: $LAST_LINE"
           exit 1
-
       - name: Summary
         if: always()
         run: |

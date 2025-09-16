@@ -1,0 +1,189 @@
+name: Validate SWE Issue
+run-name: "[${{ github.event.inputs.organization }}/${{ github.event.inputs.repository }}][${{ github.event.inputs.generator }}] Validate issue #${{ github.event.inputs.issue_id }} resolved in ${{ github.event.inputs.external_repo }}/${{ github.event.inputs.external_branch }}"
+
+on:
+  workflow_dispatch:
+    inputs:
+      generator:
+        description: 'Profile'
+        required: true
+        default: 'java'
+        type: choice
+        options:
+          - java
+      organization:
+        description: 'GitHub organization name'
+        required: true
+        default: 'jetbrains-eval-lab'
+        type: string
+      repository:
+        description: 'Repository name (repo)'
+        required: true
+        type: string
+      issue_id:
+        description: 'Issue number'
+        required: true
+        type: string
+      external_org:
+        description: 'External organization name'
+        required: true
+        type: string
+      external_repo:
+        description: 'External repository name'
+        required: true
+        type: string
+      external_branch:
+        description: 'External branch name'
+        required: true
+        type: string
+
+jobs:
+  validate-issue:
+    runs-on: ubuntu-latest
+    steps:
+
+      - name: Install generator dependencies
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip
+          pip install unidiff
+
+      - name: Make script executable
+        run: chmod +x ./.github/scripts/apply-swe-benchmark-docker.sh
+
+      - name: Get Issue Node ID
+        id: issue-node
+        uses: ./.github/actions/get-issue-node-id
+        with:
+          repository: ${{ github.event.inputs.repository }}
+          organization: ${{ github.event.inputs.organization }}
+          issue_number: ${{ github.event.inputs.issue_id }}
+          github_token: ${{ secrets.PROJECT_TOKEN }}
+
+      - name: Get Project ID
+        id: project-id
+        uses: ./.github/actions/get-project-id
+        with:
+          organization: ${{ github.event.inputs.organization }}
+          project_number: '3'
+          github_token: ${{ secrets.PROJECT_TOKEN }}
+
+      - name: Get Data field from Project
+        id: get-data-field
+        uses: ./.github/actions/get-project-field-value
+        with:
+          project_id: ${{ steps.project-id.outputs.project_id }}
+          issue_node_id: ${{ steps.issue-node.outputs.issue_node_id }}
+          field_name: Data
+          github_token: ${{ secrets.PROJECT_TOKEN }}
+
+      - name: Download Data JSON
+        id: download-data-json
+        if: steps.get-data-field.outputs.field_value != ''
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
+          DATA_URL: ${{ steps.get-data-field.outputs.field_value }}
+        run: |
+          if [ -z "$DATA_URL" ]; then
+            echo "::error::Data field is empty"
+            exit 1
+          fi
+          echo "Downloading Data JSON from $DATA_URL"
+          if ! curl -L -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github.raw+json" "$DATA_URL" -o data.json; then
+            echo "curl failed, trying wget"
+            wget -qO data.json "$DATA_URL"
+          fi
+          echo "data_json_path=$PWD/data.json" >> $GITHUB_OUTPUT
+          BASE_COMMIT=$(jq -r '.base_commit // empty' data.json)
+          echo "base_commit=$BASE_COMMIT" >> $GITHUB_OUTPUT
+
+      - name: Collect commits from base_commit to external head
+        id: collect-commits
+        if: steps.get-data-field.outputs.field_value != ''
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
+          ORG: ${{ github.event.inputs.organization }}
+          REPO: ${{ github.event.inputs.repository }}
+          BASE_COMMIT: ${{ steps.download-data-json.outputs.base_commit }}
+          EXTERNAL_ORG: ${{ github.event.inputs.external_org }}
+          EXTERNAL_BRANCH: ${{ github.event.inputs.external_branch }}
+        run: |
+          if [ -z "$BASE_COMMIT" ]; then
+            echo "::error::base_commit is empty in Data JSON"
+            exit 1
+          fi
+          echo "Comparing $ORG/$REPO:$BASE_COMMIT...$EXTERNAL_ORG:$EXTERNAL_BRANCH"
+          COMMITS=$(gh api repos/$ORG/$REPO/compare/$BASE_COMMIT...$EXTERNAL_ORG:$EXTERNAL_BRANCH --jq '.commits[].sha' || true)
+          echo "commits<<EOF" >> $GITHUB_OUTPUT
+          echo "$COMMITS" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Generate data (modify JSON from Project Data)
+        id: generate-data
+        if: steps.get-data-field.outputs.field_value != ''
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
+          DATA_JSON_PATH: ${{ steps.download-data-json.outputs.data_json_path }}
+          EXTERNAL_ORG: ${{ github.event.inputs.external_org }}
+          EXTERNAL_REPO: ${{ github.event.inputs.external_repo }}
+          EXTERNAL_BRANCH: ${{ github.event.inputs.external_branch }}
+          COMMITS: ${{ steps.collect-commits.outputs.commits }}
+        run: |
+          chmod +x .github/python/java_verify_ext.py
+          echo "data_value<<EOF" >> $GITHUB_OUTPUT
+          .github/python/java_verify_ext.py >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Run verification
+        id: run-verification
+        shell: bash
+        env:
+          INSTANCE_JSON: ${{ steps.generate-data.outputs.data_value }}
+        run: |
+          set -e
+
+
+          if [[ -z "$INSTANCE_JSON" ]]; then
+            echo "result=failure" >> $GITHUB_OUTPUT
+            echo "message=❌ Failed: No instance JSON generated." >> $GITHUB_OUTPUT
+            echo "::error::❌ Failed: No instance JSON generated."
+            exit 1
+          fi
+      
+          # Stream verification script output in real-time and capture the last line
+          LAST_LINE=""
+          while IFS= read -r line; do
+            echo "$line"
+            LAST_LINE="$line"
+          done < <(stdbuf -oL -eL bash ./.github/scripts/apply-swe-benchmark-docker.sh "$INSTANCE_JSON" 2>&1)
+
+          if [[ "$LAST_LINE" == "✅" ]]; then
+            echo "result=success" >> $GITHUB_OUTPUT
+            echo "message=Validation passed" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          if echo "$LAST_LINE" | grep -q "Failed:"; then
+            REASON=$(echo "$LAST_LINE" | sed 's/^.*Failed: //')
+            echo "result=failure" >> $GITHUB_OUTPUT
+            echo "message=$REASON" >> $GITHUB_OUTPUT
+            echo "::error:: $REASON"
+            exit 1
+          fi
+
+          echo "result=unknown" >> $GITHUB_OUTPUT
+          echo "message=Unknown outcome. See logs." >> $GITHUB_OUTPUT
+          echo "::error::Unknown outcome. Expected final line '✅' or 'Failed: <reason>' but got: $LAST_LINE"
+          exit 1
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "# Validation Summary" >> $GITHUB_STEP_SUMMARY
+          echo "Result: ${{ steps.run-verification.outputs.result }}" >> $GITHUB_STEP_SUMMARY
+          if [ "${{ steps.run-verification.outputs.message }}" != "" ]; then
+            echo "${{ steps.run-verification.outputs.message }}" >> $GITHUB_STEP_SUMMARY
+          fi        

@@ -372,7 +372,7 @@ def merge_file_patches(file_patches):
     return '\n\n'.join(sanitized)
 
 # Function to generate patches for all commits related to a ticket
-def generate_patches(organization, repository, issue_number, commit_ids, test_file_detector=is_test_file):
+def generate_patches(organization, repository, commit_ids, test_file_detector=is_test_file):
     """
     Generates source and test patches for all commits related to a ticket.
     Merges changes for the same files across multiple commits into single patches.
@@ -388,7 +388,7 @@ def generate_patches(organization, repository, issue_number, commit_ids, test_fi
         tuple: (source_patch, test_patch) containing the combined patches for source and test files
     """
     if not commit_ids:
-        print(f"No commits found for issue #{issue_number}", file=sys.stderr)
+        print(f"No commits found for issue", file=sys.stderr)
         return "", ""
     
     print(f"Generating patches for {len(commit_ids)} commits...", file=sys.stderr)

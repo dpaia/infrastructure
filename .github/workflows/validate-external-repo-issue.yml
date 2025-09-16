@@ -91,13 +91,43 @@ jobs:
             echo "::error::Data field is empty"
             exit 1
           fi
-          echo "Downloading Data JSON from $DATA_URL"
-          if ! curl -L -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github.raw+json" "$DATA_URL" -o data.json; then
-            echo "curl failed, trying wget"
-            wget -qO data.json "$DATA_URL"
+
+          OUTPUT="data.json"
+
+          # If the URL is a GitHub blob link, prefer GitHub API to fetch raw content
+          if [[ "$DATA_URL" =~ ^https://github\.com/([^/]+)/([^/]+)/blob/([^/]+)/(.*)$ ]]; then
+            ORG="${BASH_REMATCH[1]}"
+            REPO="${BASH_REMATCH[2]}"
+            BRANCH="${BASH_REMATCH[3]}"
+            PATH_PART="${BASH_REMATCH[4]}"
+
+            echo "Attempting GitHub API raw download: repos/$ORG/$REPO/contents/$PATH_PART?ref=$BRANCH"
+            if gh api -H "Accept: application/vnd.github.raw" "repos/$ORG/$REPO/contents/$PATH_PART?ref=$BRANCH" > "$OUTPUT"; then
+              echo "Downloaded using GitHub API."
+            else
+              echo "GitHub API download failed, falling back to raw.githubusercontent.com"
+              RAW_URL="https://raw.githubusercontent.com/$ORG/$REPO/refs/heads/$BRANCH/$PATH_PART"
+              if ! curl -L "$RAW_URL" -o "$OUTPUT"; then
+                echo "curl failed, trying wget"
+                if ! wget -qO "$OUTPUT" "$RAW_URL"; then
+                  echo "::error::Failed to download Data JSON from $RAW_URL"
+                  exit 1
+                fi
+              fi
+            fi
+          else
+            echo "Downloading Data JSON from $DATA_URL"
+            if ! curl -L "$DATA_URL" -o "$OUTPUT"; then
+              echo "curl failed, trying wget"
+              if ! wget -qO "$OUTPUT" "$DATA_URL"; then
+                echo "::error::Failed to download Data JSON from $DATA_URL"
+                exit 1
+              fi
+            fi
           fi
-          echo "data_json_path=$PWD/data.json" >> $GITHUB_OUTPUT
-          BASE_COMMIT=$(jq -r '.base_commit // empty' data.json)
+
+          echo "data_json_path=$PWD/$OUTPUT" >> $GITHUB_OUTPUT
+          BASE_COMMIT=$(jq -r '.base_commit // empty' "$OUTPUT")
           echo "base_commit=$BASE_COMMIT" >> $GITHUB_OUTPUT
 
       - name: Upload Data JSON artifact

@@ -41,7 +41,7 @@ def read_commits_env() -> list:
         pass
     return [line.strip() for line in commits_raw.splitlines() if line.strip()]
 
-def all_source_files(file_path):
+def all_source_files():
     return False
 
 def main():

@@ -194,7 +194,7 @@ def fetch_commit_ids(organization, repository, issue_number):
 def generate_patches_for_commit(organization, repository, commit_id, github_token, test_file_detector=is_test_file):
     try:
         # Use GitHub API to get the patch
-        print(f"Using GitHub API to get patch for commit {commit_id} in {organization}/{repository} with token {github_token[:5]}...", file=sys.stderr)
+        print(f"Using GitHub API to get patch for commit {commit_id} in {organization}/{repository} with token \"{github_token[:10]}...\"", file=sys.stderr)
         cmd = [
             'gh', 'api',
             f'repos/{organization}/{repository}/commits/{commit_id}',

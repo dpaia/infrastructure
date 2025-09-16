@@ -195,12 +195,11 @@ jobs:
           echo "$COMMITS" >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
 
-  generate-data:
+
+  run-verification:
     runs-on: ubuntu-latest
-    needs: [collect-commits, get-data-field]
+    needs: [collect-commits, get-data-field, download-data-json]
     if: needs.get-data-field.outputs.field_value != ''
-    outputs:
-      data_value: ${{ steps.generate-data.outputs.data_value }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -225,21 +224,13 @@ jobs:
           echo "data_value<<EOF" >> $GITHUB_OUTPUT
           .github/python/java_verify_ext.py >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
-
-  run-verification:
-    runs-on: ubuntu-latest
-    needs: generate-data
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
       - name: Run verification
         id: run-verification
         shell: bash
         env:
-          INSTANCE_JSON: ${{ needs.generate-data.outputs.data_value }}
+          INSTANCE_JSON: ${{ steps.generate-data.outputs.data_value }}
         run: |
           set -e
-
 
           if [[ -z "$INSTANCE_JSON" ]]; then
             echo "result=failure" >> $GITHUB_OUTPUT

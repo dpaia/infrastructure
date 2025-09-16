@@ -1,4 +1,4 @@
-name: Validate SWE Issue
+name: Validate issue with external repository
 run-name: "[${{ github.event.inputs.organization }}/${{ github.event.inputs.repository }}][${{ github.event.inputs.generator }}] Validate issue #${{ github.event.inputs.issue_id }} resolved in ${{ github.event.inputs.external_repo }}/${{ github.event.inputs.external_branch }}"
 
 on:

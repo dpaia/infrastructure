@@ -191,14 +191,15 @@ def fetch_commit_ids(organization, repository, issue_number):
         return []
 
 # Function to generate patches for a commit
-def generate_patches_for_commit(organization, repository, commit_id, test_file_detector=is_test_file):
+def generate_patches_for_commit(organization, repository, commit_id, github_token, test_file_detector=is_test_file):
     try:
         # Use GitHub API to get the patch
         print(f"Using GitHub API to get patch for commit {commit_id}", file=sys.stderr)
         cmd = [
             'gh', 'api',
             f'repos/{organization}/{repository}/commits/{commit_id}',
-            '-H', 'Accept: application/vnd.github.v3.patch'
+            '-H', 'Accept: application/vnd.github.v3.patch',
+            '-H', f'Authorization: Bearer {github_token}'
         ]
         result = run_subprocess(cmd, capture_output=True, text=True, check=False)
 
@@ -372,7 +373,7 @@ def merge_file_patches(file_patches):
     return '\n\n'.join(sanitized)
 
 # Function to generate patches for all commits related to a ticket
-def generate_patches(organization, repository, commit_ids, test_file_detector=is_test_file):
+def generate_patches(organization, repository, commit_ids, github_token = os.environ.get("GH_TOKEN", ""), test_file_detector=is_test_file):
     """
     Generates source and test patches for all commits related to a ticket.
     Merges changes for the same files across multiple commits into single patches.
@@ -399,7 +400,7 @@ def generate_patches(organization, repository, commit_ids, test_file_detector=is
     
     for commit_id in commit_ids:
         print(f"Generating patches for commit {commit_id}...", file=sys.stderr)
-        source_patch, test_patch = generate_patches_for_commit(organization, repository, commit_id, test_file_detector)
+        source_patch, test_patch = generate_patches_for_commit(organization, repository, commit_id, github_token, test_file_detector)
         
         # Process source patches
         if source_patch:

@@ -167,6 +167,7 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
+          EXT_GH_TOKEN: ${{ secrets.EXTERNAL_REPO_TOKEN }}
           DATA_JSON_PATH: ${{ steps.download-data-json.outputs.data_json_path }}
           EXTERNAL_ORG: ${{ github.event.inputs.external_org }}
           EXTERNAL_REPO: ${{ github.event.inputs.external_repo }}

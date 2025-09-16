@@ -20,6 +20,7 @@ Environment variables used:
 - EXTERNAL_BRANCH: External branch name (optional, informational)
 - COMMITS: Newline-separated list of commit SHAs to generate patches for (required)
 - GH_TOKEN: GitHub token (required for GitHub CLI used inside generate_patches)
+- EXT_GH_TOKEN: GitHub token for external repository (required for GitHub CLI used inside generate_patches)
 """
 
 
@@ -40,6 +41,8 @@ def read_commits_env() -> list:
         pass
     return [line.strip() for line in commits_raw.splitlines() if line.strip()]
 
+def all_source_files(file_path):
+    return False
 
 def main():
     data_json_path = os.environ.get("DATA_JSON_PATH", "").strip()
@@ -76,9 +79,12 @@ def main():
     else:
         # Compute new patches for the external repo based on collected commits
         try:
-            source_patch, test_patch_ext = generate_patches(external_org, external_repo, commits)
+            source_patch, test_patch_ext = generate_patches(external_org, external_repo, commits, os.environ.get("EXT_GH_TOKEN", os.environ.get("GH_TOKEN", "")), all_source_files)
+            eprint(
+                f"Generated source patch for external repo: {source_patch}"
+            )
             # Only replace the main patch as per requirements
-            new_patch = source_patch + "\n" + test_patch_ext
+            new_patch = source_patch
             # We keep the original test_patch from the JSON (do not overwrite)
         except Exception as e:
             eprint(f"Failed to generate patches for external repo: {e}")

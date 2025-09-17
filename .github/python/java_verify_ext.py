@@ -243,7 +243,7 @@ def main():
     external_org = os.environ.get("EXTERNAL_ORG", "").strip()
     external_repo = os.environ.get("EXTERNAL_REPO", "").strip()
     external_branch_env = os.environ.get("EXTERNAL_BRANCH", "").strip()
-    is_fork = os.environ.get("IS_FORK", "").strip().lower() in ("1", "true", "yes", "y", "t")
+    is_fork = os.environ.get("IS_FORK", "false")
 
     if not data_json_path:
         eprint("DATA_JSON_PATH is not provided")

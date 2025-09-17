@@ -17,9 +17,36 @@ IS_MAVEN=$(echo "$8" | tr '[:upper:]' '[:lower:]')
 JAVA_VERSION="$9"
 INSTANCE_ID="${10}"
 
+# Common function to write verification result to JSON file
+write_verification_result_json() {
+  local status="$1"
+  local message="$2"
+
+  local outfile="verification-result.json"
+
+  # Prefer jq for robust JSON escaping, fallback to printf
+  if command -v jq >/dev/null 2>&1; then
+    if [[ -n "$message" ]]; then
+      jq -n --arg result "$status" --arg message "$message" '{result:$result, message:$message}' > "$outfile"
+    else
+      jq -n --arg result "$status" '{result:$result}' > "$outfile"
+    fi
+  else
+    # Minimal escaping for quotes in the message
+    local esc_message="${message//\"/\\\"}"
+    if [[ -n "$message" ]]; then
+      printf '{"result":"%s","message":"%s"}\n' "$status" "$esc_message" > "$outfile"
+    else
+      printf '{"result":"%s"}\n' "$status" > "$outfile"
+    fi
+  fi
+  echo "📄 Saved verification result to $outfile"
+}
+
 # Validate required parameters
 if [[ -z "$REPO" || "$REPO" == "null" ]]; then
   echo "❌ Required parameter 'repo' is missing"
+  write_verification_result_json "failed" "Required parameter 'repo' is missing"
   exit 1
 fi
 
@@ -62,6 +89,7 @@ check_docker_environment() {
   if ! command -v docker &> /dev/null; then
     echo "❌ Docker is not installed. Please install Docker and try again."
     echo "   Visit: https://docs.docker.com/get-docker/"
+    write_verification_result_json "failed" "Docker is not installed"
     exit 1
   fi
 
@@ -970,23 +998,26 @@ main() {
   build_and_run_setup_container "$DOCKER_IMAGE_NAME" "$REPO_URL" "$COMMIT" "$IS_MAVEN" "$INSTANCE_ID"
   if [ $? -ne 0 ]; then
     echo "❌ Failed: Setup container preparation failed"
-    exit 1
+    RUN_EXIT_CODE=1
+    LAST_LINE="❌  Failed: Setup container preparation failed"
+  else
+    # Run tests in container
+    run_tests_in_container "$DOCKER_IMAGE_NAME" "$PATCH" "$TEST_PATCH" "$INSTANCE_ID" "$FAIL_TO_PASS" "$PASS_TO_PASS" "$TEST_ARGS" "$IS_MAVEN" "$COMMIT" "$REPO_URL"
+    RUN_EXIT_CODE=$?
   fi
-
-  # Run tests in container
-  run_tests_in_container "$DOCKER_IMAGE_NAME" "$PATCH" "$TEST_PATCH" "$INSTANCE_ID" "$FAIL_TO_PASS" "$PASS_TO_PASS" "$TEST_ARGS" "$IS_MAVEN" "$COMMIT" "$REPO_URL"
-  RUN_EXIT_CODE=$?
 
   # Cleanup resources
   cleanup_resources "$DOCKER_IMAGE_NAME" "$cleanup_containers"
 
   # Final result message must contain execution result
   if [ $RUN_EXIT_CODE -eq 0 ]; then
+    write_verification_result_json "ok" "Validation passed"
     echo "✅"
     exit 0
   else
     # Strip leading cross mark from reason to match required final message format
     REASON_NO_ICON="${LAST_LINE#*❌  Failed: }"
+    write_verification_result_json "failed" "$REASON_NO_ICON"
     echo "❌ Failed: $REASON_NO_ICON"
     exit 0
   fi
@@ -1009,5 +1040,7 @@ if [ $# -ge 10 ]; then
 
   main "$NAME_BY_REPO" "$CLEANUP_CONTAINERS"
 else
-  echo "❌ Failed: Usage: $0 REPO COMMIT PATCH TEST_PATCH FAIL_TO_PASS PASS_TO_PASS TEST_ARGS IS_MAVEN JAVA_VERSION INSTANCE_ID [NAME_BY_REPO] [CLEANUP_CONTAINERS]"
+  USAGE_MSG="Usage: $0 REPO COMMIT PATCH TEST_PATCH FAIL_TO_PASS PASS_TO_PASS TEST_ARGS IS_MAVEN JAVA_VERSION INSTANCE_ID [NAME_BY_REPO] [CLEANUP_CONTAINERS]"
+  echo "❌ Failed: $USAGE_MSG"
+  write_verification_result_json "failed" "$USAGE_MSG"
 fi

@@ -230,40 +230,46 @@ jobs:
         env:
           INSTANCE_JSON: ${{ steps.generate-data.outputs.data_value }}
         run: |
-          set -e
+          set +e
 
           if [[ -z "$INSTANCE_JSON" ]]; then
-            echo "result=failure" >> $GITHUB_OUTPUT
-            echo "message=❌ Failed: No instance JSON generated." >> $GITHUB_OUTPUT
             echo "::error::❌ Failed: No instance JSON generated."
-            exit 1
+            printf '{"result":"failed","message":"No instance JSON generated."}' > verification-result.json
+          else
+            # Stream verification script output in real-time and save logs
+            stdbuf -oL -eL bash ./.github/scripts/apply-swe-benchmark-docker.sh "$INSTANCE_JSON" 2>&1 | tee verify_output.txt
           fi
-      
-          # Stream verification script output in real-time and capture the last line
-          LAST_LINE=""
-          while IFS= read -r line; do
-            echo "$line"
-            LAST_LINE="$line"
-          done < <(stdbuf -oL -eL bash ./.github/scripts/apply-swe-benchmark-docker.sh "$INSTANCE_JSON" 2>&1)
 
-          if [[ "$LAST_LINE" == "✅" ]]; then
+          # Read verification result JSON
+          if [[ -f verification-result.json ]]; then
+            RAW_RESULT=$(jq -r '.result' verification-result.json 2>/dev/null)
+            RAW_MESSAGE=$(jq -r '.message // empty' verification-result.json 2>/dev/null)
+          else
+            RAW_RESULT="failed"
+            RAW_MESSAGE="Verification result file not found"
+            echo "::error::Verification result file not found (verification-result.json)"
+          fi
+
+          # Map to workflow outputs
+          if [[ "$RAW_RESULT" == "ok" ]]; then
             echo "result=success" >> $GITHUB_OUTPUT
-            echo "message=Validation passed" >> $GITHUB_OUTPUT
+            if [[ -z "$RAW_MESSAGE" ]]; then RAW_MESSAGE="Validation passed"; fi
+            echo "message=$RAW_MESSAGE" >> $GITHUB_OUTPUT
             exit 0
-          fi
-
-          if echo "$LAST_LINE" | grep -q "Failed:"; then
-            REASON=$(echo "$LAST_LINE" | sed 's/^.*Failed: //')
+          else
             echo "result=failure" >> $GITHUB_OUTPUT
-            echo "message=$REASON" >> $GITHUB_OUTPUT
-            echo "::error:: $REASON"
+            if [[ -z "$RAW_MESSAGE" ]]; then RAW_MESSAGE="Unknown failure"; fi
+            echo "message=$RAW_MESSAGE" >> $GITHUB_OUTPUT
             exit 1
           fi
-
-          echo "result=unknown" >> $GITHUB_OUTPUT
-          echo "message=Unknown outcome. See logs." >> $GITHUB_OUTPUT
-          echo "::error::Unknown outcome. Expected final line '✅' or 'Failed: <reason>' but got: $LAST_LINE"
-          exit 1
+      - name: Upload verification-result.json
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: verification-result
+          path: verification-result.json
+          if-no-files-found: warn
+          retention-days: 7
       - name: Summary
         if: always()
         run: |

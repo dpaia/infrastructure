@@ -4,6 +4,39 @@
 
 set -e
 
+# Helper to write verification result to JSON
+write_verification_result_json() {
+  local status="$1"
+  local message="$2"
+  local outfile="verification-result.json"
+
+  if command -v jq >/dev/null 2>&1; then
+    if [[ -n "$message" ]]; then
+      jq -n --arg result "$status" --arg message "$message" '{result:$result, message:$message}' > "$outfile"
+    else
+      jq -n --arg result "$status" '{result:$result}' > "$outfile"
+    fi
+  else
+    local esc_message="${message//\"/\\\"}"
+    if [[ -n "$message" ]]; then
+      printf '{"result":"%s","message":"%s"}\n' "$status" "$esc_message" > "$outfile"
+    else
+      printf '{"result":"%s"}\n' "$status" > "$outfile"
+    fi
+  fi
+  echo "📄 Saved verification result to $outfile"
+}
+
+# Ensure we always produce a verification-result.json on error
+on_error() {
+  local exit_code=$?
+  if [ ! -f "verification-result.json" ]; then
+    write_verification_result_json "failed" "apply-swe-benchmark-docker.sh failed"
+  fi
+  exit $exit_code
+}
+trap 'on_error' ERR
+
 INSTANCE_JSON="$1"
 
 # Parse optional parameters
@@ -48,6 +81,7 @@ done
 if [[ -z "$INSTANCE_JSON" ]]; then
   echo "Usage: $0 <instance_json> [--cleanup] [--by-repo]"
   echo "Use --help for more information"
+  write_verification_result_json "failed" "No instance JSON provided"
   exit 1
 fi
 
@@ -77,6 +111,7 @@ fi
 # Check if verify_dataset_instance.sh script exists
 if [ ! -f ".github/scripts/verify_java_dataset_instance.sh" ]; then
   echo "❌ verify_java_dataset_instance.sh script not found. Please ensure it exists in the current directory."
+  write_verification_result_json "failed" "verify_java_dataset_instance.sh script not found"
   exit 1
 fi
 
@@ -99,4 +134,15 @@ echo "🚀 Running test dataset instance script..."
   "$NAME_BY_REPO" \
   "$CLEANUP_CONTAINERS"
 
-exit $?
+EXIT_CODE=$?
+
+# Ensure verification-result.json exists; create fallback based on exit code
+if [ ! -f "verification-result.json" ]; then
+  if [ $EXIT_CODE -eq 0 ]; then
+    write_verification_result_json "ok" "Validation passed"
+  else
+    write_verification_result_json "failed" "Unknown failure"
+  fi
+fi
+
+exit $EXIT_CODE

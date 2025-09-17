@@ -148,6 +148,11 @@ def compare_patch_between_base_and_external(base_org: str, base_repo: str, base_
         patch = patch.replace("\nrename from a/a/", "\nrename from a/")
         patch = patch.replace("\nrename to b/b/", "\nrename to b/")
 
+        try:
+            eprint("compare_patch_between_base_and_external: generated patch:")
+            eprint(patch)
+        except Exception:
+            pass
         return patch
     except Exception as e:
         eprint(f"Failed to generate local compare patch: {e}")

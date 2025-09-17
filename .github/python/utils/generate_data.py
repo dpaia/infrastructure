@@ -383,6 +383,7 @@ def generate_patches(organization, repository, commit_ids, github_token = os.env
         repository (str): GitHub repository name
         issue_number (str): Issue number
         commit_ids (list): List of commit IDs to process
+        github_token (str): GitHub personal access token for authentication
         test_file_detector (function): Function to determine if a file is a test file
         
     Returns:

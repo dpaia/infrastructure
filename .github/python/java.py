@@ -132,7 +132,7 @@ def _find_files_with_github_api(organization, repository, filename, commit=None)
 # Wrap the main part of the script in a try-except block to ensure we always output valid JSON
 try:
     # Generate source and test patches
-    source_patch, test_patch = generate_patches(organization, repository, linked_commits, is_test_file)
+    source_patch, test_patch = generate_patches(organization, repository, linked_commits)
 
     if source_patch == "":
         source_patch = test_patch

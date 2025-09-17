@@ -193,12 +193,14 @@ def download_and_extract_zipball(org: str, repo: str, ref: str, target_dir: str)
         cmd = [
             "gh", "api",
             f"repos/{org}/{repo}/zipball/{ref}",
-            "--output", zip_path,
         ]
         if token:
             cmd.extend(["-H", f"Authorization: Bearer {token}"])
-        # gh writes directly to file; no need to capture stdout
-        run_subprocess(cmd, capture_output=False, check=True)
+        # Download zip content via stdout and write to file
+        res = run_subprocess(cmd, capture_output=True, check=True, text=False)
+        data = res.stdout or b""
+        with open(zip_path, "wb") as f_out:
+            f_out.write(data)
 
         # Extract to a temporary directory
         extract_tmp = os.path.join(parent, f".extract_{os.path.basename(target_dir)}")

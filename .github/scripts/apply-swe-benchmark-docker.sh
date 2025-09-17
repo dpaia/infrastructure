@@ -27,16 +27,6 @@ write_verification_result_json() {
   echo "📄 Saved verification result to $outfile"
 }
 
-# Ensure we always produce a verification-result.json on error
-on_error() {
-  local exit_code=$?
-  if [ ! -f "verification-result.json" ]; then
-    write_verification_result_json "failed" "apply-swe-benchmark-docker.sh failed"
-  fi
-  exit $exit_code
-}
-trap 'on_error' ERR
-
 INSTANCE_JSON="$1"
 
 # Parse optional parameters

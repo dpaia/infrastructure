@@ -326,7 +326,11 @@ def fetch_commits(organization, repository, issue_number, github_token=None):
             else:
                 print(f"Warning: Commit {commit_sha} does not exist in repository, removing from list")
 
-        sorted_commit_shas = verified_commit_shas
+        if verified_commit_shas:
+            sorted_commit_shas = verified_commit_shas
+        else:
+            print("Warning: No verified commits found in repository, using all commits")
+
         print(f"Verified commits: {sorted_commit_shas}")
 
         # Get the latest commit (last in the sorted array)

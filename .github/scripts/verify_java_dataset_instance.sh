@@ -53,7 +53,7 @@ fi
 # Validate base commit presence
 if [[ -z "$COMMIT" || "$COMMIT" == "null" ]]; then
   echo "❌ Unable to detect base commit"
-  write_verification_result_json "failed" "Unable to detect base commit, possible related commits do not belongs to any branch"
+  write_verification_result_json "failed" "Unable to detect base commit, possible related commits do not belong to any branch on this repository, and may belong to a fork outside of the repository."
   exit 1
 fi
 

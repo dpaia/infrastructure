@@ -360,8 +360,7 @@ def fetch_commits(organization, repository, issue_number, github_token=None):
             if verify_commit_exists(owner, repo_name, base_commit):
                 print(f"Base commit: {base_commit}")
             else:
-                print(f"Base commit {base_commit} does not exist in repository, using older repository commit")
-                base_commit = ""
+                print(f"Base commit {base_commit} does not exist in repository")
 
         # If base commit isn't valid, try to get an older repository commit
         if not base_commit:

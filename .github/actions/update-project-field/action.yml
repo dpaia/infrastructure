@@ -90,6 +90,7 @@ runs:
         VALUE: ${{ inputs.value }}
         VALUE_TYPE: ${{ inputs.value_type }}
       run: |
+        echo "Updating field '$FIELD_ID' on item '$ITEM_ID' in project '$PROJECT_ID' with value '$VALUE' and type '$VALUE_TYPE'..."
         case "$VALUE_TYPE" in
           text)
             QUERY='mutation($projectId:ID!, $itemId:ID!, $fieldId:ID!, $value:String!) {\n  updateProjectV2ItemFieldValue(input: {\n    projectId: $projectId,\n    itemId: $itemId,\n    fieldId: $fieldId,\n    value: { text: $value }\n  }) { projectV2Item { id } }\n}'

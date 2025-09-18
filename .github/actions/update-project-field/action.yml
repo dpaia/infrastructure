@@ -93,11 +93,11 @@ runs:
         echo "Updating field '$FIELD_ID' on item '$ITEM_ID' in project '$PROJECT_ID' with value '$VALUE' and type '$VALUE_TYPE'..."
         case "$VALUE_TYPE" in
           text)
-            QUERY='mutation($projectId:ID!, $itemId:ID!, $fieldId:ID!, $value:String!) {\n  updateProjectV2ItemFieldValue(input: {\n    projectId: $projectId,\n    itemId: $itemId,\n    fieldId: $fieldId,\n    value: { text: $value }\n  }) { projectV2Item { id } }\n}'
+            QUERY='mutation($projectId:ID!, $itemId:ID!, $fieldId:ID!, $value:String!) { updateProjectV2ItemFieldValue(input: { projectId: $projectId, itemId: $itemId, fieldId: $fieldId, value: { text: $value } }) { projectV2Item { id } } }'
             gh api graphql -f query="$QUERY" -f projectId=$PROJECT_ID -f itemId=$ITEM_ID -f fieldId=$FIELD_ID -f value="$VALUE"
             ;;
           number)
-            QUERY='mutation($projectId:ID!, $itemId:ID!, $fieldId:ID!, $value:Float!) {\n  updateProjectV2ItemFieldValue(input: {\n    projectId: $projectId,\n    itemId: $itemId,\n    fieldId: $fieldId,\n    value: { number: $value }\n  }) { projectV2Item { id } }\n}'
+            QUERY='mutation($projectId:ID!, $itemId:ID!, $fieldId:ID!, $value:Float!) { updateProjectV2ItemFieldValue(input: { projectId: $projectId, itemId: $itemId, fieldId: $fieldId, value: { number: $value } }) { projectV2Item { id } } }'
             gh api graphql -f query="$QUERY" -f projectId=$PROJECT_ID -f itemId=$ITEM_ID -f fieldId=$FIELD_ID -F value="$VALUE"
             ;;
           single_select)
@@ -108,7 +108,7 @@ runs:
               echo "Single-select option '$VALUE' not found" >&2
               exit 1
             fi
-            QUERY='mutation($projectId:ID!, $itemId:ID!, $fieldId:ID!, $optionId:String!) {\n  updateProjectV2ItemFieldValue(input: {\n    projectId: $projectId,\n    itemId: $itemId,\n    fieldId: $fieldId,\n    value: { singleSelectOptionId: $optionId }\n  }) { projectV2Item { id } }\n}'
+            QUERY='mutation($projectId:ID!, $itemId:ID!, $fieldId:ID!, $optionId:String!) { updateProjectV2ItemFieldValue(input: { projectId: $projectId, itemId: $itemId, fieldId: $fieldId, value: { singleSelectOptionId: $optionId } }) { projectV2Item { id } } }'
             gh api graphql -f query="$QUERY" -f projectId=$PROJECT_ID -f itemId=$ITEM_ID -f fieldId=$FIELD_ID -f optionId="$OPTION_ID"
             ;;
           *)

@@ -269,7 +269,7 @@ runs:
 
     - name: Create or update data file
       id: create-dataset-file
-      if: inputs.create_dataset_pr == 'true' && steps.check-error.outputs.has_error != 'true'
+      if: inputs.create_dataset_pr == 'true'
       uses: ./.github/actions/update-data-file
       with:
         organization: ${{ inputs.organization }}

@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Usage: ./apply-swe-benchmark-docker.sh <instance_json> [--cleanup] [--by-repo]
+# Usage: ./apply-swe-benchmark-docker.sh <instance_json> [--cleanup] [--by-repo] [--generator=<name>]
 
 set -e
 
@@ -32,6 +32,7 @@ INSTANCE_JSON="$1"
 # Parse optional parameters
 CLEANUP_CONTAINERS=false
 NAME_BY_REPO=false
+GENERATOR="java"
 
 for arg in "${@:2}"; do
   case $arg in
@@ -43,6 +44,13 @@ for arg in "${@:2}"; do
       NAME_BY_REPO=true
       shift
       ;;
+    --generator=*)
+      GENERATOR="${arg#*=}"
+      ;;
+    --generator)
+      echo "Error: --generator requires a value. Use --generator=<name>"
+      exit 1
+      ;;
     --help|-h)
       echo "Usage: $0 <instance_json> [options]"
       echo ""
@@ -50,14 +58,16 @@ for arg in "${@:2}"; do
       echo "  <instance_json>  Complete JSON object for a single instance"
       echo ""
       echo "Options:"
-      echo "  --cleanup    Remove prepared containers after execution"
-      echo "  --by-repo    Name containers by repository instead of instance ID"
-      echo "  --help, -h   Show this help message"
+      echo "  --cleanup            Remove prepared containers after execution"
+      echo "  --by-repo            Name containers by repository instead of instance ID"
+      echo "  --generator=<name>   Selects which verify script to run (default: java)"
+      echo "  --help, -h           Show this help message"
       echo ""
       echo "Examples:"
       echo "  $0 '{\"instance_id\":\"instance-123\",\"repo\":\"owner/repo\",...}'"
       echo "  $0 '{\"instance_id\":\"instance-123\",\"repo\":\"owner/repo\",...}' --cleanup"
       echo "  $0 '{\"instance_id\":\"instance-123\",\"repo\":\"owner/repo\",...}' --by-repo"
+      echo "  $0 '{\"instance_id\":\"instance-123\",\"repo\":\"owner/repo\",...}' --generator=java"
       exit 0
       ;;
     *)
@@ -98,19 +108,39 @@ if [[ -z "$INSTANCE_ID" || "$INSTANCE_ID" == "null" ]]; then
   echo "ℹ️ Auto-generated instance ID: $INSTANCE_ID"
 fi
 
-# Check if verify_dataset_instance.sh script exists
-if [ ! -f ".github/scripts/verify_java_dataset_instance.sh" ]; then
-  echo "❌ verify_java_dataset_instance.sh script not found. Please ensure it exists in the current directory."
-  write_verification_result_json "failed" "verify_java_dataset_instance.sh script not found"
+# Select verification script based on generator
+select_verify_script() {
+  local gen="$1"
+  # normalize to lowercase (bash-specific)
+  gen="${gen,,}"
+
+  local base_dir=".github/scripts"
+  local script="${base_dir}/verify_${gen}_dataset_instance.sh"
+
+  if [ -f "$script" ]; then
+    echo "$script"
+    return 0
+  fi
+
+  # No known fallback for other generators
+  return 1
+}
+
+echo "🧰 Generator selected: ${GENERATOR}"
+SELECTED_SCRIPT="$(select_verify_script "$GENERATOR")"
+
+if [ -z "$SELECTED_SCRIPT" ] || [ ! -f "$SELECTED_SCRIPT" ]; then
+  echo "❌ Could not find verification script for generator '$GENERATOR'. Expected at: .github/scripts/verify_${GENERATOR}_dataset_instance.sh"
+  write_verification_result_json "failed" "Verification script for generator '$GENERATOR' not found"
   exit 1
 fi
 
 # Make sure the script is executable
-chmod +x .github/scripts/verify_java_dataset_instance.sh
+chmod +x "$SELECTED_SCRIPT"
 
 # Run the test dataset instance script with all required parameters
-echo "🚀 Running test dataset instance script..."
-.github/scripts/verify_java_dataset_instance.sh \
+echo "🚀 Running test dataset instance script: $SELECTED_SCRIPT"
+"$SELECTED_SCRIPT" \
   "$REPO" \
   "$COMMIT" \
   "$PATCH" \

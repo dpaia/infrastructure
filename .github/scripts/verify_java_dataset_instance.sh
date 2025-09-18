@@ -50,6 +50,20 @@ if [[ -z "$REPO" || "$REPO" == "null" ]]; then
   exit 1
 fi
 
+# Validate base commit presence
+if [[ -z "$COMMIT" || "$COMMIT" == "null" ]]; then
+  echo "❌ Unable to detect base commit"
+  write_verification_result_json "failed" "Unable to detect base commit, possible related commits do not belongs to any branch"
+  exit 1
+fi
+
+# Validate patches: at least one of PATCH or TEST_PATCH must be provided
+if { [[ -z "$PATCH" || "$PATCH" == "null" ]] && [[ -z "$TEST_PATCH" || "$TEST_PATCH" == "null" ]]; }; then
+  echo "❌ Unable to generate patch or test_patch"
+  write_verification_result_json "failed" "Unable to generate patch or test_patch"
+  exit 1
+fi
+
 # Default Java version if not specified
 if [[ -z "$JAVA_VERSION" || "$JAVA_VERSION" == "null" ]]; then
   JAVA_VERSION="24"

@@ -72,7 +72,7 @@ jobs:
           pip install unidiff
 
       - name: Make script executable
-        run: chmod +x ./.github/scripts/apply-swe-benchmark-docker.sh
+        run: chmod +x ./.github/scripts/apply-swe-benchmark-docker.sh --generator=${{ github.event.inputs.generator }}
 
       - name: Generate data
         id: generate-data

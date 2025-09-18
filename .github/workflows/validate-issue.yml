@@ -114,7 +114,7 @@ jobs:
               printf '{"result":"failed","message":"No instance JSON generated."}' > verification-result.json
             else
               # Stream verification script output in real-time and save logs
-              stdbuf -oL -eL bash ./.github/scripts/apply-swe-benchmark-docker.sh "$INSTANCE_JSON" --generator=${{ github.event.inputs.generator }} 2>&1 | tee verify_output.txt
+              stdbuf -oL -eL bash ./.github/scripts/apply-swe-benchmark-docker.sh "$INSTANCE_JSON" --generator="${{ github.event.inputs.generator }}" 2>&1 | tee verify_output.txt
             fi
           fi
 

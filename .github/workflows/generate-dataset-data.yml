@@ -354,6 +354,7 @@ jobs:
 
   update-issue-swe-data:
     needs: [find-issues, set-defaults]
+    if: needs.set-defaults.outputs.update == 'force-update'
     runs-on: ubuntu-latest
     outputs:
       pull_requests: ${{ toJSON(steps.process-issue-data.outputs) }}

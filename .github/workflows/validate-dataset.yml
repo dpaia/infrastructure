@@ -50,18 +50,13 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          set -euo pipefail
           PR_NUMBER="${{ github.event.inputs.pr_number }}"
           ORG="${{ github.event.inputs.organization }}"
           REPO="${{ github.event.inputs.repository }}"
-          FULL_REPO="$ORG/$REPO"
 
-          FILES_API="https://api.github.com/repos/$FULL_REPO/pulls/$PR_NUMBER/files?per_page=100"
-          PR_API="https://api.github.com/repos/$FULL_REPO/pulls/$PR_NUMBER"
-
-          FILES_JSON=$(curl -sS -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" "$FILES_API")
-          # Extract JSON files from the list of changed files
-          JSONS=$(echo "$FILES_JSON" | jq -r '[ .[] | select(.filename | endswith(".json")) | .filename ]')
+          # Fetch list of changed files in the PR using gh api
+          FILES_JSON=$(gh api "repos/$ORG/$REPO/pulls/$PR_NUMBER/files?per_page=100")
+          JSONS=$(echo "$FILES_JSON" | jq -r '[.[].filename | select(endswith(".json"))]')
           COUNT=$(echo "$JSONS" | jq 'length')
 
           echo "Changed JSON files: $COUNT"
@@ -72,29 +67,21 @@ jobs:
             exit 1
           fi
 
-          REL_JSON_PATH=$(echo "$JSONS" | jq -r '.[0]')
+          # Determine filename and download the single JSON file from PR head using gh api
+          FILENAME=$(echo "$FILES_JSON" | jq -r '.[] | select(.filename | endswith(".json")) | .filename')
+          HEAD_SHA=$(gh api "repos/$ORG/$REPO/pulls/$PR_NUMBER" --jq '.head.sha')
 
-          # Get PR head info to download the file contents as it exists in the PR branch
-          PR_INFO=$(curl -sS -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" "$PR_API")
-          HEAD_REPO=$(echo "$PR_INFO" | jq -r '.head.repo.full_name')
-          HEAD_SHA=$(echo "$PR_INFO" | jq -r '.head.sha')
+          mkdir -p dataset
+          LOCAL_PATH="dataset/dataset.json"
+          # Use the contents API at the PR head to download raw file content
+          gh api -H "Accept: application/vnd.github.raw" "repos/$ORG/$REPO/contents/$FILENAME" -f ref="$HEAD_SHA" > "$LOCAL_PATH"
 
-          if [ -z "$HEAD_REPO" ] || [ -z "$HEAD_SHA" ] || [ "$HEAD_REPO" = "null" ] || [ "$HEAD_SHA" = "null" ]; then
-            echo "::error::Failed to get PR head information."
+          if [ ! -s "$LOCAL_PATH" ]; then
+            echo "::error::Failed to download JSON content from PR."
             exit 1
           fi
 
-          DEST="$RUNNER_TEMP/pr_instance.json"
-          RAW_URL="https://raw.githubusercontent.com/$HEAD_REPO/$HEAD_SHA/$REL_JSON_PATH"
-          echo "Downloading $REL_JSON_PATH from $HEAD_REPO@$HEAD_SHA"
-          curl -sS -L -H "Authorization: Bearer $GH_TOKEN" "$RAW_URL" -o "$DEST"
-
-          if [ ! -s "$DEST" ]; then
-            echo "::error::Downloaded JSON is empty or missing."
-            exit 1
-          fi
-
-          echo "json_path=$DEST" >> "$GITHUB_OUTPUT"
+          echo "json_path=$LOCAL_PATH" >> "$GITHUB_OUTPUT"
 
       - name: Build matrix of instance_ids from JSON (single object)
         id: build-matrix
@@ -106,6 +93,14 @@ jobs:
             exit 1
           fi
           echo "matrix={\"include\": [{\"instance_id\":\"$ID\"}]}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload PR JSON artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dataset
+          path: ${{ steps.find-json.outputs.json_path }}
+          if-no-files-found: error
+          retention-days: 7
 
   run:
     name: Run SWE Benchmark Validation
@@ -119,13 +114,19 @@ jobs:
       - name: Checkout PR
         uses: actions/checkout@v4
 
+      - name: Download PR JSON artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: dataset
+          path: .
+
       - name: Install host dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y jq
 
       - name: Make script executable
-        run: chmod +x .github/scripts/apply-swe-benchmark-docker.sh
+        run: chmod +x .github/workflows/apply-swe-benchmark-docker.sh
 
       - name: Run verification
         id: run-verification

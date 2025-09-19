@@ -75,7 +75,8 @@ jobs:
           mkdir -p dataset
           LOCAL_PATH="dataset/dataset.json"
           # Use the contents API at the PR head to download raw file content
-          gh api -H "Accept: application/vnd.github.raw" "repos/$ORG/$REPO/contents/$FILENAME" -f ref="$HEAD_SHA" > "$LOCAL_PATH"
+          echo "Downloading $FILENAME from $ORG/$REPO@$HEAD_SHA"
+          gh api -H "Accept: application/vnd.github.raw" "repos/$ORG/$REPO/contents/$FILENAME?ref=$HEAD_SHA" > "$LOCAL_PATH"
 
           if [ ! -s "$LOCAL_PATH" ]; then
             echo "::error::Failed to download JSON content from PR."

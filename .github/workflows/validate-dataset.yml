@@ -50,12 +50,18 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          set -euo pipefail
           PR_NUMBER="${{ github.event.inputs.pr_number }}"
+          ORG="${{ github.event.inputs.organization }}"
           REPO="${{ github.event.inputs.repository }}"
-          API="https://api.github.com/repos/$REPO/pulls/$PR_NUMBER/files?per_page=100"
+          FULL_REPO="$ORG/$REPO"
 
-          FILES_JSON=$(curl -sS -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" "$API")
-          JSONS=$(echo "$FILES_JSON" | jq -r '[.[].filename | select(endswith(".json"))]')
+          FILES_API="https://api.github.com/repos/$FULL_REPO/pulls/$PR_NUMBER/files?per_page=100"
+          PR_API="https://api.github.com/repos/$FULL_REPO/pulls/$PR_NUMBER"
+
+          FILES_JSON=$(curl -sS -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" "$FILES_API")
+          # Extract JSON files from the list of changed files
+          JSONS=$(echo "$FILES_JSON" | jq -r '[ .[] | select(.filename | endswith(".json")) | .filename ]')
           COUNT=$(echo "$JSONS" | jq 'length')
 
           echo "Changed JSON files: $COUNT"
@@ -66,8 +72,29 @@ jobs:
             exit 1
           fi
 
-          JSON_PATH=$(echo "$JSONS" | jq -r '.[0]')
-          echo "json_path=$JSON_PATH" >> "$GITHUB_OUTPUT"
+          REL_JSON_PATH=$(echo "$JSONS" | jq -r '.[0]')
+
+          # Get PR head info to download the file contents as it exists in the PR branch
+          PR_INFO=$(curl -sS -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" "$PR_API")
+          HEAD_REPO=$(echo "$PR_INFO" | jq -r '.head.repo.full_name')
+          HEAD_SHA=$(echo "$PR_INFO" | jq -r '.head.sha')
+
+          if [ -z "$HEAD_REPO" ] || [ -z "$HEAD_SHA" ] || [ "$HEAD_REPO" = "null" ] || [ "$HEAD_SHA" = "null" ]; then
+            echo "::error::Failed to get PR head information."
+            exit 1
+          fi
+
+          DEST="$RUNNER_TEMP/pr_instance.json"
+          RAW_URL="https://raw.githubusercontent.com/$HEAD_REPO/$HEAD_SHA/$REL_JSON_PATH"
+          echo "Downloading $REL_JSON_PATH from $HEAD_REPO@$HEAD_SHA"
+          curl -sS -L -H "Authorization: Bearer $GH_TOKEN" "$RAW_URL" -o "$DEST"
+
+          if [ ! -s "$DEST" ]; then
+            echo "::error::Downloaded JSON is empty or missing."
+            exit 1
+          fi
+
+          echo "json_path=$DEST" >> "$GITHUB_OUTPUT"
 
       - name: Build matrix of instance_ids from JSON (single object)
         id: build-matrix
@@ -98,7 +125,7 @@ jobs:
           sudo apt-get install -y jq
 
       - name: Make script executable
-        run: chmod +x .github/workflows/apply-swe-benchmark-docker.sh
+        run: chmod +x .github/scripts/apply-swe-benchmark-docker.sh
 
       - name: Run verification
         id: run-verification

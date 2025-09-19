@@ -106,6 +106,23 @@ jobs:
           name: dataset
           path: .
 
+      - name: Ensure dataset file path
+        shell: bash
+        run: |
+          set -e
+          if [ -f "dataset/dataset.json" ]; then
+            echo "Found dataset/dataset.json"
+          elif [ -f "dataset.json" ]; then
+            mkdir -p dataset
+            mv dataset.json dataset/dataset.json
+            echo "Moved dataset.json to dataset/dataset.json"
+          else
+            echo "Downloaded artifact contents:"
+            ls -R
+            echo "::error::dataset.json not found in downloaded artifact"
+            exit 1
+          fi
+
       - name: Install host dependencies
         run: |
           sudo apt-get update

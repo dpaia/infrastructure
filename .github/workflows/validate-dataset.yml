@@ -48,14 +48,14 @@ jobs:
       - name: Find the single changed JSON file in this PR
         id: find-json
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
         run: |
           PR_NUMBER="${{ github.event.inputs.pr_number }}"
           ORG="${{ github.event.inputs.organization }}"
           REPO="${{ github.event.inputs.repository }}"
 
           # Fetch list of changed files in the PR using gh api
-          FILES_JSON=$(gh api "repos/$ORG/$REPO/pulls/$PR_NUMBER/files?per_page=100")
+          FILES_JSON=$(gh api "repos/$ORG/$REPO/pulls/$PR_NUMBER/files")
           JSONS=$(echo "$FILES_JSON" | jq -r '[.[].filename | select(endswith(".json"))]')
           COUNT=$(echo "$JSONS" | jq 'length')
 

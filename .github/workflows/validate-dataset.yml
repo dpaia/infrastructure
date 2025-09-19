@@ -1,4 +1,5 @@
 name: Validate dataset
+run-name: "[${{ github.event.inputs.generator }}] Validate dataset PR #${{ github.event.inputs.pr_number }}"
 
 on:
   workflow_dispatch:
@@ -66,7 +67,10 @@ jobs:
 
           # Determine filename and download the single JSON file from PR head using gh api
           FILENAME=$(echo "$FILES_JSON" | jq -r '.[] | select(.filename | endswith(".json")) | .filename')
+          echo "Filename: $FILENAME"
+          
           HEAD_SHA=$(gh api "repos/$ORG/$REPO/pulls/$PR_NUMBER" --jq '.head.sha')
+          echo "Head SHA: $HEAD_SHA"
 
           mkdir -p dataset
           LOCAL_PATH="dataset/dataset.json"

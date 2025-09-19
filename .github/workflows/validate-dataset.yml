@@ -31,11 +31,8 @@ permissions:
 
 jobs:
   discover:
-    name: Discover changed JSON & build matrix
+    name: Find and download JSON file in PR
     runs-on: ubuntu-latest
-    outputs:
-      json_path: ${{ steps.find-json.outputs.json_path }}
-      matrix:   ${{ steps.build-matrix.outputs.matrix }}
     steps:
       - name: Checkout PR
         uses: actions/checkout@v4
@@ -81,24 +78,11 @@ jobs:
             exit 1
           fi
 
-          echo "json_path=$LOCAL_PATH" >> "$GITHUB_OUTPUT"
-
-      - name: Build matrix of instance_ids from JSON (single object)
-        id: build-matrix
-        run: |
-          JSON="${{ steps.find-json.outputs.json_path }}"
-          ID=$(jq -r 'try .instance_id // empty' "$JSON")
-          if [ -z "$ID" ]; then
-            echo "::error::No instance_id in $JSON"
-            exit 1
-          fi
-          echo "matrix={\"include\": [{\"instance_id\":\"$ID\"}]}" >> "$GITHUB_OUTPUT"
-
       - name: Upload PR JSON artifact
         uses: actions/upload-artifact@v4
         with:
           name: dataset
-          path: ${{ steps.find-json.outputs.json_path }}
+          path: dataset/dataset.json
           if-no-files-found: error
           retention-days: 7
 
@@ -106,9 +90,6 @@ jobs:
     name: Run SWE Benchmark Validation
     needs: discover
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix: ${{ fromJson(needs.discover.outputs.matrix) }}
 
     steps:
       - name: Checkout PR
@@ -131,9 +112,6 @@ jobs:
       - name: Run verification
         id: run-verification
         shell: bash
-        env:
-          JSON_PATH: ${{ needs.discover.outputs.json_path }}
-          EMPTY_TEST_FIELDS: ${{ steps.check-test-fields.outputs.empty_test_fields }}
         run: |
           set +e
 
@@ -141,8 +119,8 @@ jobs:
             echo "::error::❌ Failed: Both FAIL_TO_PASS and PASS_TO_PASS are empty. Nothing to validate."
             printf '{"result":"failed","message":"Both FAIL_TO_PASS and PASS_TO_PASS are empty. Nothing to validate."}' > verification-result.json
           else
-            # Read the complete JSON instance from the file
-            INSTANCE_JSON=$(cat "$JSON_PATH")
+            # Read the complete JSON instance from the downloaded artifact file
+            INSTANCE_JSON=$(cat "dataset/dataset.json")
             if [[ -z "$INSTANCE_JSON" ]]; then
               echo "::error::❌ Failed: No instance JSON generated."
               printf '{"result":"failed","message":"No instance JSON generated."}' > verification-result.json

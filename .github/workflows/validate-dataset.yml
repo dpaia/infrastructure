@@ -1,0 +1,166 @@
+name: Validate dataset
+
+on:
+  workflow_dispatch:
+    inputs:
+      generator:
+        description: 'Profile'
+        required: true
+        default: 'java'
+        type: choice
+        options:
+          - java
+      organization:
+        description: 'GitHub organization name'
+        required: true
+        default: 'jetbrains-eval-lab'
+        type: string
+      repository:
+        description: 'Repository name (repo)'
+        required: true
+        default: 'dataset'
+        type: string
+      pr_number:
+        description: 'PR number'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  discover:
+    name: Discover changed JSON & build matrix
+    runs-on: ubuntu-latest
+    outputs:
+      json_path: ${{ steps.find-json.outputs.json_path }}
+      matrix:   ${{ steps.build-matrix.outputs.matrix }}
+    steps:
+      - name: Checkout PR
+        uses: actions/checkout@v4
+
+      - name: Install jq
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq
+
+      - name: Find the single changed JSON file in this PR
+        id: find-json
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          PR_NUMBER="${{ github.event.inputs.pr_number }}"
+          REPO="${{ github.event.inputs.repository }}"
+          API="https://api.github.com/repos/$REPO/pulls/$PR_NUMBER/files?per_page=100"
+
+          FILES_JSON=$(curl -sS -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" "$API")
+          JSONS=$(echo "$FILES_JSON" | jq -r '[.[].filename | select(endswith(".json"))]')
+          COUNT=$(echo "$JSONS" | jq 'length')
+
+          echo "Changed JSON files: $COUNT"
+          echo "$JSONS"
+
+          if [ "$COUNT" -ne 1 ]; then
+            echo "::error::This workflow expects exactly one JSON file to be changed in the PR."
+            exit 1
+          fi
+
+          JSON_PATH=$(echo "$JSONS" | jq -r '.[0]')
+          echo "json_path=$JSON_PATH" >> "$GITHUB_OUTPUT"
+
+      - name: Build matrix of instance_ids from JSON (single object)
+        id: build-matrix
+        run: |
+          JSON="${{ steps.find-json.outputs.json_path }}"
+          ID=$(jq -r 'try .instance_id // empty' "$JSON")
+          if [ -z "$ID" ]; then
+            echo "::error::No instance_id in $JSON"
+            exit 1
+          fi
+          echo "matrix={\"include\": [{\"instance_id\":\"$ID\"}]}" >> "$GITHUB_OUTPUT"
+
+  run:
+    name: Run SWE Benchmark Validation
+    needs: discover
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.discover.outputs.matrix) }}
+
+    steps:
+      - name: Checkout PR
+        uses: actions/checkout@v4
+
+      - name: Install host dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq
+
+      - name: Make script executable
+        run: chmod +x .github/workflows/apply-swe-benchmark-docker.sh
+
+      - name: Run verification
+        id: run-verification
+        shell: bash
+        env:
+          JSON_PATH: ${{ needs.discover.outputs.json_path }}
+          EMPTY_TEST_FIELDS: ${{ steps.check-test-fields.outputs.empty_test_fields }}
+        run: |
+          set +e
+
+          if [[ "$EMPTY_TEST_FIELDS" == "true" ]]; then
+            echo "::error::❌ Failed: Both FAIL_TO_PASS and PASS_TO_PASS are empty. Nothing to validate."
+            printf '{"result":"failed","message":"Both FAIL_TO_PASS and PASS_TO_PASS are empty. Nothing to validate."}' > verification-result.json
+          else
+            # Read the complete JSON instance from the file
+            INSTANCE_JSON=$(cat "$JSON_PATH")
+            if [[ -z "$INSTANCE_JSON" ]]; then
+              echo "::error::❌ Failed: No instance JSON generated."
+              printf '{"result":"failed","message":"No instance JSON generated."}' > verification-result.json
+            else
+              # Stream verification script output in real-time and save logs
+              stdbuf -oL -eL bash ./.github/scripts/apply-swe-benchmark-docker.sh "$INSTANCE_JSON" --generator="${{ github.event.inputs.generator }}" 2>&1 | tee verify_output.txt
+            fi
+          fi
+
+          # Read verification result JSON
+          if [[ -f verification-result.json ]]; then
+            RAW_RESULT=$(jq -r '.result' verification-result.json 2>/dev/null)
+            RAW_MESSAGE=$(jq -r '.message // empty' verification-result.json 2>/dev/null)
+          else
+            RAW_RESULT="failed"
+            RAW_MESSAGE="Verification result file not found"
+            echo "::error::Verification result file not found (verification-result.json)"
+          fi
+
+          # Map to workflow outputs
+          if [[ "$RAW_RESULT" == "ok" ]]; then
+            echo "result=success" >> $GITHUB_OUTPUT
+            if [[ -z "$RAW_MESSAGE" ]]; then RAW_MESSAGE="Validation passed"; fi
+            echo "message=$RAW_MESSAGE" >> $GITHUB_OUTPUT
+            exit 0
+          else
+            echo "result=failure" >> $GITHUB_OUTPUT
+            if [[ -z "$RAW_MESSAGE" ]]; then RAW_MESSAGE="Unknown failure"; fi
+            echo "message=$RAW_MESSAGE" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+
+      - name: Upload verification-result.json
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: verification-result
+          path: verification-result.json
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "# Validation Summary" >> $GITHUB_STEP_SUMMARY
+          echo "Result: ${{ steps.run-verification.outputs.result }}" >> $GITHUB_STEP_SUMMARY
+          if [ "${{ steps.run-verification.outputs.message }}" != "" ]; then
+            echo "${{ steps.run-verification.outputs.message }}" >> $GITHUB_STEP_SUMMARY
+          fi    

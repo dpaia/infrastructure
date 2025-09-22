@@ -950,7 +950,7 @@ run_tests_in_container() {
 
   set -e
 
-  return $RUN_EXIT_CODE
+  return "$RUN_EXIT_CODE"
 }
 
 # Function to cleanup resources

@@ -981,10 +981,12 @@ run_tests_in_container() {
     "$docker_image_name-base" \
     bash -c "/workspace/run_tests.sh" 2>&1 | tee "$TEMP_OUTPUT_FILE"
   RUN_EXIT_CODE=${PIPESTATUS[0]}
-  echo "run_tests_in_container completed...."
+  echo "run_tests_in_container completed $RUN_EXIT_CODE...."
 
   # Get the last line of output for error reporting
   LAST_LINE=$(tail -n 1 "$TEMP_OUTPUT_FILE")
+  echo "Last line: $LAST_LINE"
+
   rm -f "$TEMP_OUTPUT_FILE"
 
   # Cleanup

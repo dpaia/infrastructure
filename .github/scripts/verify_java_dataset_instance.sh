@@ -1076,6 +1076,7 @@ main() {
   cleanup_resources "$DOCKER_IMAGE_NAME" "$cleanup_containers"
 
   echo "Exit code: $RUN_EXIT_CODE"
+  echo "Last line: $LAST_LINE"
 
   # Final result message must contain execution result
   if [ $RUN_EXIT_CODE -eq 0 ]; then

@@ -993,7 +993,6 @@ run_tests_in_container() {
   set -e
 
   if [ "$RUN_EXIT_CODE" -gt 0 ]; then
-    echo "$LAST_LINE"
     return 1
   else
     echo ""
@@ -1071,9 +1070,6 @@ main() {
 
   # Cleanup resources
   cleanup_resources "$DOCKER_IMAGE_NAME" "$cleanup_containers"
-
-  echo "Exit code: $RUN_EXIT_CODE"
-  echo "Last line: $LAST_LINE"
 
   # Final result message must contain execution result
   if [ $RUN_EXIT_CODE -eq 0 ]; then

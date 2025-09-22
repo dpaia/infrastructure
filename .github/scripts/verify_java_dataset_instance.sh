@@ -994,8 +994,10 @@ run_tests_in_container() {
 
   if [ "$RUN_EXIT_CODE" -gt 0 ]; then
     echo "$LAST_LINE"
+    return 1
   else
     echo ""
+    return 0
   fi
 }
 
@@ -1063,13 +1065,8 @@ main() {
     LAST_LINE="❌  Failed: Setup container preparation failed"
   else
     # Run tests in container
-    run_tests_in_container "$DOCKER_IMAGE_NAME" "$PATCH" "$TEST_PATCH" "$INSTANCE_ID" "$FAIL_TO_PASS" "$PASS_TO_PASS" "$TEST_ARGS" "$IS_MAVEN" "$COMMIT" "$REPO_URL"
-    LAST_LINE=$?
-    if [ -z $LAST_LINE ]; then
-        RUN_EXIT_CODE=0
-    else
-        RUN_EXIT_CODE=1
-    fi
+    LAST_LINE=$(run_tests_in_container "$DOCKER_IMAGE_NAME" "$PATCH" "$TEST_PATCH" "$INSTANCE_ID" "$FAIL_TO_PASS" "$PASS_TO_PASS" "$TEST_ARGS" "$IS_MAVEN" "$COMMIT" "$REPO_URL")
+    RUN_EXIT_CODE=$?
   fi
 
   # Cleanup resources

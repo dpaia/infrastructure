@@ -244,8 +244,12 @@ jobs:
             echo "Status is not Done"
             echo "match=true" >> $GITHUB_OUTPUT
           else
-            echo "Already processed. Skipping..."
-            echo "match=false" >> $GITHUB_OUTPUT
+            if [ "$STATUS_FIELD_VALUE" != "Done" ]; then
+              echo "Status is Review"
+              echo "match=true" >> $GITHUB_OUTPUT
+            else 
+              echo "Already processed. Skipping..."
+              echo "match=false" >> $GITHUB_OUTPUT
           fi
 
       - name: Compare commits

@@ -1016,7 +1016,9 @@ main() {
     LAST_LINE="❌  Failed: Setup container preparation failed"
   else
     # Run tests in container
+    echo "run_tests_in_container...."
     run_tests_in_container "$DOCKER_IMAGE_NAME" "$PATCH" "$TEST_PATCH" "$INSTANCE_ID" "$FAIL_TO_PASS" "$PASS_TO_PASS" "$TEST_ARGS" "$IS_MAVEN" "$COMMIT" "$REPO_URL"
+    echo "run_tests_in_container completed...."
     RUN_EXIT_CODE=$?
   fi
 

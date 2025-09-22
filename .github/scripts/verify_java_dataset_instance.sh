@@ -1023,6 +1023,8 @@ main() {
   # Cleanup resources
   cleanup_resources "$DOCKER_IMAGE_NAME" "$cleanup_containers"
 
+  echo "Exit code: $RUN_EXIT_CODE"
+
   # Final result message must contain execution result
   if [ $RUN_EXIT_CODE -eq 0 ]; then
     write_verification_result_json "ok" "Validation passed"

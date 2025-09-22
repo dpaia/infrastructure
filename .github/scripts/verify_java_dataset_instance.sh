@@ -6,16 +6,57 @@
 set -o pipefail
 
 # Parse input parameters
-REPO="$1"
-COMMIT="$2"
-PATCH="$3"
-TEST_PATCH="$4"
-FAIL_TO_PASS="$5"
-PASS_TO_PASS="$6"
-TEST_ARGS="$7"
-IS_MAVEN=$(echo "$8" | tr '[:upper:]' '[:lower:]')
-JAVA_VERSION="$9"
-INSTANCE_ID="${10}"
+# The script supports two input modes:
+# -----------------------------------------------------------------------------
+# MODE 1: JSON FILE MODE
+#   Usage: verify_java_dataset_instance.sh /path/to/issue.json INSTANCE_ID
+#   Description: Reads all parameters from a JSON file for the specified instance ID
+#   Requirements: 'jq' must be installed
+# -----------------------------------------------------------------------------
+# MODE 2: POSITIONAL MODE
+#   Usage: verify_java_dataset_instance.sh REPO COMMIT PATCH TEST_PATCH FAIL_TO_PASS PASS_TO_PASS TEST_ARGS IS_MAVEN JAVA_VERSION INSTANCE_ID
+#   Description: All parameters are passed directly as command-line arguments
+# -----------------------------------------------------------------------------
+
+# Determine input mode
+INPUT_MODE="POSITIONAL"
+if [[ -f "$1" ]]; then
+  INPUT_MODE="JSON"
+fi
+
+# Process based on detected input mode
+if [[ "$INPUT_MODE" == "JSON" ]]; then
+  BENCHMARK_FILE="$1"
+  INSTANCE_ID="$2"
+  echo "🧾 JSON input mode detected: $BENCHMARK_FILE"
+  if ! command -v jq >/dev/null 2>&1; then
+    echo "❌ JSON mode requires 'jq' to be installed. Please install jq or use positional arguments."
+    exit 1
+  fi
+
+  echo "📋 Processing JSON with instance ID: $INSTANCE_ID"
+  REPO=$(jq -r ".[] | select(.instance_id == \"$INSTANCE_ID\") | .repo" "$BENCHMARK_FILE")
+  COMMIT=$(jq -r ".[] | select(.instance_id == \"$INSTANCE_ID\") | .base_commit" "$BENCHMARK_FILE")
+  PATCH=$(jq -r ".[] | select(.instance_id == \"$INSTANCE_ID\") | .patch" "$BENCHMARK_FILE")
+  TEST_PATCH=$(jq -r ".[] | select(.instance_id == \"$INSTANCE_ID\") | .test_patch" "$BENCHMARK_FILE")
+  FAIL_TO_PASS=$(jq -r ".[] | select(.instance_id == \"$INSTANCE_ID\") | .FAIL_TO_PASS" "$BENCHMARK_FILE")
+  PASS_TO_PASS=$(jq -r ".[] | select(.instance_id == \"$INSTANCE_ID\") | .PASS_TO_PASS" "$BENCHMARK_FILE")
+  TEST_ARGS=$(jq -r ".[] | select(.instance_id == \"$INSTANCE_ID\") | .test_args" "$BENCHMARK_FILE")
+  IS_MAVEN=$(jq -r ".[] | select(.instance_id == \"$INSTANCE_ID\") | .is_maven" "$BENCHMARK_FILE")
+  JAVA_VERSION=$(jq -r ".[] | select(.instance_id == \"$INSTANCE_ID\") | .java_version" "$BENCHMARK_FILE")
+else
+  echo "📋 Positional input mode detected"
+  REPO="$1"
+  COMMIT="$2"
+  PATCH="$3"
+  TEST_PATCH="$4"
+  FAIL_TO_PASS="$5"
+  PASS_TO_PASS="$6"
+  TEST_ARGS="$7"
+  IS_MAVEN=$(echo "$8" | tr '[:upper:]' '[:lower:]')
+  JAVA_VERSION="$9"
+  INSTANCE_ID="${10}"
+fi
 
 # Common function to write verification result to JSON file
 write_verification_result_json() {
@@ -281,7 +322,7 @@ EOF
 # Function to create test script
 create_test_script() {
   local patch="$1"
-  local test_patch="$2" 
+  local test_patch="$2"
   local instance_id="$3"
   local fail_to_pass="$4"
   local pass_to_pass="$5"
@@ -989,6 +1030,7 @@ main() {
   local cleanup_containers="$2"
 
   # Display basic information
+  echo "📋 Input mode: $INPUT_MODE"
   echo "📋 Instance: $INSTANCE_ID"
   echo "📦 Repository: $REPO_URL"
   echo "🏷️  Commit: $COMMIT"
@@ -1042,23 +1084,36 @@ main() {
 }
 
 # Execute script with the provided parameters
-if [ $# -ge 10 ]; then
+# Check for minimum required arguments based on input mode
+if [[ "$INPUT_MODE" == "JSON" && $# -ge 2 ]] || [[ "$INPUT_MODE" == "POSITIONAL" && $# -ge 10 ]]; then
   # Default values for optional parameters
   NAME_BY_REPO=false
   CLEANUP_CONTAINERS=false
 
   # Parse additional optional parameters if provided
-  if [ $# -ge 11 ]; then
-    NAME_BY_REPO="${11}"
-  fi
-
-  if [ $# -ge 12 ]; then
-    CLEANUP_CONTAINERS="${12}"
+  if [[ "$INPUT_MODE" == "JSON" ]]; then
+    # For JSON mode, optional params start at position 3
+    if [ $# -ge 3 ]; then
+      NAME_BY_REPO="${3}"
+    fi
+    if [ $# -ge 4 ]; then
+      CLEANUP_CONTAINERS="${4}"
+    fi
+  else
+    # For positional mode, optional params start at position 11
+    if [ $# -ge 11 ]; then
+      NAME_BY_REPO="${11}"
+    fi
+    if [ $# -ge 12 ]; then
+      CLEANUP_CONTAINERS="${12}"
+    fi
   fi
 
   main "$NAME_BY_REPO" "$CLEANUP_CONTAINERS"
 else
-  USAGE_MSG="Usage: $0 REPO COMMIT PATCH TEST_PATCH FAIL_TO_PASS PASS_TO_PASS TEST_ARGS IS_MAVEN JAVA_VERSION INSTANCE_ID [NAME_BY_REPO] [CLEANUP_CONTAINERS]"
+  USAGE_MSG="Usage:
+  JSON mode: $0 /path/to/issue.json INSTANCE_ID [NAME_BY_REPO] [CLEANUP_CONTAINERS]
+  Positional mode: $0 REPO COMMIT PATCH TEST_PATCH FAIL_TO_PASS PASS_TO_PASS TEST_ARGS IS_MAVEN JAVA_VERSION INSTANCE_ID [NAME_BY_REPO] [CLEANUP_CONTAINERS]"
   echo "❌ Failed: $USAGE_MSG"
   write_verification_result_json "failed" "$USAGE_MSG"
 fi

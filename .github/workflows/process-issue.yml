@@ -125,8 +125,8 @@ jobs:
         env:
           REPO: ${{ steps.prep.outputs.repo }}
           COMMIT: ${{ steps.prep.outputs.commit }}
-          PATCH: ${{ steps.prep.outputs.patch }}
-          TEST_PATCH: ${{ steps.prep.outputs.test_patch }}
+          PATCH_PATH: ${{ steps.prep.outputs.patch_path }}
+          TEST_PATCH_PATH: ${{ steps.prep.outputs.test_patch_path }}
           FAIL_TO_PASS: ${{ steps.prep.outputs.fail_to_pass }}
           PASS_TO_PASS: ${{ steps.prep.outputs.pass_to_pass }}
           IS_MAVEN: ${{ steps.prep.outputs.is_maven }}
@@ -135,7 +135,7 @@ jobs:
         run: |
           chmod +x .github/scripts/verify_java_dataset_instance.sh
           set +e
-          .github/scripts/verify_java_dataset_instance.sh "$REPO" "$COMMIT" "$PATCH" "$TEST_PATCH" "$FAIL_TO_PASS" "$PASS_TO_PASS" "" "$IS_MAVEN" "$JAVA_VERSION" "$INSTANCE_ID" | tee verify_output.txt
+          .github/scripts/verify_java_dataset_instance.sh "$REPO" "$COMMIT" "$PATCH_PATH" "$TEST_PATCH_PATH" "$FAIL_TO_PASS" "$PASS_TO_PASS" "" "$IS_MAVEN" "$JAVA_VERSION" "$INSTANCE_ID" | tee verify_output.txt
           echo "exit_code=${PIPESTATUS[0]}" >> $GITHUB_OUTPUT
 
       - name: Post verification result as comment

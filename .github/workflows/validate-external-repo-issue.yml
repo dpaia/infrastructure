@@ -221,26 +221,23 @@ jobs:
           COMMITS: ${{ needs.collect-commits.outputs.commits }}
         run: |
           chmod +x .github/python/java_verify_ext.py
-          DATA_FILE="$RUNNER_TEMP/instance.json"
-          .github/python/java_verify_ext.py > "$DATA_FILE"
-          echo "data_path=$DATA_FILE" >> $GITHUB_OUTPUT
           echo "data_value<<EOF" >> $GITHUB_OUTPUT
-          cat "$DATA_FILE" >> $GITHUB_OUTPUT
+          .github/python/java_verify_ext.py >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
       - name: Run verification
         id: run-verification
         shell: bash
         env:
-            INSTANCE_JSON_PATH: ${{ steps.generate-data.outputs.data_path }}
+          INSTANCE_JSON: ${{ steps.generate-data.outputs.data_value }}
         run: |
           set +e
 
-          if [[ -z "$INSTANCE_JSON_PATH" ]] || [[ ! -s "$INSTANCE_JSON_PATH" ]]; then
+          if [[ -z "$INSTANCE_JSON" ]]; then
             echo "::error::❌ Failed: No instance JSON generated."
             printf '{"result":"failed","message":"No instance JSON generated."}' > verification-result.json
           else
             # Stream verification script output in real-time and save logs
-            stdbuf -oL -eL bash ./.github/scripts/apply-swe-benchmark-docker.sh --instance-file "$INSTANCE_JSON_PATH" 2>&1 | tee verify_output.txt
+            stdbuf -oL -eL bash ./.github/scripts/apply-swe-benchmark-docker.sh "$INSTANCE_JSON" 2>&1 | tee verify_output.txt
           fi
 
           # Read verification result JSON

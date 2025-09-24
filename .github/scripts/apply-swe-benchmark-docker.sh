@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Usage: ./apply-swe-benchmark-docker.sh <instance_json> [--cleanup] [--by-repo] [--generator=<name>] [--instance-file=<path>]
+# Usage: ./apply-swe-benchmark-docker.sh <instance_json> [--cleanup] [--by-repo] [--generator=<name>]
 
 set -e
 
@@ -27,16 +27,15 @@ write_verification_result_json() {
   echo "📄 Saved verification result to $outfile"
 }
 
-# Defaults
-INSTANCE_JSON=""
-INSTANCE_FILE=""
+INSTANCE_JSON="$1"
+
+# Parse optional parameters
 CLEANUP_CONTAINERS=false
 NAME_BY_REPO=false
 GENERATOR="java"
 
-# Parse arguments (supports both inline JSON and --instance-file)
-while [[ $# -gt 0 ]]; do
-  case "$1" in
+for arg in "${@:2}"; do
+  case $arg in
     --cleanup)
       CLEANUP_CONTAINERS=true
       shift
@@ -46,77 +45,41 @@ while [[ $# -gt 0 ]]; do
       shift
       ;;
     --generator=*)
-      GENERATOR="${1#*=}"
-      shift
+      GENERATOR="${arg#*=}"
       ;;
     --generator)
-      if [[ -n "${2:-}" ]]; then
-        GENERATOR="$2"
-        shift 2
-      else
-        echo "Error: --generator requires a value. Use --generator=<name>"
-        exit 1
-      fi
-      ;;
-    --instance-file=*)
-      INSTANCE_FILE="${1#*=}"
-      shift
-      ;;
-    --instance-file)
-      if [[ -n "${2:-}" ]]; then
-        INSTANCE_FILE="$2"
-        shift 2
-      else
-        echo "Error: --instance-file requires a path. Use --instance-file=<path>"
-        exit 1
-      fi
+      echo "Error: --generator requires a value. Use --generator=<name>"
+      exit 1
       ;;
     --help|-h)
       echo "Usage: $0 <instance_json> [options]"
       echo ""
       echo "Arguments:"
-      echo "  <instance_json>            Complete JSON object for a single instance (avoid for very large JSON; prefer --instance-file)"
+      echo "  <instance_json>  Complete JSON object for a single instance"
       echo ""
       echo "Options:"
-      echo "  --instance-file=<path>     Provide path to a file containing the instance JSON"
-      echo "  --cleanup                  Remove prepared containers after execution"
-      echo "  --by-repo                  Name containers by repository instead of instance ID"
-      echo "  --generator=<name>         Selects which verify script to run (default: java)"
-      echo "  --help, -h                 Show this help message"
+      echo "  --cleanup            Remove prepared containers after execution"
+      echo "  --by-repo            Name containers by repository instead of instance ID"
+      echo "  --generator=<name>   Selects which verify script to run (default: java)"
+      echo "  --help, -h           Show this help message"
       echo ""
       echo "Examples:"
-      echo "  $0 --instance-file /path/to/instance.json"
-      echo "  $0 --instance-file /path/to/instance.json --cleanup"
+      echo "  $0 '{\"instance_id\":\"instance-123\",\"repo\":\"owner/repo\",...}'"
+      echo "  $0 '{\"instance_id\":\"instance-123\",\"repo\":\"owner/repo\",...}' --cleanup"
+      echo "  $0 '{\"instance_id\":\"instance-123\",\"repo\":\"owner/repo\",...}' --by-repo"
       echo "  $0 '{\"instance_id\":\"instance-123\",\"repo\":\"owner/repo\",...}' --generator=java"
       exit 0
       ;;
     *)
-      # Treat first non-option as direct JSON input (backward compatible)
-      if [[ -z "$INSTANCE_JSON" ]]; then
-        INSTANCE_JSON="$1"
-        shift
-      else
-        echo "Unknown argument: $1"
-        echo "Use --help for usage information"
-        exit 1
-      fi
+      echo "Unknown option: $arg"
+      echo "Use --help for usage information"
+      exit 1
       ;;
   esac
 done
 
-# Prefer file if provided
-if [[ -z "$INSTANCE_JSON" && -n "$INSTANCE_FILE" ]]; then
-  if [[ -f "$INSTANCE_FILE" ]]; then
-    INSTANCE_JSON="$(cat "$INSTANCE_FILE")"
-  else
-    echo "Error: instance file not found: $INSTANCE_FILE"
-    write_verification_result_json "failed" "Instance file not found: $INSTANCE_FILE"
-    exit 1
-  fi
-fi
-
 if [[ -z "$INSTANCE_JSON" ]]; then
-  echo "Usage: $0 <instance_json> [--cleanup] [--by-repo] [--generator=<name>] [--instance-file=<path>]"
+  echo "Usage: $0 <instance_json> [--cleanup] [--by-repo]"
   echo "Use --help for more information"
   write_verification_result_json "failed" "No instance JSON provided"
   exit 1

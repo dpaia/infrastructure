@@ -14,7 +14,7 @@ set -o pipefail
 #   Requirements: 'jq' must be installed
 # -----------------------------------------------------------------------------
 # MODE 2: POSITIONAL MODE
-#   Usage: verify_java_dataset_instance.sh REPO COMMIT PATCH_FILE TEST_PATCH_FILE FAIL_TO_PASS PASS_TO_PASS TEST_ARGS IS_MAVEN JAVA_VERSION INSTANCE_ID
+#   Usage: verify_java_dataset_instance.sh REPO COMMIT PATCH TEST_PATCH FAIL_TO_PASS PASS_TO_PASS TEST_ARGS IS_MAVEN JAVA_VERSION INSTANCE_ID
 #   Description: All parameters are passed directly as command-line arguments
 # -----------------------------------------------------------------------------
 
@@ -37,31 +37,19 @@ if [[ "$INPUT_MODE" == "JSON" ]]; then
   echo "📋 Processing JSON with instance ID: $INSTANCE_ID"
   REPO=$(jq -r ".[] | select(.instance_id == \"$INSTANCE_ID\") | .repo" "$BENCHMARK_FILE")
   COMMIT=$(jq -r ".[] | select(.instance_id == \"$INSTANCE_ID\") | .base_commit" "$BENCHMARK_FILE")
-  PATCH_CONTENT=$(jq -r ".[] | select(.instance_id == \"$INSTANCE_ID\") | .patch" "$BENCHMARK_FILE")
-  TEST_PATCH_CONTENT=$(jq -r ".[] | select(.instance_id == \"$INSTANCE_ID\") | .test_patch" "$BENCHMARK_FILE")
+  PATCH=$(jq -r ".[] | select(.instance_id == \"$INSTANCE_ID\") | .patch" "$BENCHMARK_FILE")
+  TEST_PATCH=$(jq -r ".[] | select(.instance_id == \"$INSTANCE_ID\") | .test_patch" "$BENCHMARK_FILE")
   FAIL_TO_PASS=$(jq -r ".[] | select(.instance_id == \"$INSTANCE_ID\") | .FAIL_TO_PASS" "$BENCHMARK_FILE")
   PASS_TO_PASS=$(jq -r ".[] | select(.instance_id == \"$INSTANCE_ID\") | .PASS_TO_PASS" "$BENCHMARK_FILE")
   TEST_ARGS=$(jq -r ".[] | select(.instance_id == \"$INSTANCE_ID\") | .test_args" "$BENCHMARK_FILE")
   IS_MAVEN=$(jq -r ".[] | select(.instance_id == \"$INSTANCE_ID\") | .is_maven" "$BENCHMARK_FILE")
   JAVA_VERSION=$(jq -r ".[] | select(.instance_id == \"$INSTANCE_ID\") | .java_version" "$BENCHMARK_FILE")
-
-  # Write patches to temp files if provided
-  PATCH_FILE=""
-  TEST_PATCH_FILE=""
-  if [[ -n "$PATCH_CONTENT" && "$PATCH_CONTENT" != "null" ]]; then
-    PATCH_FILE="$(mktemp)"
-    printf "%s" "$PATCH_CONTENT" > "$PATCH_FILE"
-  fi
-  if [[ -n "$TEST_PATCH_CONTENT" && "$TEST_PATCH_CONTENT" != "null" ]]; then
-    TEST_PATCH_FILE="$(mktemp)"
-    printf "%s" "$TEST_PATCH_CONTENT" > "$TEST_PATCH_FILE"
-  fi
 else
   echo "📋 Positional input mode detected"
   REPO="$1"
   COMMIT="$2"
-  PATCH_FILE="$3"
-  TEST_PATCH_FILE="$4"
+  PATCH="$3"
+  TEST_PATCH="$4"
   FAIL_TO_PASS="$5"
   PASS_TO_PASS="$6"
   TEST_ARGS="$7"
@@ -110,9 +98,9 @@ if [[ -z "$COMMIT" || "$COMMIT" == "null" ]]; then
   exit 1
 fi
 
-# Validate patches: at least one of PATCH_FILE or TEST_PATCH_FILE must be provided and non-empty
-if { [[ -z "$PATCH_FILE" || ! -s "$PATCH_FILE" ]] && [[ -z "$TEST_PATCH_FILE" || ! -s "$TEST_PATCH_FILE" ]]; }; then
-  echo "❌ Unable to generate patch or test_patch (no non-empty patch files)"
+# Validate patches: at least one of PATCH or TEST_PATCH must be provided
+if { [[ -z "$PATCH" || "$PATCH" == "null" ]] && [[ -z "$TEST_PATCH" || "$TEST_PATCH" == "null" ]]; }; then
+  echo "❌ Unable to generate patch or test_patch"
   write_verification_result_json "failed" "Unable to generate patch or test_patch"
   exit 1
 fi
@@ -959,8 +947,8 @@ build_and_run_setup_container() {
 # Function to run tests in container
 run_tests_in_container() {
   local docker_image_name="$1"
-  local patch_path_host="$2"
-  local test_patch_path_host="$3"
+  local patch="$2"
+  local test_patch="$3"
   local instance_id="$4"
   local fail_to_pass="$5"
   local pass_to_pass="$6"
@@ -969,22 +957,8 @@ run_tests_in_container() {
   local commit="$9"
   local repo_url="${10}"
 
-  # Determine container paths and mount args for patch files
-  local patch_mount_args=()
-  local test_patch_mount_args=()
-  local patch_path_container=""
-  local test_patch_path_container=""
-  if [[ -n "$patch_path_host" && -s "$patch_path_host" ]]; then
-    patch_path_container="/workspace/source.patch"
-    patch_mount_args=(-v "$patch_path_host:$patch_path_container:ro")
-  fi
-  if [[ -n "$test_patch_path_host" && -s "$test_patch_path_host" ]]; then
-    test_patch_path_container="/workspace/test.patch"
-    test_patch_mount_args=(-v "$test_patch_path_host:$test_patch_path_container:ro")
-  fi
-
-  # Create test script and params
-  create_test_script "$patch_path_container" "$test_patch_path_container" "$instance_id" "$fail_to_pass" "$pass_to_pass" "$test_args" "$is_maven" "$commit" "$repo_url"
+  # Create test script
+  create_test_script "$patch" "$test_patch" "$instance_id" "$fail_to_pass" "$pass_to_pass" "$test_args" "$is_maven" "$commit" "$repo_url"
   create_common_functions_file
 
   # Run Docker container and execute tests
@@ -998,8 +972,6 @@ run_tests_in_container() {
     -v "$(pwd)/$TEST_SCRIPT:/workspace/run_tests.sh" \
     -v "$(pwd)/$PARAMS_FILE:/workspace/test_params.env" \
     -v "$(pwd)/$COMMON_FUNCTIONS:/workspace/common_functions.sh" \
-    "${patch_mount_args[@]}" \
-    "${test_patch_mount_args[@]}" \
     -v /var/run/docker.sock:/var/run/docker.sock \
     --privileged \
     --network bridge \
@@ -1092,7 +1064,7 @@ main() {
     LAST_LINE="❌  Failed: Setup container preparation failed"
   else
     # Run tests in container
-    LAST_LINE=$(run_tests_in_container "$DOCKER_IMAGE_NAME" "$PATCH_FILE" "$TEST_PATCH_FILE" "$INSTANCE_ID" "$FAIL_TO_PASS" "$PASS_TO_PASS" "$TEST_ARGS" "$IS_MAVEN" "$COMMIT" "$REPO_URL")
+    LAST_LINE=$(run_tests_in_container "$DOCKER_IMAGE_NAME" "$PATCH" "$TEST_PATCH" "$INSTANCE_ID" "$FAIL_TO_PASS" "$PASS_TO_PASS" "$TEST_ARGS" "$IS_MAVEN" "$COMMIT" "$REPO_URL")
     RUN_EXIT_CODE=$?
   fi
 

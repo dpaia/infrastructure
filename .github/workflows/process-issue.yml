@@ -135,6 +135,16 @@ jobs:
         run: |
           chmod +x .github/scripts/verify_java_dataset_instance.sh
           set +e
+          echo "Parameters"
+          echo "REPO=$REPO"
+          echo "COMMIT=$COMMIT"
+          echo "PATCH_PATH=$PATCH_PATH"
+          echo "TEST_PATCH_PATH=$TEST_PATCH_PATH"
+          echo "FAIL_TO_PASS=$FAIL_TO_PASS"
+          echo "PASS_TO_PASS=$PASS_TO_PASS"
+          echo "IS_MAVEN=$IS_MAVEN"
+          echo "JAVA_VERSION=$JAVA_VERSION"
+          echo "INSTANCE_ID=$INSTANCE_ID"
           .github/scripts/verify_java_dataset_instance.sh "$REPO" "$COMMIT" "$PATCH_PATH" "$TEST_PATCH_PATH" "$FAIL_TO_PASS" "$PASS_TO_PASS" "" "$IS_MAVEN" "$JAVA_VERSION" "$INSTANCE_ID" | tee verify_output.txt
           echo "exit_code=${PIPESTATUS[0]}" >> $GITHUB_OUTPUT
 

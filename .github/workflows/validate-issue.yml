@@ -92,15 +92,18 @@ jobs:
           VERSION: '1'
         run: |
           chmod +x .github/python/${{ github.event.inputs.generator }}.py
+          DATA_FILE="$RUNNER_TEMP/instance.json"
+          .github/python/${{ github.event.inputs.generator }}.py > "$DATA_FILE"
+          echo "data_path=$DATA_FILE" >> $GITHUB_OUTPUT
           echo "data_value<<EOF" >> $GITHUB_OUTPUT
-          .github/python/${{ github.event.inputs.generator }}.py >> $GITHUB_OUTPUT
+          cat "$DATA_FILE" >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
 
       - name: Run verification
         id: run-verification
         shell: bash
         env:
-          INSTANCE_JSON: ${{ steps.generate-data.outputs.data_value }}
+          INSTANCE_JSON_PATH: ${{ steps.generate-data.outputs.data_path }}
           EMPTY_TEST_FIELDS: ${{ steps.check-test-fields.outputs.empty_test_fields }}
         run: |
           set +e
@@ -109,12 +112,12 @@ jobs:
             echo "::error::❌ Failed: Both FAIL_TO_PASS and PASS_TO_PASS are empty. Nothing to validate."
             printf '{"result":"failed","message":"Both FAIL_TO_PASS and PASS_TO_PASS are empty. Nothing to validate."}' > verification-result.json
           else
-            if [[ -z "$INSTANCE_JSON" ]]; then
+            if [[ -z "$INSTANCE_JSON_PATH" ]] || [[ ! -s "$INSTANCE_JSON_PATH" ]]; then
               echo "::error::❌ Failed: No instance JSON generated."
               printf '{"result":"failed","message":"No instance JSON generated."}' > verification-result.json
             else
               # Stream verification script output in real-time and save logs
-              stdbuf -oL -eL bash ./.github/scripts/apply-swe-benchmark-docker.sh "$INSTANCE_JSON" --generator="${{ github.event.inputs.generator }}" 2>&1 | tee verify_output.txt
+              stdbuf -oL -eL bash ./.github/scripts/apply-swe-benchmark-docker.sh "$(cat "$INSTANCE_JSON_PATH")" --generator="${{ github.event.inputs.generator }}" 2>&1 | tee verify_output.txt
             fi
           fi
 

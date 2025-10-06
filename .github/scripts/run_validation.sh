@@ -11,7 +11,7 @@ error_exit() {
 }
 
 # Parse spec from first argument
-SPEC="$1"
+SPEC="$1 $2"
 if [ -z "$SPEC" ]; then
     error_exit "Usage: $0 <spec> [options]\nExample: $0 swe-jvm --dataset-name dataset.json --run-id test-1" 1
 fi

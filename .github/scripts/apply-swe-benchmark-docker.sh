@@ -147,7 +147,8 @@ echo "🚀 Running evaluation script: $EVALUATION_SCRIPT"
 "$EVALUATION_SCRIPT" \
   --spec swe-jvm \
   --dataset-name "$INSTANCE_FILE" \
-  --run_id "$INSTANCE_ID"
+  --run_id "$INSTANCE_ID" \
+  --report-dir .
 
 EVAL_EXIT_CODE=$?
 

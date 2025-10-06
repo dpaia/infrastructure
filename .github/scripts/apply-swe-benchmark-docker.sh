@@ -131,7 +131,7 @@ mkdir -p "$DATASET_DIR"
 INSTANCE_FILE="${DATASET_DIR}/${INSTANCE_ID}.json"
 
 echo "💾 Saving instance JSON to $INSTANCE_FILE"
-echo "$INSTANCE_JSON" > "$INSTANCE_FILE"
+echo "[$INSTANCE_JSON]" > "$INSTANCE_FILE"
 
 # Run the evaluation script
 EVALUATION_SCRIPT="$(dirname "$0")/run_validation.sh"

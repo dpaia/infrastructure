@@ -11,7 +11,8 @@ error_exit() {
 }
 
 # Parse spec from first argument
-SPEC="$1 $2"
+SPEC_ARG="$1"
+SPEC="$2"
 if [ -z "$SPEC" ]; then
     error_exit "Usage: $0 <spec> [options]\nExample: $0 swe-jvm --dataset-name dataset.json --run-id test-1" 1
 fi
@@ -99,7 +100,7 @@ echo ""
 # Run evaluation
 (
   set +e
-  ee-bench "$SPEC" -v run-evaluation \
+  ee-bench --spec "$SPEC" -v run-evaluation \
       --predictions-path gold \
       --docker-opts "-v /var/run/docker.sock:/var/run/docker.sock \
         --privileged \

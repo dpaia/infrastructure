@@ -133,9 +133,9 @@ INSTANCE_FILE="${DATASET_DIR}/${INSTANCE_ID}.json"
 echo "💾 Saving instance JSON to $INSTANCE_FILE"
 echo "[ $INSTANCE_JSON ]" > "$INSTANCE_FILE"
 
-echo "File content:"
-cat "$INSTANCE_FILE"
-echo ""
+#echo "File content:"
+#cat "$INSTANCE_FILE"
+#echo ""
 
 # Run the evaluation script
 EVALUATION_SCRIPT="$(dirname "$0")/run_validation.sh"
@@ -152,6 +152,7 @@ echo "🚀 Running evaluation script: $EVALUATION_SCRIPT"
   --dataset-name "$INSTANCE_FILE" \
   --instance-ids "$INSTANCE_ID" \
   --run-id "$INSTANCE_ID" \
+  --print-report \
   --report-dir .
 
 EVAL_EXIT_CODE=$?

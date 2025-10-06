@@ -199,19 +199,6 @@ else
   # Build detailed failure message from report
   FAILURE_MESSAGE="$MESSAGE"
 
-  # Check for specific evaluator failures
-  EVALUATOR_ERRORS=$(jq -r ".results[\"$INSTANCE_ID\"].evaluations | to_entries | map(select(.value.status == \"error\" or .value.status == \"failed\")) | map(\"\(.key): \(.value.message)\") | join(\"; \")" "$REPORT_FILE" 2>/dev/null)
-
-  if [ -n "$EVALUATOR_ERRORS" ] && [ "$EVALUATOR_ERRORS" != "null" ] && [ "$EVALUATOR_ERRORS" != "" ]; then
-    FAILURE_MESSAGE="$FAILURE_MESSAGE | Evaluator failures: $EVALUATOR_ERRORS"
-  fi
-
-  # Add error field if present
-  ERROR_INFO=$(jq -r ".results[\"$INSTANCE_ID\"].error // empty" "$REPORT_FILE")
-  if [ -n "$ERROR_INFO" ] && [ "$ERROR_INFO" != "null" ]; then
-    FAILURE_MESSAGE="$FAILURE_MESSAGE | Error: $ERROR_INFO"
-  fi
-
   write_verification_result_json "failed" "$FAILURE_MESSAGE"
   exit 1
 fi

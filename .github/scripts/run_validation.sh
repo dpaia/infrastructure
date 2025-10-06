@@ -106,7 +106,7 @@ echo ""
         --network bridge \
         -e TESTCONTAINERS_RYUK_DISABLED=true \
         -e TESTCONTAINERS_CHECKS_DISABLE=true \
-        -e DOCKER_HOST=unix:///var/run/docker.sock \
+        -e DOCKER_HOST=unix:///var/run/docker.sock" \
       "$@"
 )
 EXIT_CODE=$?

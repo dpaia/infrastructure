@@ -145,7 +145,6 @@ chmod +x "$EVALUATION_SCRIPT"
 
 echo "🚀 Running evaluation script: $EVALUATION_SCRIPT"
 "$EVALUATION_SCRIPT" \
-  swe-jvm \
   --dataset-name "$INSTANCE_FILE" \
   --run_id "$INSTANCE_ID" \
   --report-dir .

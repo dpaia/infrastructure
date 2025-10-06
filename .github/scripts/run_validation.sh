@@ -17,7 +17,7 @@ if [ -z "$SPEC" ]; then
 fi
 
 # Shift to get remaining arguments
-shift
+#shift
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || error_exit "Failed to determine script directory"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR" && pwd)" || error_exit "Failed to determine project root"
@@ -99,7 +99,7 @@ echo ""
 # Run evaluation
 (
   set +e
-  ee-bench --spec "$SPEC" -v run-evaluation \
+  ee-bench --spec swe-jvm -v run-evaluation \
       --predictions-path gold \
       --docker-opts "-v /var/run/docker.sock:/var/run/docker.sock \
         --privileged \

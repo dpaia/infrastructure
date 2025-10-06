@@ -34,7 +34,7 @@ WHEEL_FILES=("$TOOLS_DIR"/*.whl)
 # Check if any wheel files exist
 if [ ${#WHEEL_FILES[@]} -eq 0 ] || [ ! -f "${WHEEL_FILES[0]}" ]; then
     echo "Error: No wheel files found in $TOOLS_DIR"
-    echo "Please build the wheels first with: ./scripts/build.sh"
+    echo "Please build the wheels first"
     exit 1
 fi
 

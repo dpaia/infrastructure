@@ -7,10 +7,10 @@ on:
       generator:
         description: 'Profile'
         required: true
-        default: 'swe-jvm'
+        default: 'java'
         type: choice
         options:
-          - swe-jvm
+          - java
       organization:
         description: 'GitHub organization name'
         required: true

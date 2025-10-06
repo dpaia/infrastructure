@@ -17,7 +17,7 @@ if [ -z "$SPEC" ]; then
 fi
 
 # Shift to get remaining arguments
-#shift
+shift
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || error_exit "Failed to determine script directory"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR" && pwd)" || error_exit "Failed to determine project root"
@@ -94,6 +94,20 @@ done
 echo ""
 echo "Starting evaluation..."
 echo "========================================="
+echo ""
+
+# Print the command before execution
+echo "Executing command:"
+echo "ee-bench --spec swe-jvm -v run-evaluation \\"
+echo "    --predictions-path gold \\"
+echo "    --docker-opts \"-v /var/run/docker.sock:/var/run/docker.sock \\"
+echo "      --privileged \\"
+echo "      --network bridge \\"
+echo "      -e TESTCONTAINERS_RYUK_DISABLED=true \\"
+echo "      -e TESTCONTAINERS_CHECKS_DISABLE=true \\"
+echo "      -e DOCKER_HOST=unix:///var/run/docker.sock \\"
+echo "      -e TESTCONTAINERS_HOST_OVERRIDE=host.docker.internal\" \\"
+echo "    $*"
 echo ""
 
 # Run evaluation

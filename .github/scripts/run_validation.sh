@@ -21,7 +21,7 @@ shift
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || error_exit "Failed to determine script directory"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR" && pwd)" || error_exit "Failed to determine project root"
-TOOLS_DIR="$SCRIPT_DIR/../tools"
+TOOLS_DIR="$SCRIPT_DIR/tools"
 
 # Check if tools directory exists
 if [ ! -d "$TOOLS_DIR" ]; then
@@ -60,16 +60,16 @@ fi
 echo "Activating virtual environment..."
 source "$VENV_DIR/bin/activate" || error_exit "Failed to activate virtual environment" 3
 
-# Install/upgrade all wheels (core first, then others)
+# Install/upgrade all wheels (core first with dependencies, then plugins)
 echo "Installing all wheels from tools directory..."
 
-# Install ee_bench_core first (dependency)
-echo "Installing core package first..."
+# Install ee_bench_core first WITH dependencies
+echo "Installing core package with dependencies..."
 CORE_INSTALLED=false
 for whl in "${WHEEL_FILES[@]}"; do
     if [[ "$(basename "$whl")" == ee_bench_core-*.whl ]]; then
-        echo "Installing $(basename "$whl")..."
-        if ! pip install --force-reinstall --no-deps "$whl"; then
+        echo "Installing $(basename "$whl") with dependencies..."
+        if ! pip install --force-reinstall "$whl"; then
             error_exit "Failed to install core package: $(basename "$whl")" 4
         fi
         CORE_INSTALLED=true
@@ -80,7 +80,7 @@ if [ "$CORE_INSTALLED" = false ]; then
     error_exit "No core package (ee_bench_core-*.whl) found in wheels" 5
 fi
 
-# Install remaining wheels (dependencies already satisfied by core)
+# Install remaining wheels WITHOUT dependencies (they only need core)
 echo "Installing plugin packages..."
 for whl in "${WHEEL_FILES[@]}"; do
     if [[ "$(basename "$whl")" != ee_bench_core-*.whl ]]; then
@@ -90,12 +90,6 @@ for whl in "${WHEEL_FILES[@]}"; do
         fi
     fi
 done
-
-# Install any missing external dependencies
-echo "Installing external dependencies..."
-if ! pip install docker click gitpython pyyaml requests; then
-    error_exit "Failed to install external dependencies" 6
-fi
 
 echo ""
 echo "Starting evaluation..."

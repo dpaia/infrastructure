@@ -10,3 +10,6 @@
 /.idea/misc.xml
 /.idea/modules.xml
 /.idea/vcs.xml
+
+# macOS
+.DS_Store

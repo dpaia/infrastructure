@@ -21,7 +21,7 @@ shift
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || error_exit "Failed to determine script directory"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR" && pwd)" || error_exit "Failed to determine project root"
-TOOLS_DIR="$SCRIPT_DIR/tools"
+TOOLS_DIR="$SCRIPT_DIR/../tools"
 
 # Check if tools directory exists
 if [ ! -d "$TOOLS_DIR" ]; then

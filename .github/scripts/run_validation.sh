@@ -107,7 +107,6 @@ echo ""
         -e TESTCONTAINERS_RYUK_DISABLED=true \
         -e TESTCONTAINERS_CHECKS_DISABLE=true \
         -e DOCKER_HOST=unix:///var/run/docker.sock \
-        -e TESTCONTAINERS_HOST_OVERRIDE=host.docker.internal" \
       "$@"
 )
 EXIT_CODE=$?

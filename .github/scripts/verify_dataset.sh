@@ -1,12 +1,11 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
-# SWE-Bench Docker Evaluation Script
+# Dataset Verification Script
 #
-# This script runs SWE-bench evaluations and produces verification results.
-# It handles both successful and failed evaluations, parsing the detailed
-# JSON reports produced by the evaluation framework.
+# This script combines dataset validation and SWE-bench evaluation.
+# It sets up the environment, runs evaluations, and produces verification results.
 #
-# Usage: ./apply-swe-benchmark-docker.sh <instance_json> [--generator=<name>]
+# Usage: ./verify_dataset.sh <instance_json> [options]
 #
 # Arguments:
 #   <instance_json>  Complete JSON object for a single SWE-bench instance
@@ -17,26 +16,19 @@
 #
 # Output:
 #   - Saves instance JSON to datasets/<generator>/<instance_id>.json
-#   - Runs evaluation via run_validation.sh
-#   - Parses evaluation report from reports/<instance_id>.json
+#   - Sets up virtual environment and installs wheels
+#   - Runs evaluation via ee-bench
+#   - Parses evaluation report from <instance_id>.json
 #   - Writes verification-result.json with status and message
 #   - Returns exit code 0 for success, 1 for failure
 #
-# Report Format:
-#   The script expects reports in the format:
-#   {
-#     "results": {
-#       "<instance_id>": {
-#         "result": "success|failed",
-#         "successful": true|false,
-#         "message": "...",
-#         "error": "...",
-#         "evaluations": { ... }
-#       }
-#     }
-#   }
-#
 # Note: We don't use 'set -e' here to allow proper error handling and exit code capture
+
+# Error handling function
+error_exit() {
+    echo "❌ Error: $1" >&2
+    exit "${2:-1}"
+}
 
 # Helper to write verification result to JSON
 write_verification_result_json() {
@@ -133,28 +125,102 @@ INSTANCE_FILE="${DATASET_DIR}/${INSTANCE_ID}.json"
 echo "💾 Saving instance JSON to $INSTANCE_FILE"
 echo "[ $INSTANCE_JSON ]" > "$INSTANCE_FILE"
 
-#echo "File content:"
-#cat "$INSTANCE_FILE"
-#echo ""
+# Set up paths
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || error_exit "Failed to determine script directory"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)" || error_exit "Failed to determine project root"
+TOOLS_DIR="$SCRIPT_DIR/../tools"
 
-# Run the evaluation script
-EVALUATION_SCRIPT="$(dirname "$0")/run_validation.sh"
-if [ ! -f "$EVALUATION_SCRIPT" ]; then
-  echo "❌ Evaluation script not found at $EVALUATION_SCRIPT"
-  write_verification_result_json "failed" "Evaluation script not found"
-  exit 1
+# Check if tools directory exists
+if [ ! -d "$TOOLS_DIR" ]; then
+    error_exit "Tools directory not found at $TOOLS_DIR" 1
 fi
 
-chmod +x "$EVALUATION_SCRIPT"
+# Find all wheel files in tools directory
+WHEEL_FILES=("$TOOLS_DIR"/*.whl)
 
-echo "🚀 Running evaluation script: $EVALUATION_SCRIPT"
-"$EVALUATION_SCRIPT" swe-jvm \
-  --dataset-name "$INSTANCE_FILE" \
-  --instance-ids "$INSTANCE_ID" \
-  --run-id "$INSTANCE_ID" \
-  --print-report \
-  --report-dir .
+# Check if any wheel files exist
+if [ ${#WHEEL_FILES[@]} -eq 0 ] || [ ! -f "${WHEEL_FILES[0]}" ]; then
+    echo "Error: No wheel files found in $TOOLS_DIR"
+    echo "Please build the wheels first"
+    write_verification_result_json "failed" "No wheel files found in $TOOLS_DIR"
+    exit 1
+fi
 
+echo "========================================="
+echo "EE-Bench Dataset Verification"
+echo "========================================="
+echo "Project root: $PROJECT_ROOT"
+echo "Tools dir:    $TOOLS_DIR"
+echo "Wheel files found: ${#WHEEL_FILES[@]}"
+for whl in "${WHEEL_FILES[@]}"; do
+    echo "  - $(basename "$whl")"
+done
+echo "========================================="
+echo ""
+
+# Create and activate virtual environment if needed
+VENV_DIR="$PROJECT_ROOT/.venv-evaluation"
+if [ ! -d "$VENV_DIR" ]; then
+    echo "Creating virtual environment at $VENV_DIR..."
+    python3 -m venv "$VENV_DIR" || error_exit "Failed to create virtual environment" 2
+fi
+
+echo "Activating virtual environment..."
+source "$VENV_DIR/bin/activate" || error_exit "Failed to activate virtual environment" 3
+
+# Install/upgrade all wheels (core first with dependencies, then plugins)
+echo "Installing all wheels from tools directory..."
+
+# Install ee_bench_core first WITH dependencies
+echo "Installing core package with dependencies..."
+CORE_INSTALLED=false
+for whl in "${WHEEL_FILES[@]}"; do
+    if [[ "$(basename "$whl")" == ee_bench_core-*.whl ]]; then
+        echo "Installing $(basename "$whl") with dependencies..."
+        if ! pip install --force-reinstall "$whl"; then
+            error_exit "Failed to install core package: $(basename "$whl")" 4
+        fi
+        CORE_INSTALLED=true
+    fi
+done
+
+if [ "$CORE_INSTALLED" = false ]; then
+    error_exit "No core package (ee_bench_core-*.whl) found in wheels" 5
+fi
+
+# Install remaining wheels WITHOUT dependencies (they only need core)
+echo "Installing plugin packages..."
+for whl in "${WHEEL_FILES[@]}"; do
+    if [[ "$(basename "$whl")" != ee_bench_core-*.whl ]]; then
+        echo "Installing $(basename "$whl")..."
+        if ! pip install --force-reinstall --no-deps "$whl"; then
+            echo "⚠️  Warning: Failed to install $(basename "$whl"), continuing..." >&2
+        fi
+    fi
+done
+
+echo ""
+echo "🚀 Starting evaluation..."
+echo "========================================="
+echo ""
+
+# Run evaluation
+(
+  set +e
+  ee-bench --spec swe-jvm -v run-evaluation \
+      --dataset-name "$INSTANCE_FILE" \
+      --instance-ids "$INSTANCE_ID" \
+      --run-id "$INSTANCE_ID" \
+      --predictions-path gold \
+      --print-report \
+      --report-dir . \
+      --docker-opts "-v /var/run/docker.sock:/var/run/docker.sock \
+        --privileged \
+        --network bridge \
+        -e TESTCONTAINERS_RYUK_DISABLED=true \
+        -e TESTCONTAINERS_CHECKS_DISABLE=true \
+        -e DOCKER_HOST=unix:///var/run/docker.sock"
+)
 EVAL_EXIT_CODE=$?
 
 echo ""
@@ -163,16 +229,15 @@ echo "Evaluation completed with exit code: $EVAL_EXIT_CODE"
 echo "========================================="
 
 # Determine the report file location
-# The report should be in reports/ or core/reports/ directory
 REPORT_FILE="${INSTANCE_ID}.json"
 
-if [ -z "$REPORT_FILE" ]; then
+if [ ! -f "$REPORT_FILE" ]; then
   echo "❌ Report file not found for instance: ${INSTANCE_ID}"
   write_verification_result_json "failed" "Evaluation report file not found"
   exit 1
 fi
 
-# Parse the new report format
+# Parse the report format
 # Report structure: { "results": { "instance_id": { "result": "success|failed", "message": "...", "successful": true|false } } }
 
 RESULT_STATUS=$(jq -r ".results[\"$INSTANCE_ID\"].result // \"unknown\"" "$REPORT_FILE")

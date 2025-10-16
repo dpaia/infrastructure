@@ -275,8 +275,8 @@ def fetch_commits(organization, repository, issue_number, github_token=None):
                 continue
             
             # Check for excluded commits first
-            # Pattern: "Exclude commit: <hash>" or "Exclude: <hash>"
-            exclude_pattern = re.findall(r'[Ee]xclude\s+(?:[Cc]ommit:?\s+)?([0-9a-f]{7,40})', comment)
+            # Pattern: "Excluded <hash>" or "Exclude <hash>"
+            exclude_pattern = re.findall(r'[Ee]xclude[d]?\s+([0-9a-f]{7,40})', comment)
             
             if exclude_pattern:
                 for commit_hash in exclude_pattern:

@@ -144,8 +144,9 @@ def fetch_commits(organization, repository, issue_number, github_token=None):
     result = run_subprocess(cmd, capture_output=True, text=True, check=False)
     linked_commits_with_dates = result.stdout.strip() if result.returncode == 0 else ""
 
-    # Initialize an empty array for all commits
+    # Initialize an empty array for all commits and excluded commit hashes
     all_commits = []
+    excluded_commit_hashes = []
 
     # Check for manually linked commits in the issue description first
     print("Checking issue description for manually linked commits...")
@@ -160,6 +161,14 @@ def fetch_commits(organization, repository, issue_number, github_token=None):
 
     if issue_body:
         print("Processing issue description for commit references...")
+        
+        # First, check for excluded commits
+        excluded_pattern = re.findall(r'[Ee]xcluded\s+([0-9a-f]{7,40})', issue_body)
+        if excluded_pattern:
+            for commit_hash in excluded_pattern:
+                print(f"Found excluded commit in issue description: {commit_hash}")
+                excluded_commit_hashes.append(commit_hash)
+        
         # Extract commit hashes using multiple regex patterns
         commit_pattern_1 = re.findall(r'(?:[Rr]elated\s+)?[Cc]ommit:?\s+([0-9a-f]{40})', issue_body)
         commit_pattern_2 = re.findall(r'\b([0-9a-f]{40})\b', issue_body)
@@ -211,6 +220,13 @@ def fetch_commits(organization, repository, issue_number, github_token=None):
         for comment in comments.split('\n'):
             if not comment:
                 continue
+
+            # First, check for excluded commits
+            excluded_pattern = re.findall(r'[Ee]xcluded\s+([0-9a-f]{7,40})', comment)
+            if excluded_pattern:
+                for commit_hash in excluded_pattern:
+                    print(f"Found excluded commit in comment: {commit_hash}")
+                    excluded_commit_hashes.append(commit_hash)
 
             # Extract commit hashes using multiple regex patterns to catch different formats
             # Pattern 1: Common formats like "Related commit: HASH", "Commit: HASH", etc.
@@ -306,6 +322,16 @@ def fetch_commits(organization, repository, issue_number, github_token=None):
                             all_commits.append(commit_obj)
                         except json.JSONDecodeError:
                             print(f"Error parsing commit data: {commit_data}")
+
+    # Filter out excluded commits before processing
+    if excluded_commit_hashes:
+        print(f"Filtering out {len(excluded_commit_hashes)} excluded commits: {excluded_commit_hashes}")
+        # Filter out commits that match any excluded hash (support both short and full hashes)
+        all_commits = [
+            commit for commit in all_commits 
+            if not any(commit.get('sha', '').startswith(excluded_hash) for excluded_hash in excluded_commit_hashes)
+        ]
+        print(f"Remaining commits after filtering: {len(all_commits)}")
 
     # Sort commits by date and create a JSON array
     if all_commits:

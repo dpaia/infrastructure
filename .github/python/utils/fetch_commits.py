@@ -112,10 +112,9 @@ def filter_best_commits(verified_commits, owner, repo_name):
     """
     Filters commits to keep only the "best" ones for patch application.
     
-    Strategy:
-    1. If commits are sequential (one is ancestor of another), keep only the descendant
-    2. If commits modify the same files, keep only the latest
-    3. This prevents patch merge conflicts when multiple related commits exist
+    Uses ancestor-descendant relationship check: if commit B is a descendant
+    of commit A (B contains all changes from A), keeps only B to avoid
+    duplicate patches.
     
     Args:
         verified_commits (list): List of verified commit SHAs
@@ -130,7 +129,7 @@ def filter_best_commits(verified_commits, owner, repo_name):
     
     print(f"Filtering {len(verified_commits)} commits to avoid patch conflicts...", file=sys.stderr)
     
-    # Strategy 1: Check if commits are sequential (ancestor-descendant relationship)
+    # Check if commits are sequential (ancestor-descendant relationship)
     # If commit B is a descendant of commit A, keep only B
     filtered = []
     
@@ -153,7 +152,7 @@ def filter_best_commits(verified_commits, owner, repo_name):
                 status = result.stdout.strip()
                 # If status = "ahead", later_commit contains all changes from commit
                 if status == "ahead":
-                    print(f"Commit {commit[:7]} is ancestor of {later_commit[:7]}, keeping only descendant")
+                    print(f"Commit {commit[:7]} is ancestor of {later_commit[:7]}, keeping only descendant", file=sys.stderr)
                     is_ancestor_of_later = True
                     break
         
@@ -161,40 +160,12 @@ def filter_best_commits(verified_commits, owner, repo_name):
             filtered.append(commit)
     
     if len(filtered) < len(verified_commits):
-        print(f"Filtered out {len(verified_commits) - len(filtered)} ancestor commits")
-        print(f"Remaining commits after ancestor filtering: {[c[:7] for c in filtered]}")
-        return filtered
+        print(f"Filtered out {len(verified_commits) - len(filtered)} ancestor commits", file=sys.stderr)
+        print(f"Remaining commits after filtering: {[c[:7] for c in filtered]}", file=sys.stderr)
+    else:
+        print(f"No ancestor commits found, keeping all {len(verified_commits)} commits", file=sys.stderr)
     
-    # Strategy 2: If ancestor filtering didn't help, check if commits modify same files
-    print(f"Checking if commits modify the same files...")
-    
-    commit_files = {}
-    for commit in verified_commits:
-        cmd = [
-            'gh', 'api',
-            f'repos/{owner}/{repo_name}/commits/{commit}',
-            '--jq', '.files[].filename'
-        ]
-        
-        result = run_subprocess(cmd, capture_output=True, text=True, check=False)
-        if result.returncode == 0 and result.stdout.strip():
-            files = set(result.stdout.strip().split('\n'))
-            commit_files[commit] = files
-            print(f"Commit {commit[:7]} modifies {len(files)} files")
-    
-    # If all commits modify the same files, keep only the latest
-    if len(commit_files) > 1:
-        all_files = list(commit_files.values())
-        # Check if there's significant overlap in modified files
-        first_files = all_files[0]
-        overlap_count = sum(1 for files in all_files[1:] if len(files & first_files) > 0)
-        
-        if overlap_count == len(all_files) - 1:
-            print(f"All commits modify overlapping files, keeping only the latest commit to avoid conflicts")
-            return [verified_commits[-1]]
-    
-    print(f"No filtering applied, using all {len(verified_commits)} commits")
-    return verified_commits
+    return filtered
 
 def fetch_commits(organization, repository, issue_number, github_token=None):
     """
@@ -283,7 +254,7 @@ def fetch_commits(organization, repository, issue_number, github_token=None):
                 else:
                     print(f"Commit {commit_hash} from issue description does not exist in this repository, skipping")
 
-    # Check for manually linked commits in issue comments
+    # Check for manually linked commits and excluded commits in issue comments
     print("Checking issue comments for manually linked commits...")
     cmd = [
         'gh', 'api',
@@ -293,12 +264,29 @@ def fetch_commits(organization, repository, issue_number, github_token=None):
 
     result = run_subprocess(cmd, capture_output=True, text=True, check=False)
     comments = result.stdout.strip() if result.returncode == 0 else ""
+    
+    # Track excluded commits
+    excluded_commits = set()
 
     if comments:
         print("Processing issue comments for commit references...")
         for comment in comments.split('\n'):
             if not comment:
                 continue
+            
+            # Check for excluded commits first
+            # Pattern: "Exclude commit: <hash>" or "Exclude: <hash>"
+            exclude_pattern = re.findall(r'[Ee]xclude\s+(?:[Cc]ommit:?\s+)?([0-9a-f]{7,40})', comment)
+            
+            if exclude_pattern:
+                for commit_hash in exclude_pattern:
+                    print(f"Found excluded commit in comment: {commit_hash}")
+                    
+                    # Verify and get full hash
+                    commit_exists = verify_commit_exists(owner, repo_name, commit_hash)
+                    if commit_exists:
+                        excluded_commits.add(commit_exists)
+                        print(f"Will exclude commit: {commit_exists[:7]}")
 
             # Extract commit hashes using multiple regex patterns to catch different formats
             # Pattern 1: Common formats like "Related commit: HASH", "Commit: HASH", etc.
@@ -320,12 +308,22 @@ def fetch_commits(organization, repository, issue_number, github_token=None):
 
             if commit_hashes:
                 for commit_hash in commit_hashes:
+                    # Skip if this commit is in excluded list
+                    if any(commit_hash in exc for exc in excluded_commits):
+                        print(f"Skipping excluded commit: {commit_hash}")
+                        continue
+                    
                     print(f"Found potential commit hash in comment: {commit_hash}")
 
                     # Verify this commit exists in the repository
                     commit_exists = verify_commit_exists(owner, repo_name, commit_hash)
 
                     if commit_exists:
+                        # Skip if full hash is excluded
+                        if commit_exists in excluded_commits:
+                            print(f"Skipping excluded commit: {commit_exists[:7]}")
+                            continue
+                        
                         # We have a valid commit, now get its full hash and date
                         full_commit_hash = commit_exists
                         cmd = [
@@ -409,6 +407,11 @@ def fetch_commits(organization, repository, issue_number, github_token=None):
         print(f"Verifying all {len(sorted_commit_shas)} commits exist in repository...")
         verified_commit_shas = []
         for commit_sha in sorted_commit_shas:
+            # Skip excluded commits
+            if commit_sha in excluded_commits:
+                print(f"Skipping excluded commit: {commit_sha[:7]}")
+                continue
+            
             if commit_sha and verify_commit_exists(owner, repo_name, commit_sha):
                 verified_commit_shas.append(commit_sha)
             else:
@@ -417,7 +420,10 @@ def fetch_commits(organization, repository, issue_number, github_token=None):
         if verified_commit_shas:
             sorted_commit_shas = verified_commit_shas
             
-            # Apply filtering to avoid patch conflicts from sequential/overlapping commits
+            # Remove duplicates while preserving order
+            sorted_commit_shas = list(dict.fromkeys(sorted_commit_shas))
+            
+            # Apply filtering to avoid patch conflicts from ancestor commits
             if len(sorted_commit_shas) > 1:
                 sorted_commit_shas = filter_best_commits(sorted_commit_shas, owner, repo_name)
         else:

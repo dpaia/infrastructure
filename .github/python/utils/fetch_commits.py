@@ -108,6 +108,94 @@ def verify_commit_exists(owner, repo_name, commit_hash):
     print(f"Warning: Commit {commit_hash} exists but is not reachable from any branch")
     return ""
 
+def filter_best_commits(verified_commits, owner, repo_name):
+    """
+    Filters commits to keep only the "best" ones for patch application.
+    
+    Strategy:
+    1. If commits are sequential (one is ancestor of another), keep only the descendant
+    2. If commits modify the same files, keep only the latest
+    3. This prevents patch merge conflicts when multiple related commits exist
+    
+    Args:
+        verified_commits (list): List of verified commit SHAs
+        owner (str): GitHub organization name
+        repo_name (str): Repository name
+        
+    Returns:
+        list: Filtered list of commits
+    """
+    if len(verified_commits) <= 1:
+        return verified_commits
+    
+    print(f"Filtering {len(verified_commits)} commits to avoid patch conflicts...", file=sys.stderr)
+    
+    # Strategy 1: Check if commits are sequential (ancestor-descendant relationship)
+    # If commit B is a descendant of commit A, keep only B
+    filtered = []
+    
+    for i, commit in enumerate(verified_commits):
+        is_ancestor_of_later = False
+        
+        # Check if this commit is an ancestor of any later commits
+        for j in range(i + 1, len(verified_commits)):
+            later_commit = verified_commits[j]
+            
+            # Check if commit is ancestor of later_commit using compare API
+            cmd = [
+                'gh', 'api',
+                f'repos/{owner}/{repo_name}/compare/{commit}...{later_commit}',
+                '--jq', '.status'
+            ]
+            
+            result = run_subprocess(cmd, capture_output=True, text=True, check=False)
+            if result.returncode == 0:
+                status = result.stdout.strip()
+                # If status = "ahead", later_commit contains all changes from commit
+                if status == "ahead":
+                    print(f"Commit {commit[:7]} is ancestor of {later_commit[:7]}, keeping only descendant")
+                    is_ancestor_of_later = True
+                    break
+        
+        if not is_ancestor_of_later:
+            filtered.append(commit)
+    
+    if len(filtered) < len(verified_commits):
+        print(f"Filtered out {len(verified_commits) - len(filtered)} ancestor commits")
+        print(f"Remaining commits after ancestor filtering: {[c[:7] for c in filtered]}")
+        return filtered
+    
+    # Strategy 2: If ancestor filtering didn't help, check if commits modify same files
+    print(f"Checking if commits modify the same files...")
+    
+    commit_files = {}
+    for commit in verified_commits:
+        cmd = [
+            'gh', 'api',
+            f'repos/{owner}/{repo_name}/commits/{commit}',
+            '--jq', '.files[].filename'
+        ]
+        
+        result = run_subprocess(cmd, capture_output=True, text=True, check=False)
+        if result.returncode == 0 and result.stdout.strip():
+            files = set(result.stdout.strip().split('\n'))
+            commit_files[commit] = files
+            print(f"Commit {commit[:7]} modifies {len(files)} files")
+    
+    # If all commits modify the same files, keep only the latest
+    if len(commit_files) > 1:
+        all_files = list(commit_files.values())
+        # Check if there's significant overlap in modified files
+        first_files = all_files[0]
+        overlap_count = sum(1 for files in all_files[1:] if len(files & first_files) > 0)
+        
+        if overlap_count == len(all_files) - 1:
+            print(f"All commits modify overlapping files, keeping only the latest commit to avoid conflicts")
+            return [verified_commits[-1]]
+    
+    print(f"No filtering applied, using all {len(verified_commits)} commits")
+    return verified_commits
+
 def fetch_commits(organization, repository, issue_number, github_token=None):
     """
     Fetch commits related to a GitHub issue.
@@ -328,6 +416,10 @@ def fetch_commits(organization, repository, issue_number, github_token=None):
 
         if verified_commit_shas:
             sorted_commit_shas = verified_commit_shas
+            
+            # Apply filtering to avoid patch conflicts from sequential/overlapping commits
+            if len(sorted_commit_shas) > 1:
+                sorted_commit_shas = filter_best_commits(sorted_commit_shas, owner, repo_name)
         else:
             print("Warning: No verified commits found in repository, using all commits")
 

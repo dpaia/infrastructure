@@ -8,7 +8,7 @@ from utils.generate_data import *
 # Get required input parameters from environment variables
 issue_number = os.environ.get('ISSUE_NUMBER', 'unknown')
 repository = os.environ.get('REPOSITORY', 'unknown')
-organization = os.environ.get('ORGANIZATION', 'jetbrains-eval-lab')
+organization = os.environ.get('ORGANIZATION', 'dpai-benchmark')
 latest_commit = os.environ.get('LATEST_COMMIT', '')
 linked_commits = json.loads(os.environ.get('LINKED_COMMITS', '')) if os.environ.get('LINKED_COMMITS', '') else []
 fail_to_pass = os.environ.get('FAIL_TO_PASS', '')

@@ -1,5 +1,5 @@
 name: Share Custom Workflows for Repositories
-run-name: "Share workflow: ${{ inputs.workflow_path || 'workflow' }} to ${{ inputs.organization || 'jetbrains-eval-lab' }} repos with topic: ${{ inputs.topic || 'all' }}"
+run-name: "Share workflow: ${{ inputs.workflow_path || 'workflow' }} to ${{ inputs.organization || 'dpai-benchmark' }} repos with topic: ${{ inputs.topic || 'all' }}"
 
 on:
   workflow_dispatch:
@@ -8,7 +8,7 @@ on:
         description: 'GitHub organization name'
         required: true
         type: string
-        default: 'jetbrains-eval-lab'
+        default: 'dpai-benchmark'
       topic:
         description: 'Repository topic filter'
         required: false

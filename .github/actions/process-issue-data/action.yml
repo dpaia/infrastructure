@@ -1,5 +1,5 @@
 name: 'Process Issue Data'
-description: 'Updates issue SWE data, collects PR URLs, and uploads PR artifacts'
+description: 'Updates issue dataser data, collects PR URLs, and uploads PR artifacts'
 
 inputs:
   generator:
@@ -32,7 +32,7 @@ inputs:
 outputs:
   pull_request_url:
     description: 'URL of the created pull request'
-    value: ${{ steps.update-swe-data.outputs.pull_request_url }}
+    value: ${{ steps.update-data.outputs.pull_request_url }}
 
 runs:
   using: "composite"
@@ -42,10 +42,10 @@ runs:
       shell: bash
       run: mkdir -p pr_artifacts
 
-    - name: Update Issue SWE Data
-      id: update-swe-data
+    - name: Update Issue Data
+      id: update-data
       if: ${{ inputs.condition == 'true' }}
-      uses: ./.github/actions/update-issue-swe-data
+      uses: ./.github/actions/update-issue-data
       with:
         generator: ${{ inputs.generator }}
         organization: ${{ inputs.organization }}
@@ -57,19 +57,19 @@ runs:
 
     - name: Collect PR URLs
       id: collect-prs
-      if: ${{ steps.update-swe-data.outputs.pull_request_url != '' }}
+      if: ${{ steps.update-data.outputs.pull_request_url != '' }}
       shell: bash
       run: |
         # Save PR URL to both output and artifact file
-        echo "pr_${{ inputs.issue_id }}=${{ steps.update-swe-data.outputs.pull_request_url }}" >> $GITHUB_OUTPUT
+        echo "pr_${{ inputs.issue_id }}=${{ steps.update-data.outputs.pull_request_url }}" >> $GITHUB_OUTPUT
         
         # Save PR URL to a file in the artifacts directory
-        echo "${{ steps.update-swe-data.outputs.pull_request_url }}" > pr_artifacts/pr_${{ inputs.issue_id }}.txt
+        echo "${{ steps.update-data.outputs.pull_request_url }}" > pr_artifacts/pr_${{ inputs.issue_id }}.txt
         echo "Saved PR URL to artifact file: pr_artifacts/pr_${{ inputs.issue_id }}.txt"
 
     # Upload PR artifacts
     - name: Upload PR artifacts
-      if: ${{ steps.update-swe-data.outputs.pull_request_url != '' }}
+      if: ${{ steps.update-data.outputs.pull_request_url != '' }}
       uses: actions/upload-artifact@v4
       with:
         name: data-pr-${{ inputs.organization }}-${{ inputs.repository }}-${{ inputs.issue_id }}

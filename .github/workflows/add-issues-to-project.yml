@@ -7,7 +7,7 @@ on:
         description: 'GitHub organization name'
         required: true
         type: string
-        default: 'jetbrains-eval-lab'
+        default: 'dpai-benchmark'
       project_number:
         description: 'Project number'
         required: true
@@ -26,7 +26,7 @@ on:
 
 # Define default values to be used by scheduled runs
 env:
-  DEFAULT_ORGANIZATION: 'jetbrains-eval-lab'
+  DEFAULT_ORGANIZATION: 'dpai-benchmark'
   DEFAULT_PROJECT_NUMBER: '2'
   DEFAULT_SEARCH_QUERY: '-label:Epic is:issue'
 

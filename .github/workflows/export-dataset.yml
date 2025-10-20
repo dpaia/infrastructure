@@ -1,5 +1,5 @@
 name: Export Dataset for issues
-run-name: "Export SWE Dataset: ${{ inputs.search_query }} -> ${{ inputs.output_file }}"
+run-name: "Export Dataset: ${{ inputs.search_query }} -> ${{ inputs.output_file }}"
 
 on:
   workflow_dispatch:
@@ -8,7 +8,7 @@ on:
         description: 'GitHub organization name'
         required: true
         type: string
-        default: 'jetbrains-eval-lab'
+        default: 'dpai-benchmark'
       search_query:
         description: >
           GitHub issue search
@@ -23,7 +23,7 @@ on:
         description: "Repository for exported dataset"
         required: false
         type: string
-        default: "jetbrains-eval-lab/ee-swe-dataset"
+        default: "dpai-benchmark/ee-dataset"
       create_pull_request:
         description: "Create a pull request to the result datasets repository"
         required: false

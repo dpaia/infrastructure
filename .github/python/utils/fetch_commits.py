@@ -35,24 +35,25 @@ def verify_commit_exists(owner, repo_name, commit_hash):
         commit_hash (str): The commit hash to verify
 
     Returns:
-        str: The full commit hash if it exists and is reachable from any branch, empty string otherwise
+        tuple: (full_commit_hash, branches) where branches is a list of branch names containing this commit
+               Returns ("", []) if commit doesn't exist or isn't reachable from any branch
     """
     if not commit_hash:
-        return ""
-    
+        return "", []
+
     # First, try to get the commit directly to verify it exists
     cmd = [
         'gh', 'api',
         f'repos/{owner}/{repo_name}/commits/{commit_hash}',
         '--jq', '.sha'
     ]
-    
+
     result = run_subprocess(cmd, capture_output=True, text=True, check=False)
     if result.returncode != 0:
-        return ""  # Commit doesn't exist
-        
+        return "", []  # Commit doesn't exist
+
     full_commit_hash = result.stdout.strip()
-    
+
     # Step 1: Check if commit is the head of any branch using branches-where-head API
     print(f"Checking if commit {commit_hash} is head of any branch...")
     cmd = [
@@ -60,15 +61,15 @@ def verify_commit_exists(owner, repo_name, commit_hash):
         f'repos/{owner}/{repo_name}/commits/{commit_hash}/branches-where-head',
         '--jq', '.[].name'
     ]
-    
+
     result = run_subprocess(cmd, capture_output=True, text=True, check=False)
     if result.returncode == 0 and result.stdout.strip():
         branches_where_head = result.stdout.strip().split('\n')
         print(f"Commit {commit_hash} is head of branches: {', '.join(branches_where_head)}")
-        return full_commit_hash
-    
+        return full_commit_hash, branches_where_head
+
     print(f"Commit {commit_hash} is not head of any branch, checking all branches...")
-    
+
     # Step 2: If not head of any branch, check all branches with pagination (100 per page)
     cmd = [
         'gh', 'api',
@@ -77,50 +78,111 @@ def verify_commit_exists(owner, repo_name, commit_hash):
         '--paginate',
         '--jq', '.[].name'
     ]
-    
+
     result = run_subprocess(cmd, capture_output=True, text=True, check=False)
     if result.returncode != 0:
         print(f"Warning: Could not fetch branches for repository {owner}/{repo_name}")
-        return full_commit_hash  # If we can't get branches but commit exists, assume it's valid
-    
+        return full_commit_hash, []  # If we can't get branches but commit exists, assume it's valid
+
     branches = result.stdout.strip().split('\n') if result.stdout.strip() else []
-    
-    # Check if commit is reachable from any branch
+
+    # Check if commit is reachable from any branch and collect all branches that contain it
+    containing_branches = []
     for branch in branches:
         if not branch:
             continue
-            
+
         cmd = [
             'gh', 'api',
             '-H', 'X-GitHub-Api-Version: 2022-11-28',
             f'repos/{owner}/{repo_name}/compare/{commit_hash}...{branch}',
             '--jq', '.status'
         ]
-        
+
         result = run_subprocess(cmd, capture_output=True, text=True, check=False)
         if result.returncode == 0:
             status = result.stdout.strip()
             # If status is "ahead" or "identical", the commit is reachable from this branch
             if status in ["ahead", "identical"]:
-                print(f"Commit {commit_hash} found in branch: {branch}")
-                return full_commit_hash
-    
+                containing_branches.append(branch)
+
+    if containing_branches:
+        print(f"Commit {commit_hash} found in branches: {', '.join(containing_branches)}")
+        return full_commit_hash, containing_branches
+
     print(f"Warning: Commit {commit_hash} exists but is not reachable from any branch")
-    return ""
+    return "", []
+
+def filter_commits_by_branch(commits_with_branches, owner, repo_name):
+    """
+    Filters commits to ensure they all belong to the same branch.
+    Prioritizes the default branch (main/master) if available.
+
+    Args:
+        commits_with_branches (list): List of tuples (commit_sha, branches_list)
+        owner (str): GitHub organization name
+        repo_name (str): Repository name
+
+    Returns:
+        list: Filtered list of commit SHAs that all belong to the same branch
+    """
+    if len(commits_with_branches) <= 1:
+        return [c[0] for c in commits_with_branches]
+
+    print(f"Filtering {len(commits_with_branches)} commits to ensure they belong to the same branch...", file=sys.stderr)
+
+    # Get the default branch
+    cmd = [
+        'gh', 'api',
+        f'repos/{owner}/{repo_name}',
+        '--jq', '.default_branch'
+    ]
+    result = run_subprocess(cmd, capture_output=True, text=True, check=False)
+    default_branch = result.stdout.strip() if result.returncode == 0 else "main"
+    print(f"Default branch: {default_branch}", file=sys.stderr)
+
+    # Find the branch that contains the most commits
+    branch_commit_count = {}
+    for commit_sha, branches in commits_with_branches:
+        for branch in branches:
+            branch_commit_count[branch] = branch_commit_count.get(branch, 0) + 1
+
+    # Prefer default branch if it contains any commits, otherwise use the branch with most commits
+    target_branch = None
+    if default_branch in branch_commit_count:
+        target_branch = default_branch
+        print(f"Using default branch '{target_branch}' which contains {branch_commit_count[target_branch]} commits", file=sys.stderr)
+    elif branch_commit_count:
+        target_branch = max(branch_commit_count, key=branch_commit_count.get)
+        print(f"Using branch '{target_branch}' which contains {branch_commit_count[target_branch]} commits", file=sys.stderr)
+    else:
+        print("Warning: No branch found for commits, returning all commits", file=sys.stderr)
+        return [c[0] for c in commits_with_branches]
+
+    # Filter commits that belong to the target branch
+    filtered = []
+    for commit_sha, branches in commits_with_branches:
+        if target_branch in branches:
+            filtered.append(commit_sha)
+        else:
+            print(f"Excluding commit {commit_sha[:7]} - not in branch '{target_branch}' (found in: {', '.join(branches)})", file=sys.stderr)
+
+    print(f"Filtered commits to {len(filtered)} commits from branch '{target_branch}'", file=sys.stderr)
+    return filtered
 
 def filter_best_commits(verified_commits, owner, repo_name):
     """
     Filters commits to keep only the "best" ones for patch application.
-    
+
     Uses ancestor-descendant relationship check: if commit B is a descendant
     of commit A (B contains all changes from A), keeps only B to avoid
     duplicate patches.
-    
+
     Args:
         verified_commits (list): List of verified commit SHAs
         owner (str): GitHub organization name
         repo_name (str): Repository name
-        
+
     Returns:
         list: Filtered list of commits
     """
@@ -244,7 +306,7 @@ def fetch_commits(organization, repository, issue_number, github_token=None):
                 print(f"Found potential commit hash in issue description: {commit_hash}")
 
                 # Verify this commit exists in the repository
-                commit_exists = verify_commit_exists(owner, repo_name, commit_hash)
+                commit_exists, branches = verify_commit_exists(owner, repo_name, commit_hash)
 
                 if commit_exists:
                     # Get commit date for sorting
@@ -259,7 +321,7 @@ def fetch_commits(organization, repository, issue_number, github_token=None):
 
                     if commit_date:
                         print(f"Adding verified commit from issue description: {commit_hash} ({commit_date})")
-                        all_commits.append({"sha": commit_hash, "date": commit_date})
+                        all_commits.append({"sha": commit_hash, "date": commit_date, "branches": branches})
                 else:
                     print(f"Commit {commit_hash} from issue description does not exist in this repository, skipping")
 
@@ -290,9 +352,9 @@ def fetch_commits(organization, repository, issue_number, github_token=None):
             if exclude_pattern:
                 for commit_hash in exclude_pattern:
                     print(f"Found excluded commit in comment: {commit_hash}")
-                    
+
                     # Verify and get full hash
-                    commit_exists = verify_commit_exists(owner, repo_name, commit_hash)
+                    commit_exists, _ = verify_commit_exists(owner, repo_name, commit_hash)
                     if commit_exists:
                         excluded_commits.add(commit_exists)
                         print(f"Will exclude commit: {commit_exists[:7]}")
@@ -332,14 +394,14 @@ def fetch_commits(organization, repository, issue_number, github_token=None):
                     print(f"Found potential commit hash in comment: {commit_hash}")
 
                     # Verify this commit exists in the repository
-                    commit_exists = verify_commit_exists(owner, repo_name, commit_hash)
+                    commit_exists, branches = verify_commit_exists(owner, repo_name, commit_hash)
 
                     if commit_exists:
                         # Skip if full hash is excluded
                         if commit_exists in excluded_commits:
                             print(f"Skipping excluded commit: {commit_exists[:7]}")
                             continue
-                        
+
                         # We have a valid commit, now get its full hash and date
                         full_commit_hash = commit_exists
                         cmd = [
@@ -353,7 +415,7 @@ def fetch_commits(organization, repository, issue_number, github_token=None):
 
                         if commit_date:
                             print(f"Adding verified commit from comment: {full_commit_hash} ({commit_date})")
-                            all_commits.append({"sha": full_commit_hash, "date": commit_date})
+                            all_commits.append({"sha": full_commit_hash, "date": commit_date, "branches": branches})
                         else:
                             print(f"Could not get date for commit {full_commit_hash}, skipping")
                     else:
@@ -366,6 +428,11 @@ def fetch_commits(organization, repository, issue_number, github_token=None):
             if commit_data:
                 try:
                     commit_obj = json.loads(commit_data)
+                    # Verify commit and get branches
+                    commit_sha = commit_obj.get('sha', '')
+                    if commit_sha:
+                        _, branches = verify_commit_exists(owner, repo_name, commit_sha)
+                        commit_obj['branches'] = branches
                     all_commits.append(commit_obj)
                 except json.JSONDecodeError:
                     print(f"Error parsing commit data: {commit_data}")
@@ -405,6 +472,11 @@ def fetch_commits(organization, repository, issue_number, github_token=None):
                     if commit_data:
                         try:
                             commit_obj = json.loads(commit_data)
+                            # Verify commit and get branches
+                            commit_sha = commit_obj.get('sha', '')
+                            if commit_sha:
+                                _, branches = verify_commit_exists(owner, repo_name, commit_sha)
+                                commit_obj['branches'] = branches
                             all_commits.append(commit_obj)
                         except json.JSONDecodeError:
                             print(f"Error parsing commit data: {commit_data}")
@@ -429,26 +501,29 @@ def fetch_commits(organization, repository, issue_number, github_token=None):
         # Extract just the SHA values
         sorted_commit_shas = [commit.get('sha', '') for commit in sorted_commits]
 
-        # Verify all commits exist in repository
+        # Verify all commits exist in repository and collect branch info
         print(f"Verifying all {len(sorted_commit_shas)} commits exist in repository...")
-        verified_commit_shas = []
+        verified_commits_with_branches = []
         for commit_sha in sorted_commit_shas:
             # Skip excluded commits
             if commit_sha in excluded_commits:
                 print(f"Skipping excluded commit: {commit_sha[:7]}")
                 continue
-            
-            if commit_sha and verify_commit_exists(owner, repo_name, commit_sha):
-                verified_commit_shas.append(commit_sha)
-            else:
-                print(f"Warning: Commit {commit_sha} does not exist in repository, removing from list")
 
-        if verified_commit_shas:
-            sorted_commit_shas = verified_commit_shas
-            
+            if commit_sha:
+                verified_sha, branches = verify_commit_exists(owner, repo_name, commit_sha)
+                if verified_sha:
+                    verified_commits_with_branches.append((verified_sha, branches))
+                else:
+                    print(f"Warning: Commit {commit_sha} does not exist in repository, removing from list")
+
+        if verified_commits_with_branches:
+            # Filter commits to ensure they all belong to the same branch
+            sorted_commit_shas = filter_commits_by_branch(verified_commits_with_branches, owner, repo_name)
+
             # Remove duplicates while preserving order
             sorted_commit_shas = list(dict.fromkeys(sorted_commit_shas))
-            
+
             # Apply filtering to avoid patch conflicts from ancestor commits
             if len(sorted_commit_shas) > 1:
                 sorted_commit_shas = filter_best_commits(sorted_commit_shas, owner, repo_name)
@@ -481,7 +556,9 @@ def fetch_commits(organization, repository, issue_number, github_token=None):
 
         if base_commit:
             # Verify base commit exists
-            if verify_commit_exists(owner, repo_name, base_commit):
+            verified_base, _ = verify_commit_exists(owner, repo_name, base_commit)
+            if verified_base:
+                base_commit = verified_base
                 print(f"Base commit: {base_commit}")
             else:
                 print(f"Base commit {base_commit} does not exist in repository, using older repository commit")
@@ -500,9 +577,13 @@ def fetch_commits(organization, repository, issue_number, github_token=None):
             potential_base_commit = result.stdout.strip() if result.returncode == 0 else ""
 
             # Verify this commit exists too
-            if potential_base_commit and verify_commit_exists(owner, repo_name, potential_base_commit):
-                base_commit = potential_base_commit
-                print(f"Using older repository commit: {base_commit}")
+            if potential_base_commit:
+                verified_potential, _ = verify_commit_exists(owner, repo_name, potential_base_commit)
+                if verified_potential:
+                    base_commit = verified_potential
+                    print(f"Using older repository commit: {base_commit}")
+                else:
+                    print(f"Warning: Could not find a valid base commit")
             else:
                 print(f"Warning: Could not find a valid base commit")
     

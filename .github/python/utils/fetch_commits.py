@@ -525,8 +525,9 @@ def fetch_commits(organization, repository, issue_number, github_token=None):
             sorted_commit_shas = list(dict.fromkeys(sorted_commit_shas))
 
             # Apply filtering to avoid patch conflicts from ancestor commits
-            if len(sorted_commit_shas) > 1:
-                sorted_commit_shas = filter_best_commits(sorted_commit_shas, owner, repo_name)
+            # Disabled: We want ALL commits from the task branch, not just the final one
+            # if len(sorted_commit_shas) > 1:
+            #     sorted_commit_shas = filter_best_commits(sorted_commit_shas, owner, repo_name)
         else:
             print("Warning: No verified commits found in repository, using all commits")
 

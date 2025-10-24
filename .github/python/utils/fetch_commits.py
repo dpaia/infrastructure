@@ -271,14 +271,19 @@ def fetch_commits(organization, repository, issue_number, github_token=None):
 
     # Check for manually linked commits in the issue description first
     print("Checking issue description for manually linked commits...")
+    print("Nikita Morozov debug info:")
+    print(f"{owner = }, {repo_name = }, {issue_number = } ")
     cmd = [
         'gh', 'api',
         f'repos/{owner}/{repo_name}/issues/{issue_number}',
         '--jq', '.body'
     ]
+    print(f"{cmd = }")
 
     result = run_subprocess(cmd, capture_output=True, text=True, check=False)
+    print(f"{result = }")
     issue_body = result.stdout.strip() if result.returncode == 0 else ""
+    print(f"{issue_body = }")
 
     if issue_body:
         print("Processing issue description for commit references...")

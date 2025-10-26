@@ -8,7 +8,7 @@ on:
         description: 'GitHub organization name'
         required: true
         type: string
-        default: 'dpai-benchmark'
+        default: 'dpaia'
       search_query:
         description: >
           GitHub issue search
@@ -23,7 +23,7 @@ on:
         description: "Repository for exported dataset"
         required: false
         type: string
-        default: "dpai-benchmark/ee-dataset"
+        default: "dpaia/ee-dataset"
       create_pull_request:
         description: "Create a pull request to the result datasets repository"
         required: false

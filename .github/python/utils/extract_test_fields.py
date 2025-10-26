@@ -8,7 +8,7 @@ import sys
 # Get required input parameters from environment variables
 issue_number = os.environ.get('ISSUE_NUMBER', 'unknown')
 repository = os.environ.get('REPOSITORY', 'unknown')
-organization = os.environ.get('ORGANIZATION', 'dpai-benchmark')
+organization = os.environ.get('ORGANIZATION', 'dpaia')
 
 
 # Create a wrapper function for subprocess.run that won't be affected by mocks

@@ -8,7 +8,7 @@ on:
         description: 'GitHub organization name'
         required: true
         type: string
-        default: 'dpai-benchmark'
+        default: 'dpaia'
       topic:
         description: 'Repositories topic'
         required: false
@@ -48,7 +48,7 @@ on:
 
 # Define default values to be used by scheduled runs
 env:
-  DEFAULT_ORGANIZATION: 'dpai-benchmark'
+  DEFAULT_ORGANIZATION: 'dpaia'
   DEFAULT_TOPIC: 'java'
   DEFAULT_SEARCH_QUERY: '-label:Epic label:Verified'
   DEFAULT_GENERATOR: 'java'

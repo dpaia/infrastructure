@@ -24,7 +24,7 @@ Generated datasets are stored in the "dataset" repository. This includes dataset
 
 **Inputs:**
 - `generator`: Profile to use (default: 'java')
-- `organization`: GitHub organization name (default: 'dpai-benchmark')
+- `organization`: GitHub organization name (default: 'dpaia')
 - `repository`: Repository name
 - `issue_id`: Issue number
 - `auto_merge`: Automatically merge data updates (default: false)
@@ -41,7 +41,7 @@ This workflow generates a single benchmark dataset item from issue commits. It e
 **Trigger:** Manual (workflow_dispatch) or Scheduled (daily at 2:00 AM UTC)
 
 **Inputs:**
-- `organization`: GitHub organization name (default: 'dpai-benchmark')
+- `organization`: GitHub organization name (default: 'dpaia')
 - `topic`: Repositories topic (default: 'Java')
 - `generator`: Profile to use (default: 'java')
 - `search_query`: GitHub issue search query (default: '-label:Epic label:Verified')
@@ -65,10 +65,10 @@ This workflow automates the generation of multiple dataset items by processing i
 **Trigger:** Manual (workflow_dispatch)
 
 **Inputs:**
-- `organization`: GitHub organization name (default: 'dpai-benchmark')
+- `organization`: GitHub organization name (default: 'dpaia')
 - `search_query`: GitHub issue search query (default: '-label:Epic label:Verified')
 - `output_file`: Export file name (default: "dataset.json")
-- `datasets_repository`: Repository for exported dataset (default: "dpai-benchmark/ee-dataset")
+- `datasets_repository`: Repository for exported dataset (default: "dpaia/ee-dataset")
 - `create_pull_request`: Create a pull request to the result datasets repository (default: false)
 
 **Description:**
@@ -99,7 +99,7 @@ This workflow helps maintain consistent issue labels across multiple repositorie
 **Trigger:** Manual (workflow_dispatch) or Scheduled (daily at midnight UTC)
 
 **Inputs:**
-- `organization`: GitHub organization name (default: 'dpai-benchmark')
+- `organization`: GitHub organization name (default: 'dpaia')
 - `project_number`: Project number (default: '2')
 - `search_query`: GitHub issue search query (default: '-label:Epic is:issue')
 
@@ -115,7 +115,7 @@ This workflow automates the process of adding GitHub issues to a project board. 
 **Trigger:** Manual (workflow_dispatch)
 
 **Inputs:**
-- `organization`: GitHub organization name (default: 'dpai-benchmark')
+- `organization`: GitHub organization name (default: 'dpaia')
 - `topic`: Repository topic filter (default: empty, which means all repositories)
 - `workflow_path`: Path to GitHub workflow file to share (relative to shared/)
 

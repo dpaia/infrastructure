@@ -14,7 +14,7 @@ on:
       organization:
         description: 'GitHub organization name'
         required: true
-        default: 'dpai-benchmark'
+        default: 'dpaia'
         type: string
       repository:
         description: 'Repository name (repo)'

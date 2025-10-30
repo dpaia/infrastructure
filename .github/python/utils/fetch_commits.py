@@ -89,11 +89,15 @@ def verify_commit_exists(owner, repo_name, commit_hash):
     for branch in branches:
         if not branch:
             continue
+        
+        # URL encode branch name to handle special characters like #
+        import urllib.parse
+        encoded_branch = urllib.parse.quote(branch, safe='')
             
         cmd = [
             'gh', 'api',
             '-H', 'X-GitHub-Api-Version: 2022-11-28',
-            f'repos/{owner}/{repo_name}/compare/{commit_hash}...{branch}',
+            f'repos/{owner}/{repo_name}/compare/{commit_hash}...{encoded_branch}',
             '--jq', '.status'
         ]
         
@@ -265,8 +269,9 @@ def fetch_commits(organization, repository, issue_number, github_token=None):
     result = run_subprocess(cmd, capture_output=True, text=True, check=False)
     comments = result.stdout.strip() if result.returncode == 0 else ""
     
-    # Track excluded commits
+    # Track excluded commits and manual base commit
     excluded_commits = set()
+    manual_base_commit = ""
 
     if comments:
         print("Processing issue comments for commit references...")
@@ -274,7 +279,22 @@ def fetch_commits(organization, repository, issue_number, github_token=None):
             if not comment:
                 continue
             
-            # Check for excluded commits first
+            # Check for manual base commit first
+            # Pattern: "Base commit: <hash>"
+            base_pattern = re.findall(r'[Bb]ase\s+[Cc]ommit:?\s+([0-9a-f]{7,40})', comment)
+            
+            if base_pattern:
+                for commit_hash in base_pattern:
+                    print(f"Found manual base commit in comment: {commit_hash}")
+                    
+                    # Verify and get full hash
+                    commit_exists = verify_commit_exists(owner, repo_name, commit_hash)
+                    if commit_exists:
+                        manual_base_commit = commit_exists
+                        print(f"Will use manual base commit: {commit_exists[:7]}")
+                        break  # Use first valid base commit found
+            
+            # Check for excluded commits
             # Pattern: "Excluded <hash>" or "Exclude <hash>"
             exclude_pattern = re.findall(r'[Ee]xclude[d]?\s+([0-9a-f]{7,40})', comment)
             
@@ -441,7 +461,12 @@ def fetch_commits(organization, repository, issue_number, github_token=None):
 
     # Get the commit before the earliest commit (base commit)
     base_commit = ""
-    if sorted_commit_shas:
+    
+    # Check if we have a manual base commit from comments
+    if manual_base_commit:
+        print(f"Using manual base commit from comment: {manual_base_commit}")
+        base_commit = manual_base_commit
+    elif sorted_commit_shas:
         earliest_commit = sorted_commit_shas[0]  # First commit in sorted array (earliest by date)
         print(f"Fetching base commit (parent of earliest commit: {earliest_commit})...")
         cmd = [

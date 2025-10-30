@@ -1,4 +1,4 @@
-name: Validate SWE dataset item from Pull Request
+name: Validate dataset item from Pull Request
 run-name: "[${{ github.event.inputs.generator }}] Validate dataset PR #${{ github.event.inputs.pr_number }}"
 
 on:
@@ -14,7 +14,7 @@ on:
       organization:
         description: 'GitHub organization name'
         required: true
-        default: 'jetbrains-eval-lab'
+        default: 'dpaia'
         type: string
       repository:
         description: 'Repository name (repo)'

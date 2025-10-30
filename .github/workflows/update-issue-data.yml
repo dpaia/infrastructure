@@ -1,5 +1,5 @@
 name: Generate dataset data for issue
-run-name: "[${{ github.event.inputs.organization }}/${{ github.event.inputs.repository }}][${{ github.event.inputs.generator }}] Update SWE Data for issue #${{ github.event.inputs.issue_id }}"
+run-name: "[${{ github.event.inputs.organization }}/${{ github.event.inputs.repository }}][${{ github.event.inputs.generator }}] Update Data for issue #${{ github.event.inputs.issue_id }}"
 
 on:
   workflow_dispatch:
@@ -14,7 +14,7 @@ on:
       organization:
         description: 'GitHub organization name'
         required: true
-        default: 'jetbrains-eval-lab'
+        default: 'dpaia'
         type: string
       repository:
         description: 'Repository name (repo)'
@@ -31,18 +31,18 @@ on:
         default: false
 
 jobs:
-  update-swe-data:
+  update-data:
     runs-on: ubuntu-latest
     outputs:
-      gist_url: ${{ steps.update-swe-data.outputs.gist_url }}
-      has_error: ${{ steps.update-swe-data.outputs.has_error }}
+      gist_url: ${{ steps.update-data.outputs.gist_url }}
+      has_error: ${{ steps.update-data.outputs.has_error }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         
-      - name: Update SWE Data
-        id: update-swe-data
-        uses: ./.github/actions/update-issue-swe-data
+      - name: Update Data
+        id: update-data
+        uses: ./.github/actions/update-issue-data
         with:
           generator: ${{ github.event.inputs.generator }}
           organization: ${{ github.event.inputs.organization }}

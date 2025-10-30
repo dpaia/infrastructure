@@ -1,4 +1,4 @@
-name: 'Update Issue SWE Data'
+name: 'Update Issue dataset data'
 description: 'Updates Software Engineering data for a GitHub issue'
 author: 'JetBrains'
 

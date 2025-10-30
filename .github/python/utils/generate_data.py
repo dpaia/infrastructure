@@ -43,6 +43,28 @@ def is_test_file(file_path):
     
     return False
 
+# Function to ensure patch ends with a newline
+def ensure_patch_newline(patch):
+    """
+    Ensures that a patch string ends with a newline character.
+    Git patches must end with a newline for proper application.
+    
+    Args:
+        patch (str): The patch string to check
+        
+    Returns:
+        str: The patch string with guaranteed newline at the end
+    """
+    if not patch:
+        return patch
+    
+    # Check if patch ends with a newline
+    if not patch.endswith('\n'):
+        print("Warning: Patch does not end with newline, adding one", file=sys.stderr)
+        return patch + '\n'
+    
+    return patch
+
 # Create a wrapper function for subprocess.run that won't be affected by mocks
 def run_subprocess(cmd, **kwargs):
     # Get the real subprocess module, even if it's been mocked
@@ -461,7 +483,7 @@ def generate_patches(organization, repository, commit_ids, github_token = os.env
             print(f"Merged {len(patches)} patches for test file: {file_path}", file=sys.stderr)
     
     # Combine all merged patches
-    combined_source_patch = '\n\n'.join(merged_source_patches)
-    combined_test_patch = '\n\n'.join(merged_test_patches)
+    combined_source_patch = ensure_patch_newline('\n\n'.join(merged_source_patches))
+    combined_test_patch = ensure_patch_newline('\n\n'.join(merged_test_patches))
     
     return combined_source_patch, combined_test_patch

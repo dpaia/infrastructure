@@ -1,4 +1,4 @@
-name: Validate issue for SWE Benchmark
+name: Validate issue for DPAI Benchmark
 run-name: "[${{ github.event.inputs.organization }}/${{ github.event.inputs.repository }}][${{ github.event.inputs.generator }}] Validate issue #${{ github.event.inputs.issue_id }}"
 
 on:
@@ -14,7 +14,7 @@ on:
       organization:
         description: 'GitHub organization name'
         required: true
-        default: 'jetbrains-eval-lab'
+        default: 'dpaia'
         type: string
       repository:
         description: 'Repository name (repo)'

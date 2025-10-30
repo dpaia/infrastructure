@@ -8,7 +8,7 @@ on:
         description: 'GitHub organization name'
         required: true
         type: string
-        default: 'jetbrains-eval-lab'
+        default: 'dpaia'
       topic:
         description: 'Repositories topic'
         required: false
@@ -48,7 +48,7 @@ on:
 
 # Define default values to be used by scheduled runs
 env:
-  DEFAULT_ORGANIZATION: 'jetbrains-eval-lab'
+  DEFAULT_ORGANIZATION: 'dpaia'
   DEFAULT_TOPIC: 'java'
   DEFAULT_SEARCH_QUERY: '-label:Epic label:Verified'
   DEFAULT_GENERATOR: 'java'
@@ -284,7 +284,7 @@ jobs:
 
   # This job runs after all matrix jobs are complete to collect PR URLs
   collect-prs:
-    needs: [create-new-data, update-outdated-data, update-issue-swe-data]
+    needs: [create-new-data, update-outdated-data, update-issue-data]
     if: always()  # Always run this job to collect PRs, regardless of auto_merge setting
     runs-on: ubuntu-latest
     outputs:
@@ -356,7 +356,7 @@ jobs:
           # Always exit with success
           exit 0
 
-  update-issue-swe-data:
+  update-issue-data:
     needs: [find-issues, set-defaults]
     if: needs.set-defaults.outputs.update == 'force-update'
     runs-on: ubuntu-latest

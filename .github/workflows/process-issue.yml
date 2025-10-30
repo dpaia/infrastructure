@@ -41,7 +41,7 @@ jobs:
 
       - name: Run data generation/update
         id: update
-        uses: ./.github/actions/update-issue-swe-data
+        uses: ./.github/actions/update-issue-data
         with:
           generator: ${{ inputs.generator }}
           organization: ${{ inputs.organization }}

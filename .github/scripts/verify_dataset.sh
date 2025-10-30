@@ -2,16 +2,16 @@
 
 # Dataset Verification Script
 #
-# This script combines dataset validation and SWE-bench evaluation.
+# This script combines dataset validation and EE-bench evaluation.
 # It sets up the environment, runs evaluations, and produces verification results.
 #
 # Usage: ./verify_dataset.sh <instance_json> [options]
 #
 # Arguments:
-#   <instance_json>  Complete JSON object for a single SWE-bench instance
+#   <instance_json>  Complete JSON object for a single EE-bench instance
 #
 # Options:
-#   --generator=<name>   Selects the spec for evaluation (default: swe-jvm)
+#   --generator=<name>   Selects the spec for evaluation (default: jvm)
 #   --help, -h           Show help message
 #
 # Output:
@@ -63,12 +63,12 @@ for arg in "$@"; do
       echo "  <instance_json>  Complete JSON object for a single instance"
       echo ""
       echo "Options:"
-      echo "  --generator=<name>   Selects the spec for evaluation (default: swe-jvm)"
+      echo "  --generator=<name>   Selects the spec for evaluation (default: jvm)"
       echo "  --help, -h           Show this help message"
       echo ""
       echo "Examples:"
       echo "  $0 '{\"instance_id\":\"instance-123\",\"repo\":\"owner/repo\",...}'"
-      echo "  $0 '{\"instance_id\":\"instance-123\",\"repo\":\"owner/repo\",...}' --generator=swe-jvm"
+      echo "  $0 '{\"instance_id\":\"instance-123\",\"repo\":\"owner/repo\",...}' --generator=jvm"
       exit 0
       ;;
   esac
@@ -77,7 +77,7 @@ done
 INSTANCE_JSON="$1"
 
 # Parse optional parameters
-GENERATOR="swe-jvm"
+GENERATOR="jvm"
 
 for arg in "${@:2}"; do
   case $arg in
@@ -207,11 +207,11 @@ echo ""
 # Run evaluation
 (
   set +e
-  ee-bench --spec swe-jvm -v run-evaluation \
+  ee-bench --spec jvm -v run-evaluation \
       --dataset-name "$INSTANCE_FILE" \
       --instance-ids "$INSTANCE_ID" \
       --run-id "$INSTANCE_ID" \
-      --predictions-path gold \
+      --predictions gold \
       --print-report \
       --report-dir . \
       --docker-opts "-v /var/run/docker.sock:/var/run/docker.sock \

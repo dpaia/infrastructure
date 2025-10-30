@@ -52,7 +52,7 @@ jobs:
                 search/repositories \
                 --method=GET \
                 -H "Accept: application/vnd.github+json" \
-                -f q="org:jetbrains-eval-lab topic:$TOPIC fork:true" \
+                -f q="org:dpaia topic:$TOPIC fork:true" \
                 -f per_page="$PER_PAGE" \
                 -f page="$PAGE")
               
@@ -166,10 +166,10 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.PAT_LABEL_SYNC }}
         run: |
-          echo "➡️  Syncing labels to jetbrains-eval-lab/${{ matrix.repository }} using profile ${{ matrix.profile }}"
+          echo "➡️  Syncing labels to dpaia/${{ matrix.repository }} using profile ${{ matrix.profile }}"
           echo "  🏷️  Applying labels from profile: ${{ matrix.profile }}"
           github-label-sync \
             --access-token "$GITHUB_TOKEN" \
             --labels ".github/labels/${{ matrix.profile }}.json" \
             --allow-added-labels \
-            "jetbrains-eval-lab/${{ matrix.repository }}"
+            "dpaia/${{ matrix.repository }}"

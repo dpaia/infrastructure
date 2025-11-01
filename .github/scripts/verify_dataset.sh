@@ -221,6 +221,15 @@ RUN apt-get update && apt-get install -y ca-certificates-java && \
 EOF
 
   docker build -f Dockerfile.java8-ssl -t ee-bench-jdk8:base . && echo "✅ Java 8 image built successfully" || echo "⚠️ Failed to build Java 8 image"
+  
+  # Force ee-bench to use our Java 8 image by tagging it with the expected name
+  # Analysis shows ee-bench has --jvm-version parameter but still creates ee-bench-jdk24:base
+  # Local testing confirmed: both --jvm-version 8 and --jvm-version 24 create identical "ee-bench-jdk24:base"
+  # This appears to be either a bug in ee-bench or hardcoded image naming
+  # Solution: Pre-create the expected image name with our Java 8 content
+  echo "🏷️ Forcing ee-bench to use Java 8 by tagging our image..."
+  docker tag ee-bench-jdk8:base ee-bench-jdk24:base && echo "✅ Tagged Java 8 image as ee-bench-jdk24:base" || echo "⚠️ Failed to tag image"
+  
   rm -f Dockerfile.java8-ssl
   
   ee-bench --spec jvm -v run-evaluation \

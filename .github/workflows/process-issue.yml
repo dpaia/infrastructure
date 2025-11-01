@@ -119,6 +119,18 @@ jobs:
           echo "commit=$COMMIT" >> $GITHUB_OUTPUT
           echo "instance_id=$INSTANCE_ID" >> $GITHUB_OUTPUT
 
+      - name: Set up Java 8 for verification
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '8'
+
+      - name: Print Java and Maven versions
+        run: |
+          java -version
+          javac -version || true
+          mvn -version || true
+
       - name: Verify dataset instance
         id: verify
         shell: bash
@@ -130,7 +142,7 @@ jobs:
           FAIL_TO_PASS: ${{ steps.prep.outputs.fail_to_pass }}
           PASS_TO_PASS: ${{ steps.prep.outputs.pass_to_pass }}
           IS_MAVEN: ${{ steps.prep.outputs.is_maven }}
-          JAVA_VERSION: '24'
+          JAVA_VERSION: '8'
           INSTANCE_ID: ${{ steps.prep.outputs.instance_id }}
         run: |
           chmod +x .github/scripts/verify_java_dataset_instance.sh

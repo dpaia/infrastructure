@@ -1,0 +1,12 @@
+version: 1
+
+specs:
+  - name: jvm
+    jdk_version: 8
+    base_image: ee-bench-jdk8:base
+    maven_version: 3.9.9
+
+configurers:
+  - name: base_image
+    jdk_version: 8
+    base_image: ee-bench-jdk8:base

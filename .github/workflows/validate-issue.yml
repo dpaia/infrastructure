@@ -71,6 +71,18 @@ jobs:
           python -m pip install --upgrade pip
           pip install unidiff
 
+      - name: Set up Java 8 for verification
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '8'
+
+      - name: Print Java and Maven versions
+        run: |
+          java -version
+          javac -version || true
+          mvn -version || true
+
       - name: Make script executable
         run: chmod +x ./.github/scripts/verify_dataset.sh
 

@@ -7,7 +7,7 @@ on:
         description: 'Java version to set up'
         required: false
         type: string
-        default: '24'
+        default: '8'
       distribution:
         description: 'Java distribution to use'
         required: false

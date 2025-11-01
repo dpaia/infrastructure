@@ -207,7 +207,24 @@ echo ""
 # Run evaluation
 (
   set +e
+  
+  # Create simple Java 8 image with SSL certificate fix
+  echo "🐳 Creating Java 8 image with SSL certificate fix..."
+  cat > Dockerfile.java8-ssl << 'EOF'
+FROM maven:3.9.9-eclipse-temurin-8
+
+# Fix SSL certificates for Java 8
+RUN apt-get update && apt-get install -y ca-certificates-java && \
+    update-ca-certificates -f && \
+    /var/lib/dpkg/info/ca-certificates-java.postinst configure && \
+    echo "✅ Updated Java 8 SSL certificates"
+EOF
+
+  docker build -f Dockerfile.java8-ssl -t ee-bench-jdk8:base . && echo "✅ Java 8 image built successfully" || echo "⚠️ Failed to build Java 8 image"
+  rm -f Dockerfile.java8-ssl
+  
   ee-bench --spec jvm -v run-evaluation \
+      --jvm-version 8 \
       --dataset-name "$INSTANCE_FILE" \
       --instance-ids "$INSTANCE_ID" \
       --run-id "$INSTANCE_ID" \
@@ -222,6 +239,20 @@ echo ""
         -e DOCKER_HOST=unix:///var/run/docker.sock"
 )
 EVAL_EXIT_CODE=$?
+
+echo ""
+echo "🔍 Post-evaluation Docker state analysis:"
+echo "========================================="
+echo "📋 All Docker images after ee-bench:"
+docker images | grep -E "(ee-bench|temurin|maven)" || echo "No relevant images found"
+
+echo ""
+echo "🧪 Testing JDK versions in ee-bench images:"
+for image in $(docker images --format "{{.Repository}}:{{.Tag}}" | grep "ee-bench"); do
+  echo "Testing $image:"
+  docker run --rm "$image" sh -c "java -version 2>&1 | head -3; echo 'Maven:'; mvn --version 2>&1 | head -3" || echo "⚠️ Failed to test $image"
+  echo ""
+done
 
 echo ""
 echo "========================================="

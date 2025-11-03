@@ -71,17 +71,48 @@ jobs:
           python -m pip install --upgrade pip
           pip install unidiff
 
-      - name: Set up Java 8 for verification
-        uses: actions/setup-java@v4
-        with:
-          distribution: 'temurin'
-          java-version: '8'
-
-      - name: Print Java and Maven versions
+      - name: Get target repository Java configuration
+        id: get-java-config
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
+          TARGET_REPO: ${{ github.event.inputs.organization }}/${{ github.event.inputs.repository }}
         run: |
-          java -version
-          javac -version || true
-          mvn -version || true
+          echo "🔍 Checking Java configuration for target repository: $TARGET_REPO"
+          
+          # Get JAVA_VERSION
+          TARGET_JAVA_VERSION=$(curl -s -H "Authorization: token $GH_TOKEN" \
+            "https://api.github.com/repos/$TARGET_REPO/actions/variables/JAVA_VERSION" \
+            | jq -r '.value // empty' 2>/dev/null)
+          
+          # Get JAVA_DISTRIBUTION
+          TARGET_JAVA_DISTRIBUTION=$(curl -s -H "Authorization: token $GH_TOKEN" \
+            "https://api.github.com/repos/$TARGET_REPO/actions/variables/JAVA_DISTRIBUTION" \
+            | jq -r '.value // empty' 2>/dev/null)
+          
+          # Set Java version
+          if [[ -n "$TARGET_JAVA_VERSION" && "$TARGET_JAVA_VERSION" != "null" && "$TARGET_JAVA_VERSION" != "empty" ]]; then
+            echo "📋 Found JAVA_VERSION in target repository: $TARGET_JAVA_VERSION"
+            echo "java_version=$TARGET_JAVA_VERSION" >> $GITHUB_OUTPUT
+          else
+            echo "ℹ️ No JAVA_VERSION found in target repository, using default: 24"
+            echo "java_version=24" >> $GITHUB_OUTPUT
+          fi
+          
+          # Set Java distribution
+          if [[ -n "$TARGET_JAVA_DISTRIBUTION" && "$TARGET_JAVA_DISTRIBUTION" != "null" && "$TARGET_JAVA_DISTRIBUTION" != "empty" ]]; then
+            echo "📋 Found JAVA_DISTRIBUTION in target repository: $TARGET_JAVA_DISTRIBUTION"
+            echo "java_distribution=$TARGET_JAVA_DISTRIBUTION" >> $GITHUB_OUTPUT
+          else
+            echo "ℹ️ No JAVA_DISTRIBUTION found in target repository, using default: temurin"
+            echo "java_distribution=temurin" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Print target repository Java configuration
+        run: |
+          echo "📋 Target repository Java configuration:"
+          echo "  Java version: ${{ steps.get-java-config.outputs.java_version }}"
+          echo "  Java distribution: ${{ steps.get-java-config.outputs.java_distribution }}"
+          echo "ℹ️ Java will be configured in Docker containers during verification"
 
       - name: Make script executable
         run: chmod +x ./.github/scripts/verify_dataset.sh
@@ -114,6 +145,7 @@ jobs:
         env:
           INSTANCE_JSON: ${{ steps.generate-data.outputs.data_value }}
           EMPTY_TEST_FIELDS: ${{ steps.check-test-fields.outputs.empty_test_fields }}
+          JAVA_VERSION: ${{ steps.get-java-config.outputs.java_version }}
         run: |
           set +e
 

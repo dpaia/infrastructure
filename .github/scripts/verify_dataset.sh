@@ -208,32 +208,45 @@ echo ""
 (
   set +e
   
-  # Create simple Java 8 image with SSL certificate fix
-  echo "🐳 Creating Java 8 image with SSL certificate fix..."
-  cat > Dockerfile.java8-ssl << 'EOF'
+  # Use Java version from environment (set by validate-issue.yml) or default to 24
+  JAVA_VERSION="${JAVA_VERSION:-24}"
+  
+  # Extract repository from instance JSON for logging
+  if [[ -n "$INSTANCE_JSON" ]]; then
+    TARGET_REPO=$(echo "$INSTANCE_JSON" | jq -r '.repo // empty')
+    if [[ -n "$TARGET_REPO" ]]; then
+      echo "🔍 Target repository: $TARGET_REPO"
+    fi
+  fi
+  
+  echo "🔧 Using Java version: $JAVA_VERSION"
+  
+  # Only create custom image for Java 8 (SSL certificate fix needed)
+  if [[ "$JAVA_VERSION" == "8" ]]; then
+    echo "🐳 Creating Java 8 image with SSL certificate fix..."
+    cat > Dockerfile.java8-ssl << EOF
 FROM maven:3.9.9-eclipse-temurin-8
 
 # Fix SSL certificates for Java 8
-RUN apt-get update && apt-get install -y ca-certificates-java && \
-    update-ca-certificates -f && \
-    /var/lib/dpkg/info/ca-certificates-java.postinst configure && \
+RUN apt-get update && apt-get install -y ca-certificates-java && \\
+    update-ca-certificates -f && \\
+    /var/lib/dpkg/info/ca-certificates-java.postinst configure && \\
     echo "✅ Updated Java 8 SSL certificates"
 EOF
 
-  docker build -f Dockerfile.java8-ssl -t ee-bench-jdk8:base . && echo "✅ Java 8 image built successfully" || echo "⚠️ Failed to build Java 8 image"
-  
-  # Force ee-bench to use our Java 8 image by tagging it with the expected name
-  # Analysis shows ee-bench has --jvm-version parameter but still creates ee-bench-jdk24:base
-  # Local testing confirmed: both --jvm-version 8 and --jvm-version 24 create identical "ee-bench-jdk24:base"
-  # This appears to be either a bug in ee-bench or hardcoded image naming
-  # Solution: Pre-create the expected image name with our Java 8 content
-  echo "🏷️ Forcing ee-bench to use Java 8 by tagging our image..."
-  docker tag ee-bench-jdk8:base ee-bench-jdk24:base && echo "✅ Tagged Java 8 image as ee-bench-jdk24:base" || echo "⚠️ Failed to tag image"
-  
-  rm -f Dockerfile.java8-ssl
+    docker build -f Dockerfile.java8-ssl -t ee-bench-jdk8:base . && echo "✅ Java 8 image built successfully" || echo "⚠️ Failed to build Java 8 image"
+    
+    # Force ee-bench to use our Java 8 image by tagging it with the expected name
+    echo "🏷️ Forcing ee-bench to use Java 8 by tagging our image as ee-bench-jdk24:base..."
+    docker tag ee-bench-jdk8:base ee-bench-jdk24:base && echo "✅ Tagged Java 8 image as ee-bench-jdk24:base" || echo "⚠️ Failed to tag image"
+    
+    rm -f Dockerfile.java8-ssl
+  else
+    echo "ℹ️ Java $JAVA_VERSION doesn't need SSL certificate fix, using default ee-bench behavior"
+  fi
   
   ee-bench --spec jvm -v run-evaluation \
-      --jvm-version 8 \
+      --jvm-version $JAVA_VERSION \
       --dataset-name "$INSTANCE_FILE" \
       --instance-ids "$INSTANCE_ID" \
       --run-id "$INSTANCE_ID" \

@@ -57,10 +57,11 @@ write_verification_result_json() {
 for arg in "$@"; do
   case $arg in
     --help|-h)
-      echo "Usage: $0 <instance_json> [options]"
+      echo "Usage: $0 <instance_json_or_file> [options]"
       echo ""
       echo "Arguments:"
-      echo "  <instance_json>  Complete JSON object for a single instance"
+      echo "  <instance_json>      Complete JSON object for a single instance"
+      echo "  --file=<path>        Path to file containing JSON instance data"
       echo ""
       echo "Options:"
       echo "  --generator=<name>   Selects the spec for evaluation (default: jvm)"
@@ -68,19 +69,49 @@ for arg in "$@"; do
       echo ""
       echo "Examples:"
       echo "  $0 '{\"instance_id\":\"instance-123\",\"repo\":\"owner/repo\",...}'"
+      echo "  $0 --file=instance.json --generator=jvm"
       echo "  $0 '{\"instance_id\":\"instance-123\",\"repo\":\"owner/repo\",...}' --generator=jvm"
       exit 0
       ;;
   esac
 done
 
-INSTANCE_JSON="$1"
-
-# Parse optional parameters
+# Parse all parameters to detect file mode
+INSTANCE_JSON=""
+INSTANCE_FILE=""
 GENERATOR="jvm"
 
-for arg in "${@:2}"; do
+# Check if first argument is --file
+if [[ "$1" == --file=* ]]; then
+  INSTANCE_FILE="${1#*=}"
+  shift
+elif [[ "$1" == "--file" ]]; then
+  if [[ -n "$2" ]]; then
+    INSTANCE_FILE="$2"
+    shift 2
+  else
+    echo "Error: --file requires a value. Use --file=<path>"
+    exit 1
+  fi
+else
+  INSTANCE_JSON="$1"
+  shift
+fi
+
+# Parse remaining parameters
+for arg in "$@"; do
   case $arg in
+    --file=*)
+      if [[ -n "$INSTANCE_JSON" ]]; then
+        echo "Error: Cannot use both direct JSON and --file parameter"
+        exit 1
+      fi
+      INSTANCE_FILE="${arg#*=}"
+      ;;
+    --file)
+      echo "Error: --file requires a value. Use --file=<path>"
+      exit 1
+      ;;
     --generator=*)
       GENERATOR="${arg#*=}"
       ;;
@@ -96,15 +127,41 @@ for arg in "${@:2}"; do
   esac
 done
 
-if [[ -z "$INSTANCE_JSON" ]]; then
+# Determine input mode and load JSON
+if [[ -n "$INSTANCE_FILE" ]]; then
+  # File mode - read JSON from file
+  if [[ ! -f "$INSTANCE_FILE" ]]; then
+    echo "❌ Error: File not found: $INSTANCE_FILE"
+    write_verification_result_json "failed" "Instance file not found: $INSTANCE_FILE"
+    exit 1
+  fi
+  
+  echo "📁 Processing JSON from file: $INSTANCE_FILE"
+  INSTANCE_JSON=$(cat "$INSTANCE_FILE")
+  
+  if [[ -z "$INSTANCE_JSON" ]]; then
+    echo "❌ Error: File is empty or unreadable: $INSTANCE_FILE"
+    write_verification_result_json "failed" "Instance file is empty: $INSTANCE_FILE"
+    exit 1
+  fi
+  
+elif [[ -n "$INSTANCE_JSON" ]]; then
+  # Direct JSON mode
+  echo "📋 Processing direct JSON input..."
+else
   echo "Usage: $0 <instance_json> [--generator=<name>]"
+  echo "   or: $0 --file=<path> [--generator=<name>]"
   echo "Use --help for more information"
-  write_verification_result_json "failed" "No instance JSON provided"
+  write_verification_result_json "failed" "No instance JSON or file provided"
   exit 1
 fi
 
-# Direct JSON mode - extract fields directly
-echo "📋 Processing direct JSON input..."
+# Validate JSON format
+if ! echo "$INSTANCE_JSON" | jq empty 2>/dev/null; then
+  echo "❌ Error: Invalid JSON format"
+  write_verification_result_json "failed" "Invalid JSON format in input"
+  exit 1
+fi
 # Extract instance_id and repo for validation
 INSTANCE_ID=$(echo "$INSTANCE_JSON" | jq -r '.instance_id')
 REPO=$(echo "$INSTANCE_JSON" | jq -r '.repo')

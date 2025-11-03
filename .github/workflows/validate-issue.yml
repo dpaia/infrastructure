@@ -135,31 +135,48 @@ jobs:
           VERSION: '1'
         run: |
           chmod +x .github/python/${{ github.event.inputs.generator }}.py
-          echo "data_value<<EOF" >> $GITHUB_OUTPUT
-          .github/python/${{ github.event.inputs.generator }}.py >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
+          
+          # Generate JSON and save to file to avoid ARG_MAX limits
+          TARGET_REPO="${{ github.event.inputs.organization }}/${{ github.event.inputs.repository }}"
+          SAFE_REPO_NAME=$(echo "$TARGET_REPO" | tr '/' '_')
+          INSTANCE_FILE="generated_instance_${SAFE_REPO_NAME}_${{ github.event.inputs.issue_id }}.json"
+          echo "📝 Generating instance data for $TARGET_REPO..."
+          .github/python/${{ github.event.inputs.generator }}.py > "$INSTANCE_FILE"
+          
+          # Check if file was created and has content
+          if [[ -f "$INSTANCE_FILE" && -s "$INSTANCE_FILE" ]]; then
+            JSON_SIZE=$(wc -c < "$INSTANCE_FILE")
+            echo "✅ Generated instance JSON file: $INSTANCE_FILE (${JSON_SIZE} bytes)"
+            echo "instance_file=$INSTANCE_FILE" >> $GITHUB_OUTPUT
+            echo "json_size=$JSON_SIZE" >> $GITHUB_OUTPUT
+            echo "has_data=true" >> $GITHUB_OUTPUT
+          else
+            echo "❌ Failed to generate instance JSON file"
+            echo "has_data=false" >> $GITHUB_OUTPUT
+          fi
 
       - name: Run verification
         id: run-verification
         shell: bash
         env:
-          INSTANCE_JSON: ${{ steps.generate-data.outputs.data_value }}
           EMPTY_TEST_FIELDS: ${{ steps.check-test-fields.outputs.empty_test_fields }}
           JAVA_VERSION: ${{ steps.get-java-config.outputs.java_version }}
+          INSTANCE_FILE: ${{ steps.generate-data.outputs.instance_file }}
+          HAS_DATA: ${{ steps.generate-data.outputs.has_data }}
+          JSON_SIZE: ${{ steps.generate-data.outputs.json_size }}
         run: |
           set +e
 
           if [[ "$EMPTY_TEST_FIELDS" == "true" ]]; then
             echo "::error::❌ Failed: Both FAIL_TO_PASS and PASS_TO_PASS are empty. Nothing to validate."
             printf '{"result":"failed","message":"Both FAIL_TO_PASS and PASS_TO_PASS are empty. Nothing to validate."}' > verification-result.json
+          elif [[ "$HAS_DATA" != "true" || ! -f "$INSTANCE_FILE" ]]; then
+            echo "::error::❌ Failed: No instance JSON generated or file not found."
+            printf '{"result":"failed","message":"No instance JSON generated or file not found."}' > verification-result.json
           else
-            if [[ -z "$INSTANCE_JSON" ]]; then
-              echo "::error::❌ Failed: No instance JSON generated."
-              printf '{"result":"failed","message":"No instance JSON generated."}' > verification-result.json
-            else
-              # Stream verification script output in real-time and save logs
-              stdbuf -oL -eL bash ./.github/scripts/verify_dataset.sh "$INSTANCE_JSON" --generator="${{ github.event.inputs.generator }}" 2>&1 | tee verify_output.txt
-            fi
+            echo "📁 Using file-based approach with: $INSTANCE_FILE (${JSON_SIZE} bytes)"
+            # Stream verification script output in real-time and save logs
+            stdbuf -oL -eL bash ./.github/scripts/verify_dataset.sh --file="$INSTANCE_FILE" --generator="${{ github.event.inputs.generator }}" 2>&1 | tee verify_output.txt
           fi
 
           # Read verification result JSON

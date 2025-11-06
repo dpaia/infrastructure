@@ -130,7 +130,7 @@ jobs:
           FAIL_TO_PASS: ${{ steps.prep.outputs.fail_to_pass }}
           PASS_TO_PASS: ${{ steps.prep.outputs.pass_to_pass }}
           IS_MAVEN: ${{ steps.prep.outputs.is_maven }}
-          JAVA_VERSION: '24'
+          JAVA_VERSION: ${{ vars.JAVA_VERSION || '24' }}
           INSTANCE_ID: ${{ steps.prep.outputs.instance_id }}
         run: |
           chmod +x .github/scripts/verify_java_dataset_instance.sh

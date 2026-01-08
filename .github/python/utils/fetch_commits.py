@@ -258,16 +258,57 @@ def fetch_commits(organization, repository, issue_number, github_token=None):
 
     print(f"Fetching commits linked to issue #{issue_number}...")
 
-    # Use GitHub's Timeline API to find linked commits with their dates
-    print("Fetching commits with dates from timeline...")
-    cmd = [
-        'gh', 'api',
-        f'repos/{owner}/{repo_name}/issues/{issue_number}/timeline',
-        '--jq', '.[] | select(.event == "referenced" and .commit_id != null) | {sha: .commit_id, date: .created_at}'
-    ]
+    # Use GitHub's Timeline API to find linked commits and cross-referenced PRs
+    # Paginate through all timeline events since API returns only 30 by default
+    print("Fetching timeline events...")
+    all_timeline_events = []
+    per_page = 100
+    max_pages = 100  # Safety limit to prevent infinite loops (10,000 events max)
 
-    result = run_subprocess(cmd, capture_output=True, text=True, check=False)
-    linked_commits_with_dates = result.stdout.strip() if result.returncode == 0 else ""
+    for page in range(1, max_pages + 1):
+        print(f"Fetching timeline page {page}...")
+        cmd = [
+            'gh', 'api',
+            '-H', 'X-GitHub-Api-Version: 2022-11-28',
+            f'repos/{owner}/{repo_name}/issues/{issue_number}/timeline?per_page={per_page}&page={page}'
+        ]
+
+        result = run_subprocess(cmd, capture_output=True, text=True, check=False)
+
+        if result.returncode != 0:
+            print(f"Error fetching timeline page {page}, stopping pagination")
+            break
+
+        page_results = result.stdout.strip()
+
+        # If no results on this page, we've reached the end
+        if not page_results:
+            print(f"No more timeline events found at page {page}")
+            break
+
+        try:
+            page_events = json.loads(page_results)
+            all_timeline_events.extend(page_events)
+            print(f"Fetched {len(page_events)} timeline events on page {page}")
+        except json.JSONDecodeError as e:
+            print(f"Error parsing timeline events on page {page}: {e}")
+            break
+
+    print(f"Total timeline events fetched: {len(all_timeline_events)}")
+
+    # Extract referenced commits from timeline events
+    linked_commits_with_dates = ""
+    referenced_commit_count = 0
+    for event in all_timeline_events:
+        if event.get('event') == 'referenced' and event.get('commit_id'):
+            commit_data = json.dumps({'sha': event['commit_id'], 'date': event['created_at']})
+            if linked_commits_with_dates:
+                linked_commits_with_dates += "\n" + commit_data
+            else:
+                linked_commits_with_dates = commit_data
+            referenced_commit_count += 1
+
+    print(f"Found {referenced_commit_count} referenced commits in timeline")
 
     # Initialize an empty array for all commits and excluded commit hashes
     all_commits = []
@@ -465,15 +506,22 @@ def fetch_commits(organization, repository, issue_number, github_token=None):
         print(f"No commits found linked to issue #{issue_number} through GitHub references")
 
         # Try to check for cross-referenced PRs that might contain commits
-        print("Checking for related pull requests...")
-        cmd = [
-            'gh', 'api',
-            f'repos/{owner}/{repo_name}/issues/{issue_number}/timeline',
-            '--jq', '.[] | select(.event == "cross-referenced" and .source.issue.pull_request != null and .source.issue.repository.owner.login == "' + owner + '" and .source.issue.repository.name == "' + repo_name + '") | .source.issue.number'
-        ]
+        # Extract from already-fetched timeline events
+        print("Checking for related pull requests in timeline events...")
+        related_pr_numbers = []
+        for event in all_timeline_events:
+            if (event.get('event') == 'cross-referenced' and
+                event.get('source', {}).get('issue', {}).get('pull_request') is not None):
+                source = event.get('source', {})
+                issue = source.get('issue', {})
+                repo = issue.get('repository', {})
+                if (repo.get('owner', {}).get('login') == owner and
+                    repo.get('name') == repo_name):
+                    pr_number = issue.get('number')
+                    if pr_number:
+                        related_pr_numbers.append(str(pr_number))
 
-        result = run_subprocess(cmd, capture_output=True, text=True, check=False)
-        related_prs = result.stdout.strip() if result.returncode == 0 else ""
+        related_prs = "\n".join(related_pr_numbers) if related_pr_numbers else ""
 
         if related_prs:
             print(f"Found related PRs: {related_prs}")

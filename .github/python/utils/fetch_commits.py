@@ -91,11 +91,11 @@ def verify_commit_exists(owner, repo_name, commit_hash):
     for branch in branches:
         if not branch:
             continue
-        
+
         # URL encode branch name to handle special characters like #
         import urllib.parse
         encoded_branch = urllib.parse.quote(branch, safe='')
-            
+
         cmd = [
             'gh', 'api',
             '-H', 'X-GitHub-Api-Version: 2022-11-28',
@@ -192,27 +192,27 @@ def filter_best_commits(verified_commits, owner, repo_name):
     """
     if len(verified_commits) <= 1:
         return verified_commits
-    
+
     print(f"Filtering {len(verified_commits)} commits to avoid patch conflicts...", file=sys.stderr)
-    
+
     # Check if commits are sequential (ancestor-descendant relationship)
     # If commit B is a descendant of commit A, keep only B
     filtered = []
-    
+
     for i, commit in enumerate(verified_commits):
         is_ancestor_of_later = False
-        
+
         # Check if this commit is an ancestor of any later commits
         for j in range(i + 1, len(verified_commits)):
             later_commit = verified_commits[j]
-            
+
             # Check if commit is ancestor of later_commit using compare API
             cmd = [
                 'gh', 'api',
                 f'repos/{owner}/{repo_name}/compare/{commit}...{later_commit}',
                 '--jq', '.status'
             ]
-            
+
             result = run_subprocess(cmd, capture_output=True, text=True, check=False)
             if result.returncode == 0:
                 status = result.stdout.strip()
@@ -221,16 +221,16 @@ def filter_best_commits(verified_commits, owner, repo_name):
                     print(f"Commit {commit[:7]} is ancestor of {later_commit[:7]}, keeping only descendant", file=sys.stderr)
                     is_ancestor_of_later = True
                     break
-        
+
         if not is_ancestor_of_later:
             filtered.append(commit)
-    
+
     if len(filtered) < len(verified_commits):
         print(f"Filtered out {len(verified_commits) - len(filtered)} ancestor commits", file=sys.stderr)
         print(f"Remaining commits after filtering: {[c[:7] for c in filtered]}", file=sys.stderr)
     else:
         print(f"No ancestor commits found, keeping all {len(verified_commits)} commits", file=sys.stderr)
-    
+
     return filtered
 
 def fetch_commits(organization, repository, issue_number, github_token=None):
@@ -281,15 +281,16 @@ def fetch_commits(organization, repository, issue_number, github_token=None):
 
         page_results = result.stdout.strip()
 
-        # If no results on this page, we've reached the end
-        if not page_results:
-            print(f"No more timeline events found at page {page}")
-            break
-
         try:
             page_events = json.loads(page_results)
+            page_size = len(page_events)
+
+            if page_size == 0:
+                print(f"No more timeline events found at page {page}")
+                break
+
             all_timeline_events.extend(page_events)
-            print(f"Fetched {len(page_events)} timeline events on page {page}")
+            print(f"Fetched {page_size} timeline events on page {page}")
         except json.JSONDecodeError as e:
             print(f"Error parsing timeline events on page {page}: {e}")
             break
@@ -332,14 +333,14 @@ def fetch_commits(organization, repository, issue_number, github_token=None):
 
     if issue_body:
         print("Processing issue description for commit references...")
-        
+
         # First, check for excluded commits
         excluded_pattern = re.findall(r'[Ee]xcluded\s+([0-9a-f]{7,40})', issue_body)
         if excluded_pattern:
             for commit_hash in excluded_pattern:
                 print(f"Found excluded commit in issue description: {commit_hash}")
                 excluded_commit_hashes.append(commit_hash)
-        
+
         # Extract commit hashes using multiple regex patterns
         commit_pattern_1 = re.findall(r'(?:[Rr]elated\s+)?[Cc]ommit:?\s+([0-9a-f]{40})', issue_body)
         commit_pattern_2 = re.findall(r'\b([0-9a-f]{40})\b', issue_body)
@@ -385,7 +386,7 @@ def fetch_commits(organization, repository, issue_number, github_token=None):
 
     result = run_subprocess(cmd, capture_output=True, text=True, check=False)
     comments = result.stdout.strip() if result.returncode == 0 else ""
-    
+
     # Track excluded commits and manual base commit
     excluded_commits = set()
     manual_base_commit = ""
@@ -395,26 +396,26 @@ def fetch_commits(organization, repository, issue_number, github_token=None):
         for comment in comments.split('\n'):
             if not comment:
                 continue
-            
+
             # Check for manual base commit first
             # Pattern: "Base commit: <hash>"
             base_pattern = re.findall(r'[Bb]ase\s+[Cc]ommit:?\s+([0-9a-f]{7,40})', comment)
-            
+
             if base_pattern:
                 for commit_hash in base_pattern:
                     print(f"Found manual base commit in comment: {commit_hash}")
-                    
+
                     # Verify and get full hash
                     commit_exists = verify_commit_exists(owner, repo_name, commit_hash)
                     if commit_exists:
                         manual_base_commit = commit_exists
                         print(f"Will use manual base commit: {commit_exists[:7]}")
                         break  # Use first valid base commit found
-            
+
             # Check for excluded commits
             # Pattern: "Excluded <hash>" or "Exclude <hash>"
             exclude_pattern = re.findall(r'[Ee]xclude[d]?\s+([0-9a-f]{7,40})', comment)
-            
+
             if exclude_pattern:
                 for commit_hash in exclude_pattern:
                     print(f"Found excluded commit in comment: {commit_hash}")
@@ -456,7 +457,7 @@ def fetch_commits(organization, repository, issue_number, github_token=None):
                     if any(commit_hash in exc for exc in excluded_commits):
                         print(f"Skipping excluded commit: {commit_hash}")
                         continue
-                    
+
                     print(f"Found potential commit hash in comment: {commit_hash}")
 
                     # Verify this commit exists in the repository
@@ -559,7 +560,7 @@ def fetch_commits(organization, repository, issue_number, github_token=None):
         print(f"Filtering out {len(excluded_commit_hashes)} excluded commits: {excluded_commit_hashes}")
         # Filter out commits that match any excluded hash (support both short and full hashes)
         all_commits = [
-            commit for commit in all_commits 
+            commit for commit in all_commits
             if not any(commit.get('sha', '').startswith(excluded_hash) for excluded_hash in excluded_commit_hashes)
         ]
         print(f"Remaining commits after filtering: {len(all_commits)}")
@@ -616,7 +617,7 @@ def fetch_commits(organization, repository, issue_number, github_token=None):
 
     # Get the commit before the earliest commit (base commit)
     base_commit = ""
-    
+
     # Check if we have a manual base commit from comments
     if manual_base_commit:
         print(f"Using manual base commit from comment: {manual_base_commit}")
@@ -665,7 +666,7 @@ def fetch_commits(organization, repository, issue_number, github_token=None):
                     print(f"Warning: Could not find a valid base commit")
             else:
                 print(f"Warning: Could not find a valid base commit")
-    
+
     return {
         "commit_hash": latest_commit,
         "base_commit_hash": base_commit,

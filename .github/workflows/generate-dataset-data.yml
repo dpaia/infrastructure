@@ -42,9 +42,9 @@ on:
         type: boolean
         default: false
 
-  schedule:
-    # Run overnight at 2:00 AM UTC
-    - cron: '0 2 * * *'
+#  schedule:
+#    # Run overnight at 2:00 AM UTC
+#    - cron: '0 2 * * *'
 
 # Define default values to be used by scheduled runs
 env:
@@ -102,7 +102,7 @@ jobs:
           organization: ${{ github.repository_owner }}
           project_number: 3
           github_token: ${{ secrets.PROJECT_TOKEN }}
-          
+
       - name: Get commit field ID
         id: get-commit-field-id
         uses: ./.github/actions/get-project-field-id
@@ -110,7 +110,7 @@ jobs:
           project_id: ${{ steps.get-project-id.outputs.project_id }}
           field_name: "Commit"
           github_token: ${{ secrets.PROJECT_TOKEN }}
-          
+
       - name: Get data field ID
         id: get-data-field-id
         uses: ./.github/actions/get-project-field-id
@@ -206,7 +206,7 @@ jobs:
       fail-fast: false
     steps:
       - uses: actions/checkout@v4
-      
+
       - name: Get GitHub issue ID
         id: get-issue-node-id
         uses: ./.github/actions/get-issue-node-id
@@ -296,22 +296,22 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y jq
-          
+
       # Create a directory for downloaded artifacts
       - name: Create artifacts directory
         run: mkdir -p downloaded_artifacts
-          
+
       # Download all artifacts from update-outdated-data job
       - name: Download update-outdated-data artifacts
         uses: actions/download-artifact@v4
         with:
           path: downloaded_artifacts
-          
+
       - name: List downloaded artifacts
         run: |
           echo "Downloaded artifacts:"
           find downloaded_artifacts -type f | sort
-          
+
       - name: Extract PR URLs
         id: extract-prs
         run: |
@@ -368,7 +368,7 @@ jobs:
       fail-fast: false
     steps:
       - uses: actions/checkout@v4
-      
+
       - name: Process Issue Data
         id: process-issue-data
         uses: ./.github/actions/process-issue-data
@@ -388,7 +388,7 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-        
+
       - name: Merge Pull Requests
         env:
           GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}

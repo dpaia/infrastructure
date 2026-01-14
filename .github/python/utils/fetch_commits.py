@@ -281,15 +281,16 @@ def fetch_commits(organization, repository, issue_number, github_token=None):
 
         page_results = result.stdout.strip()
 
-        # If no results on this page, we've reached the end
-        if not page_results:
-            print(f"No more timeline events found at page {page}")
-            break
-
         try:
             page_events = json.loads(page_results)
+            page_size = len(page_events)
+
+            if page_size == 0:
+                print(f"No more timeline events found at page {page}")
+                break
+
             all_timeline_events.extend(page_events)
-            print(f"Fetched {len(page_events)} timeline events on page {page}")
+            print(f"Fetched {page_size} timeline events on page {page}")
         except json.JSONDecodeError as e:
             print(f"Error parsing timeline events on page {page}: {e}")
             break

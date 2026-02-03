@@ -1,0 +1,7 @@
+# Test configuration for dpaia/feature-service PR #176
+resource: pull_requests
+
+filters:
+  repo: dpaia/feature-service
+  pr_numbers:
+    - 176

@@ -1,0 +1,35 @@
+# DPAIA Dataset Generation Configuration
+#
+# This configuration generates a DPAIA-format dataset from GitHub pull requests.
+# The output is compatible with SWE-bench evaluation framework for JVM projects.
+#
+# Usage:
+#   ee-dataset generate -p github_pull_requests -g dpaia_jvm -s examples/dpaia_dataset.yaml
+#
+# Or with output options:
+#   ee-dataset generate -p github_pull_requests -g dpaia_jvm -s examples/dpaia_dataset.yaml \
+#       --out dataset.jsonl --format jsonl
+
+# Selection criteria - specifies which PRs to process
+resource: pull_requests
+
+filters:
+  # Repository in "owner/repo" format (required)
+  repo: ${GITHUB_REPO:-apache/kafka}
+
+  # Option 1: Specific PR numbers (uncomment to use)
+  # pr_numbers:
+  #   - 12345
+  #   - 12346
+  #   - 12347
+
+  # Option 2: Filter by state (open, closed, all)
+  state: closed
+
+  # Option 3: Filter by labels (PRs must have at least one of these labels)
+  # labels:
+  #   - bug
+  #   - verified
+
+# Maximum number of records to generate (optional, remove for unlimited)
+limit: 10

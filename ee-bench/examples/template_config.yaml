@@ -1,0 +1,24 @@
+# Template Config - Testing Jinja2 templates and --set option
+#
+# Usage:
+#   ee-dataset -c examples/template_config.yaml -S org=apache -S project=kafka config show
+#   ee-dataset -c examples/template_config.yaml -S org=apache -S project=kafka -S limit=5 generate
+
+provider: github_pull_requests
+generator: dpaia_jvm
+
+selection:
+  resource: pull_requests
+  filters:
+    # Use Jinja2 template variables
+    repo: "{{ org }}/{{ project }}"
+
+    # Default to closed state if not specified
+    state: {{ state | default('closed') }}
+
+  # Default limit with Jinja2
+  limit: {{ limit | default(10) }}
+
+output:
+  format: jsonl
+  path: datasets/{{ org }}_{{ project }}_dataset.jsonl

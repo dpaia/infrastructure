@@ -1,0 +1,39 @@
+name: Setup ee-dataset
+description: Install Python, uv, and ee-dataset CLI
+
+inputs:
+  python-version:
+    description: Python version to use
+    required: false
+    default: '3.11'
+
+outputs:
+  venv-path:
+    description: Path to the virtual environment
+    value: ${{ steps.setup.outputs.venv-path }}
+
+runs:
+  using: composite
+  steps:
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ inputs.python-version }}
+
+    - name: Install uv
+      shell: bash
+      run: |
+        curl -LsSf https://astral.sh/uv/install.sh | sh
+        echo "$HOME/.local/bin" >> $GITHUB_PATH
+
+    - name: Install ee-dataset
+      id: setup
+      shell: bash
+      run: |
+        cd ee-bench
+        uv sync
+        echo "venv-path=$PWD/.venv" >> $GITHUB_OUTPUT
+
+    - name: Add ee-dataset to PATH
+      shell: bash
+      run: echo "${{ github.workspace }}/ee-bench/.venv/bin" >> $GITHUB_PATH

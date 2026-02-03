@@ -1,0 +1,28 @@
+# Configuration for generating dataset from a single GitHub issue
+# Used by: ee-dataset --config specs/dpaia-issue.yaml generate
+#
+# Template variables (set via --set):
+#   ORGANIZATION: GitHub organization name
+#   REPOSITORY: Repository name
+#   ISSUE_NUMBER: Issue number to process
+
+provider:
+  name: github_issues
+  options:
+    fetch_commits: true          # Enable commit fetching from Timeline API
+    parse_comments: true         # Parse test fields from comments
+    detect_build_system: true    # Detect Maven/Gradle build system
+
+generator: dpaia_jvm
+
+generator_options:
+  version: "${VERSION:-1}"
+
+selection:
+  resource: issues
+  filters:
+    repo: "{{ ORGANIZATION }}/{{ REPOSITORY }}"
+    issue_numbers: [{{ ISSUE_NUMBER }}]
+
+output:
+  format: json

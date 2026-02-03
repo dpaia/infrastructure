@@ -1,0 +1,22 @@
+# Search Query Config - Testing GitHub Search API support
+#
+# Usage:
+#   ee-dataset -c examples/search_query_config.yaml config show
+#   ee-dataset -c examples/search_query_config.yaml generate
+#
+# Note: GitHub Search API has stricter rate limits (30 req/min authenticated)
+
+provider: github_pull_requests
+generator: dpaia_jvm
+
+selection:
+  resource: pull_requests
+  filters:
+    # GitHub search query - note: mutually exclusive with repo/repos
+    query: "is:pr is:merged repo:apache/kafka"
+
+  limit: 5
+
+output:
+  format: jsonl
+  path: datasets/search_query_dataset.jsonl

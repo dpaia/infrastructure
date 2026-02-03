@@ -1,0 +1,52 @@
+# DPAIA JVM Dataset Generation Configuration
+#
+# Usage:
+#   export GITHUB_TOKEN=your_token
+#   ee-dataset --config examples/dpaia_jvm_config.yaml generate
+#
+# This configuration generates SWE-bench compatible datapoints from GitHub PRs.
+
+# Plugin configuration
+provider: github_pull_requests
+generator: dpaia_jvm
+
+# Provider options
+provider_options:
+  api:
+    timeout: 60
+    max_retries: 5
+    retry_delay: 2.0
+
+# Generator options
+generator_options:
+  include_metadata: true
+
+# Selection criteria - what data to fetch
+selection:
+  resource: pull_requests
+
+  filters:
+    # Target repository (required)
+    repo: apache/kafka
+
+    # Option 1: Specific PR numbers
+    pr_numbers:
+      - 14521
+      - 14498
+      - 14456
+
+    # Option 2: Filter by state (uncomment to use)
+    # state: closed  # open, closed, all
+
+    # Option 3: Filter by labels (uncomment to use)
+    # labels:
+    #   - bug
+    #   - verified
+
+  # Maximum records to generate (optional)
+  # limit: 100
+
+# Output configuration
+output:
+  format: jsonl
+  path: datasets/dpaia_jvm_dataset.jsonl

@@ -1,0 +1,38 @@
+# Full ee-dataset configuration file
+#
+# Usage (all settings from config):
+#   export GITHUB_TOKEN=your_token
+#   ee-dataset --config examples/full_config.yaml generate
+#
+# Usage (with CLI overrides):
+#   ee-dataset --config examples/full_config.yaml generate -o custom_output.jsonl
+
+# Provider plugin name
+provider: github_pull_requests
+
+# Generator plugin name
+generator: dpaia_jvm
+
+# Provider-specific options
+provider_options:
+  api:
+    timeout: 60
+    max_retries: 5
+    retry_delay: 2.0
+
+# Generator-specific options
+generator_options:
+  include_metadata: true
+
+# Selection criteria
+selection:
+  resource: pull_requests
+  filters:
+    repo: dpaia/feature-service
+    pr_numbers:
+      - 176
+
+# Output configuration
+output:
+  format: jsonl
+  path: /tmp/full_config_output.jsonl

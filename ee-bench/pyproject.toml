@@ -1,0 +1,39 @@
+[project]
+name = "ee-bench-workspace"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = [
+    "ee_bench_generator",
+    "ee_bench_cli",
+    "ee_bench_github",
+    "ee_bench_dpaia",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "responses>=0.25",
+]
+
+[tool.uv.workspace]
+members = ["packages/*"]
+
+[tool.uv.sources]
+ee_bench_generator = { workspace = true }
+ee_bench_cli = { workspace = true }
+ee_bench_github = { workspace = true }
+ee_bench_dpaia = { workspace = true }
+
+[tool.pytest.ini_options]
+testpaths = [
+    "packages/ee_bench_generator/tests",
+    "packages/ee_bench_cli/tests",
+    "packages/ee_bench_github/tests",
+    "packages/ee_bench_dpaia/tests",
+]
+pythonpath = [
+    "packages/ee_bench_generator/src",
+    "packages/ee_bench_cli/src",
+    "packages/ee_bench_github/src",
+    "packages/ee_bench_dpaia/src",
+]

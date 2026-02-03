@@ -1,0 +1,23 @@
+# DPAIA Dataset from Specific PRs
+#
+# Use this configuration when you have a curated list of PR numbers
+# that you want to include in the dataset.
+#
+# Usage:
+#   export GITHUB_TOKEN=your_token
+#   ee-dataset generate -p github_pull_requests -g dpaia_jvm \
+#       -s examples/dpaia_specific_prs.yaml \
+#       --out datasets/curated.jsonl
+
+resource: pull_requests
+
+filters:
+  repo: apache/kafka
+
+  # List of specific PR numbers to process
+  pr_numbers:
+    - 14521
+    - 14498
+    - 14456
+    - 14389
+    - 14352

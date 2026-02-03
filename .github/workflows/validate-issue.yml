@@ -32,32 +32,70 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Get latest commit
-        id: get-commits
-        uses: ./.github/actions/get-commits
-        with:
-          organization: ${{ github.event.inputs.organization }}
-          repository: ${{ github.event.inputs.repository }}
-          issue_id: ${{ github.event.inputs.issue_id }}
-          github_token: ${{ secrets.PROJECT_TOKEN }}
+      # Setup ee-dataset CLI
+      - name: Setup ee-dataset CLI
+        uses: ./.github/actions/setup-ee-dataset
 
-      - name: Extract FAIL_TO_PASS and PASS_TO_PASS
-        id: extract-fields
-        uses: ./.github/actions/extract-test-names
-        with:
-          github-token: ${{ secrets.PROJECT_TOKEN }}
-          issue-number: ${{ github.event.inputs.issue_id }}
-          repository: ${{ github.event.inputs.repository }}
-          organization: ${{ github.event.inputs.organization }}
+      # Generate dataset instance using ee-dataset CLI
+      - name: Generate dataset instance
+        id: generate-data
+        env:
+          GITHUB_TOKEN: ${{ secrets.PROJECT_TOKEN }}
+          GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
+          ORGANIZATION: ${{ github.event.inputs.organization }}
+          REPOSITORY: ${{ github.event.inputs.repository }}
+          ISSUE_NUMBER: ${{ github.event.inputs.issue_id }}
+          VERSION: '1'
+        run: |
+          echo "Generating dataset instance for $ORGANIZATION/$REPOSITORY#$ISSUE_NUMBER..."
+
+          TARGET_REPO="${ORGANIZATION}/${REPOSITORY}"
+          SAFE_REPO_NAME=$(echo "$TARGET_REPO" | tr '/' '_')
+          INSTANCE_FILE="generated_instance_${SAFE_REPO_NAME}_${ISSUE_NUMBER}.json"
+
+          # Generate the instance using ee-dataset CLI
+          ee-dataset --config specs/dpaia-issue.yaml generate \
+            --set ORGANIZATION="$ORGANIZATION" \
+            --set REPOSITORY="$REPOSITORY" \
+            --set ISSUE_NUMBER="$ISSUE_NUMBER" \
+            --set VERSION="$VERSION" \
+            --out "$INSTANCE_FILE" \
+            --format json || {
+              echo "ee-dataset generation failed"
+              echo "has_data=false" >> $GITHUB_OUTPUT
+              exit 0
+            }
+
+          # Check if file was created
+          if [ -f "$INSTANCE_FILE" ] && [ -s "$INSTANCE_FILE" ]; then
+            JSON_SIZE=$(wc -c < "$INSTANCE_FILE")
+            echo "Generated instance JSON file: $INSTANCE_FILE (${JSON_SIZE} bytes)"
+            echo "instance_file=$INSTANCE_FILE" >> $GITHUB_OUTPUT
+            echo "json_size=$JSON_SIZE" >> $GITHUB_OUTPUT
+            echo "has_data=true" >> $GITHUB_OUTPUT
+
+            # Extract test fields for validation
+            FAIL_TO_PASS=$(jq -r '.FAIL_TO_PASS // "[]"' "$INSTANCE_FILE")
+            PASS_TO_PASS=$(jq -r '.PASS_TO_PASS // "[]"' "$INSTANCE_FILE")
+            echo "fail_to_pass=$FAIL_TO_PASS" >> $GITHUB_OUTPUT
+            echo "pass_to_pass=$PASS_TO_PASS" >> $GITHUB_OUTPUT
+          else
+            echo "Failed to generate instance JSON file"
+            echo "has_data=false" >> $GITHUB_OUTPUT
+          fi
 
       - name: Check if test fields are empty
         id: check-test-fields
         shell: bash
         env:
-          FAIL_TO_PASS: ${{ steps.extract-fields.outputs.fail_to_pass }}
-          PASS_TO_PASS: ${{ steps.extract-fields.outputs.pass_to_pass }}
+          FAIL_TO_PASS: ${{ steps.generate-data.outputs.fail_to_pass }}
+          PASS_TO_PASS: ${{ steps.generate-data.outputs.pass_to_pass }}
+          HAS_DATA: ${{ steps.generate-data.outputs.has_data }}
         run: |
-          if [ "$FAIL_TO_PASS" == "[]" ] && [ "$PASS_TO_PASS" == "[]" ]; then
+          if [ "$HAS_DATA" != "true" ]; then
+            echo "No data generated"
+            echo "empty_test_fields=true" >> $GITHUB_OUTPUT
+          elif [ "$FAIL_TO_PASS" == "[]" ] && [ "$PASS_TO_PASS" == "[]" ]; then
             echo "Both FAIL_TO_PASS and PASS_TO_PASS are empty. Skipping data generation."
             echo "empty_test_fields=true" >> $GITHUB_OUTPUT
           else
@@ -65,95 +103,51 @@ jobs:
             echo "empty_test_fields=false" >> $GITHUB_OUTPUT
           fi
 
-      - name: Install generator dependencies
-        shell: bash
-        run: |
-          python -m pip install --upgrade pip
-          pip install unidiff
-
       - name: Get target repository Java configuration
         id: get-java-config
         env:
           GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
           TARGET_REPO: ${{ github.event.inputs.organization }}/${{ github.event.inputs.repository }}
         run: |
-          echo "🔍 Checking Java configuration for target repository: $TARGET_REPO"
-          
+          echo "Checking Java configuration for target repository: $TARGET_REPO"
+
           # Get JAVA_VERSION
           TARGET_JAVA_VERSION=$(curl -s -H "Authorization: token $GH_TOKEN" \
             "https://api.github.com/repos/$TARGET_REPO/actions/variables/JAVA_VERSION" \
             | jq -r '.value // empty' 2>/dev/null)
-          
+
           # Get JAVA_DISTRIBUTION
           TARGET_JAVA_DISTRIBUTION=$(curl -s -H "Authorization: token $GH_TOKEN" \
             "https://api.github.com/repos/$TARGET_REPO/actions/variables/JAVA_DISTRIBUTION" \
             | jq -r '.value // empty' 2>/dev/null)
-          
+
           # Set Java version
           if [[ -n "$TARGET_JAVA_VERSION" && "$TARGET_JAVA_VERSION" != "null" && "$TARGET_JAVA_VERSION" != "empty" ]]; then
-            echo "📋 Found JAVA_VERSION in target repository: $TARGET_JAVA_VERSION"
+            echo "Found JAVA_VERSION in target repository: $TARGET_JAVA_VERSION"
             echo "java_version=$TARGET_JAVA_VERSION" >> $GITHUB_OUTPUT
           else
-            echo "ℹ️ No JAVA_VERSION found in target repository, using default: 24"
+            echo "No JAVA_VERSION found in target repository, using default: 24"
             echo "java_version=24" >> $GITHUB_OUTPUT
           fi
-          
+
           # Set Java distribution
           if [[ -n "$TARGET_JAVA_DISTRIBUTION" && "$TARGET_JAVA_DISTRIBUTION" != "null" && "$TARGET_JAVA_DISTRIBUTION" != "empty" ]]; then
-            echo "📋 Found JAVA_DISTRIBUTION in target repository: $TARGET_JAVA_DISTRIBUTION"
+            echo "Found JAVA_DISTRIBUTION in target repository: $TARGET_JAVA_DISTRIBUTION"
             echo "java_distribution=$TARGET_JAVA_DISTRIBUTION" >> $GITHUB_OUTPUT
           else
-            echo "ℹ️ No JAVA_DISTRIBUTION found in target repository, using default: temurin"
+            echo "No JAVA_DISTRIBUTION found in target repository, using default: temurin"
             echo "java_distribution=temurin" >> $GITHUB_OUTPUT
           fi
 
       - name: Print target repository Java configuration
         run: |
-          echo "📋 Target repository Java configuration:"
+          echo "Target repository Java configuration:"
           echo "  Java version: ${{ steps.get-java-config.outputs.java_version }}"
           echo "  Java distribution: ${{ steps.get-java-config.outputs.java_distribution }}"
-          echo "ℹ️ Java will be configured in Docker containers during verification"
+          echo "Java will be configured in Docker containers during verification"
 
       - name: Make script executable
         run: chmod +x ./.github/scripts/verify_dataset.sh
-
-      - name: Generate data
-        id: generate-data
-        if: steps.check-test-fields.outputs.empty_test_fields != 'true'
-        shell: bash
-        env:
-          ISSUE_NUMBER: ${{ github.event.inputs.issue_id }}
-          REPOSITORY: ${{ github.event.inputs.repository }}
-          ORGANIZATION: ${{ github.event.inputs.organization }}
-          LATEST_COMMIT: ${{ steps.get-commits.outputs.commit_hash }}
-          BASE_COMMIT: ${{ steps.get-commits.outputs.base_commit_hash }}
-          LINKED_COMMITS: ${{ steps.get-commits.outputs.commits }}
-          GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
-          FAIL_TO_PASS: ${{ steps.extract-fields.outputs.fail_to_pass }}
-          PASS_TO_PASS: ${{ steps.extract-fields.outputs.pass_to_pass }}
-          METADATA: ${{ steps.extract-fields.outputs.metadata }}
-          VERSION: '1'
-        run: |
-          chmod +x .github/python/${{ github.event.inputs.generator }}.py
-          
-          # Generate JSON and save to file to avoid ARG_MAX limits
-          TARGET_REPO="${{ github.event.inputs.organization }}/${{ github.event.inputs.repository }}"
-          SAFE_REPO_NAME=$(echo "$TARGET_REPO" | tr '/' '_')
-          INSTANCE_FILE="generated_instance_${SAFE_REPO_NAME}_${{ github.event.inputs.issue_id }}.json"
-          echo "📝 Generating instance data for $TARGET_REPO..."
-          .github/python/${{ github.event.inputs.generator }}.py > "$INSTANCE_FILE"
-          
-          # Check if file was created and has content
-          if [[ -f "$INSTANCE_FILE" && -s "$INSTANCE_FILE" ]]; then
-            JSON_SIZE=$(wc -c < "$INSTANCE_FILE")
-            echo "✅ Generated instance JSON file: $INSTANCE_FILE (${JSON_SIZE} bytes)"
-            echo "instance_file=$INSTANCE_FILE" >> $GITHUB_OUTPUT
-            echo "json_size=$JSON_SIZE" >> $GITHUB_OUTPUT
-            echo "has_data=true" >> $GITHUB_OUTPUT
-          else
-            echo "❌ Failed to generate instance JSON file"
-            echo "has_data=false" >> $GITHUB_OUTPUT
-          fi
 
       - name: Run verification
         id: run-verification
@@ -168,13 +162,13 @@ jobs:
           set +e
 
           if [[ "$EMPTY_TEST_FIELDS" == "true" ]]; then
-            echo "::error::❌ Failed: Both FAIL_TO_PASS and PASS_TO_PASS are empty. Nothing to validate."
+            echo "::error::Failed: Both FAIL_TO_PASS and PASS_TO_PASS are empty. Nothing to validate."
             printf '{"result":"failed","message":"Both FAIL_TO_PASS and PASS_TO_PASS are empty. Nothing to validate."}' > verification-result.json
           elif [[ "$HAS_DATA" != "true" || ! -f "$INSTANCE_FILE" ]]; then
-            echo "::error::❌ Failed: No instance JSON generated or file not found."
+            echo "::error::Failed: No instance JSON generated or file not found."
             printf '{"result":"failed","message":"No instance JSON generated or file not found."}' > verification-result.json
           else
-            echo "📁 Using file-based approach with: $INSTANCE_FILE (${JSON_SIZE} bytes)"
+            echo "Using file-based approach with: $INSTANCE_FILE (${JSON_SIZE} bytes)"
             # Stream verification script output in real-time and save logs
             stdbuf -oL -eL bash ./.github/scripts/verify_dataset.sh --file="$INSTANCE_FILE" --generator="${{ github.event.inputs.generator }}" 2>&1 | tee verify_output.txt
           fi
@@ -218,4 +212,4 @@ jobs:
           echo "Result: ${{ steps.run-verification.outputs.result }}" >> $GITHUB_STEP_SUMMARY
           if [ "${{ steps.run-verification.outputs.message }}" != "" ]; then
             echo "${{ steps.run-verification.outputs.message }}" >> $GITHUB_STEP_SUMMARY
-          fi        
+          fi

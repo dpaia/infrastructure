@@ -1,0 +1,55 @@
+# Full Features Config - Testing all new features together
+#
+# Usage examples:
+#   # Show config with default values
+#   ee-dataset -c examples/full_features_config.yaml -S org=apache config show
+#
+#   # Show config with custom values
+#   ee-dataset -c examples/full_features_config.yaml \
+#     -S org=apache \
+#     -S 'repos=["kafka", "flink"]' \
+#     -S state=merged \
+#     -S limit=10 \
+#     config show
+#
+#   # Generate with labels filter
+#   ee-dataset -c examples/full_features_config.yaml \
+#     -S org=apache \
+#     -S 'repos=["kafka"]' \
+#     -S 'labels=["bug"]' \
+#     generate
+
+provider: github_pull_requests
+generator: dpaia_jvm
+
+provider_options:
+  api:
+    timeout: 60
+    max_retries: 3
+
+selection:
+  resource: pull_requests
+  filters:
+    # Multiple repos using template variable (expects list or single string)
+    repos:
+{% for repo in repos | default(['kafka']) %}
+      - "{{ org }}/{{ repo }}"
+{% endfor %}
+
+    # State with default
+    state: {{ state | default('closed') }}
+
+{% if labels is defined and labels %}
+    # Labels filter (only included if labels are provided)
+    labels:
+{% for label in labels %}
+      - {{ label }}
+{% endfor %}
+{% endif %}
+
+  # Configurable limit
+  limit: {{ limit | default(5) }}
+
+output:
+  format: jsonl
+  path: datasets/{{ org }}_combined_dataset.jsonl

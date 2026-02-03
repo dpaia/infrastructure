@@ -1,0 +1,24 @@
+# Multi-Repo Config - Testing multiple repositories support
+#
+# Usage:
+#   ee-dataset -c examples/multi_repo_config.yaml config show
+#   ee-dataset -c examples/multi_repo_config.yaml generate
+
+provider: github_pull_requests
+generator: dpaia_jvm
+
+selection:
+  resource: pull_requests
+  filters:
+    # Multiple repositories
+    repos:
+      - apache/kafka
+      - apache/flink
+
+    state: closed
+
+  limit: 5
+
+output:
+  format: jsonl
+  path: datasets/multi_repo_dataset.jsonl

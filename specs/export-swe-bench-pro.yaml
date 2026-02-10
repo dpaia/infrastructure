@@ -3,10 +3,13 @@
 
 provider:
   name: github_pull_requests
+  type: github
   options:
     token: ${GITHUB_TOKEN}
 
-generator: dpaia_jvm
+generator:
+  name: dpaia_jvm
+  type: dataset
 
 selection:
   resource: pull_requests

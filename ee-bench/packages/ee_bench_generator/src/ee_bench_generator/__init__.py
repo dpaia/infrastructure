@@ -22,6 +22,11 @@ Example:
 """
 
 from ee_bench_generator.clock import now_iso8601_utc
+from ee_bench_generator.composite import (
+    CompositeProvider,
+    CompositeProviderConfigError,
+    CyclicDependencyError,
+)
 from ee_bench_generator.engine import DatasetEngine
 from ee_bench_generator.errors import (
     EEBenchError,
@@ -37,7 +42,7 @@ from ee_bench_generator.loader import (
     load_generator,
     load_provider,
 )
-from ee_bench_generator.matcher import validate_compatibility
+from ee_bench_generator.matcher import validate_compatibility, validate_composite_compatibility
 from ee_bench_generator.metadata import (
     Context,
     FieldDescriptor,
@@ -46,6 +51,7 @@ from ee_bench_generator.metadata import (
     Selection,
     ValidationResult,
 )
+from ee_bench_generator.multi_generator import GeneratorSpec, MultiGeneratorRunner
 from ee_bench_generator.templates import render_template
 
 __version__ = "0.1.0"
@@ -56,6 +62,13 @@ __all__ = [
     # Interfaces
     "Provider",
     "Generator",
+    # Composite
+    "CompositeProvider",
+    "CompositeProviderConfigError",
+    "CyclicDependencyError",
+    # Multi-generator
+    "GeneratorSpec",
+    "MultiGeneratorRunner",
     # Metadata types
     "FieldDescriptor",
     "ProviderMetadata",
@@ -70,6 +83,7 @@ __all__ = [
     "list_generators",
     # Matcher
     "validate_compatibility",
+    "validate_composite_compatibility",
     # Clock
     "now_iso8601_utc",
     # Errors

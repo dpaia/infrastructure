@@ -173,3 +173,83 @@ class TestValidateCompatibility:
         assert len(result.missing_required) == 3
         missing_names = {f.name for f in result.missing_required}
         assert missing_names == {"description", "patch", "base_commit"}
+
+    def test_multi_source_compatible_when_one_source_satisfied(self):
+        """When same field name is required from multiple sources, at least one must match."""
+        provider = ProviderMetadata(
+            name="github_issues",
+            sources=["issue"],
+            provided_fields=[
+                FieldDescriptor("description", "issue"),
+                FieldDescriptor("patch", "issue"),
+                FieldDescriptor("base_commit", "issue"),
+            ],
+        )
+        generator = GeneratorMetadata(
+            name="dpaia_jvm",
+            required_fields=[
+                # Same field from two sources — fallback pattern
+                FieldDescriptor("description", "pull_request"),
+                FieldDescriptor("description", "issue"),
+                FieldDescriptor("patch", "pull_request"),
+                FieldDescriptor("patch", "issue"),
+                FieldDescriptor("base_commit", "pull_request"),
+                FieldDescriptor("base_commit", "issue"),
+            ],
+        )
+
+        result = validate_compatibility(provider, generator)
+
+        assert result.compatible is True
+        assert result.missing_required == []
+        # The unsatisfied pull_request variants are reported as optional
+        missing_optional_names = {(f.name, f.source) for f in result.missing_optional}
+        assert ("description", "pull_request") in missing_optional_names
+        assert ("patch", "pull_request") in missing_optional_names
+        assert ("base_commit", "pull_request") in missing_optional_names
+
+    def test_multi_source_incompatible_when_no_source_satisfied(self):
+        """When same field name from multiple sources, none satisfied -> missing required."""
+        provider = ProviderMetadata(
+            name="empty_provider",
+            sources=["repository"],
+            provided_fields=[
+                FieldDescriptor("repo_url", "repository"),
+            ],
+        )
+        generator = GeneratorMetadata(
+            name="test_generator",
+            required_fields=[
+                FieldDescriptor("description", "pull_request"),
+                FieldDescriptor("description", "issue"),
+            ],
+        )
+
+        result = validate_compatibility(provider, generator)
+
+        assert result.compatible is False
+        assert len(result.missing_required) == 2
+
+    def test_multi_source_all_satisfied(self):
+        """When all source variants are satisfied, no missing at all."""
+        provider = ProviderMetadata(
+            name="full_provider",
+            sources=["pull_request", "issue"],
+            provided_fields=[
+                FieldDescriptor("description", "pull_request"),
+                FieldDescriptor("description", "issue"),
+            ],
+        )
+        generator = GeneratorMetadata(
+            name="test_generator",
+            required_fields=[
+                FieldDescriptor("description", "pull_request"),
+                FieldDescriptor("description", "issue"),
+            ],
+        )
+
+        result = validate_compatibility(provider, generator)
+
+        assert result.compatible is True
+        assert result.missing_required == []
+        assert result.missing_optional == []

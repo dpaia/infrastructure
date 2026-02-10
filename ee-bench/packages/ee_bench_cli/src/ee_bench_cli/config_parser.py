@@ -303,8 +303,10 @@ def validate_config(config: dict[str, Any]) -> list[str]:
     # Check for unknown top-level keys
     known_keys = {
         "provider",
+        "providers",
         "provider_options",
         "generator",
+        "generators",
         "generator_options",
         "selection",
         "output",
@@ -315,6 +317,62 @@ def validate_config(config: dict[str, Any]) -> list[str]:
         if key not in known_keys:
             errors.append(f"Unknown configuration key: '{key}'")
 
+    # Validate mutual exclusivity: provider vs providers
+    if "provider" in config and "providers" in config:
+        errors.append("'provider' and 'providers' are mutually exclusive")
+
+    # Validate mutual exclusivity: generator vs generators
+    if "generator" in config and "generators" in config:
+        errors.append("'generator' and 'generators' are mutually exclusive")
+
+    # Validate providers list
+    if "providers" in config:
+        providers = config["providers"]
+        if not isinstance(providers, list):
+            errors.append("'providers' must be a list")
+        else:
+            primary_count = 0
+            names_seen: set[str] = set()
+            for i, entry in enumerate(providers):
+                if not isinstance(entry, dict):
+                    errors.append(f"'providers[{i}]' must be a dictionary")
+                    continue
+                if "name" not in entry:
+                    errors.append(f"'providers[{i}].name' is required")
+                else:
+                    name = entry["name"]
+                    if name in names_seen:
+                        errors.append(f"Duplicate provider name: '{name}'")
+                    names_seen.add(name)
+                if entry.get("role") == "primary":
+                    primary_count += 1
+            if primary_count == 0:
+                errors.append("When using 'providers:', exactly one must have role: primary")
+            elif primary_count > 1:
+                errors.append(
+                    f"When using 'providers:', exactly one must have role: primary "
+                    f"(found {primary_count})"
+                )
+
+    # Validate generators list
+    if "generators" in config:
+        generators = config["generators"]
+        if not isinstance(generators, list):
+            errors.append("'generators' must be a list")
+        else:
+            gen_names_seen: set[str] = set()
+            for i, entry in enumerate(generators):
+                if not isinstance(entry, dict):
+                    errors.append(f"'generators[{i}]' must be a dictionary")
+                    continue
+                if "name" not in entry:
+                    errors.append(f"'generators[{i}].name' is required")
+                else:
+                    name = entry["name"]
+                    if name in gen_names_seen:
+                        errors.append(f"Duplicate generator name: '{name}'")
+                    gen_names_seen.add(name)
+
     # Validate selection if present
     if "selection" in config:
         selection = config["selection"]
@@ -323,7 +381,7 @@ def validate_config(config: dict[str, Any]) -> list[str]:
         elif "resource" not in selection:
             errors.append("'selection.resource' is required")
 
-    # Validate output if present
+    # Validate output if present (only relevant for singular generator)
     if "output" in config:
         output = config["output"]
         if not isinstance(output, dict):
@@ -349,36 +407,20 @@ def generate_sample_config() -> str:
 # See documentation for full options
 
 # Provider configuration
-# Supports two formats:
-#   Flat format:
-#     provider: github_pull_requests
-#     provider_options:
-#       token: ${GITHUB_TOKEN}
-#
-#   Nested format (recommended):
-#     provider:
-#       name: github_issues
-#       options:
-#         fetch_commits: true
-#         parse_comments: true
-
-# Example: Nested provider format with options
 provider:
   name: github_issues
+  type: github
   options:
     fetch_commits: true          # Enable commit fetching from Timeline API
     parse_comments: true         # Parse test fields from comments
     detect_build_system: true    # Detect Maven/Gradle
 
-# Generator plugin name
-generator: dpaia_jvm
-
-# Generator-specific options
-generator_options:
-  version: "1"
-  common_labels:
-    - bug
-    - enhancement
+# Generator configuration
+generator:
+  name: dpaia_jvm
+  type: dataset
+  options:
+    version: "1"
 
 # Selection criteria
 selection:

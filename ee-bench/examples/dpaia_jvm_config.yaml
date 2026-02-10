@@ -6,20 +6,22 @@
 #
 # This configuration generates SWE-bench compatible datapoints from GitHub PRs.
 
-# Plugin configuration
-provider: github_pull_requests
-generator: dpaia_jvm
+# Provider configuration
+provider:
+  name: github_pull_requests
+  type: github
+  options:
+    api:
+      timeout: 60
+      max_retries: 5
+      retry_delay: 2.0
 
-# Provider options
-provider_options:
-  api:
-    timeout: 60
-    max_retries: 5
-    retry_delay: 2.0
-
-# Generator options
-generator_options:
-  include_metadata: true
+# Generator configuration
+generator:
+  name: dpaia_jvm
+  type: dataset
+  options:
+    include_metadata: true
 
 # Selection criteria - what data to fetch
 selection:

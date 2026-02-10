@@ -4,8 +4,13 @@
 #   ee-dataset -c examples/multi_repo_config.yaml config show
 #   ee-dataset -c examples/multi_repo_config.yaml generate
 
-provider: github_pull_requests
-generator: dpaia_jvm
+provider:
+  name: github_pull_requests
+  type: github
+
+generator:
+  name: dpaia_jvm
+  type: dataset
 
 selection:
   resource: pull_requests

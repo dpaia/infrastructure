@@ -3,6 +3,7 @@
 
 provider:
   name: huggingface_dataset
+  type: huggingface
   options:
     dataset_name: "ScaleAI/SWE-bench_Pro"
     split: test
@@ -12,6 +13,7 @@ provider:
 
 generator:
   name: github_pr_importer
+  type: importer
   options:
     target_org: dpaia
     github_token: ${GITHUB_TOKEN}

@@ -637,6 +637,109 @@ ee-dataset generate \
     --format json
 ```
 
+## Import Command
+
+The `import` command group imports HuggingFace datasets into a GitHub organization as PRs with structured metadata, labels, and project assignments.
+
+### Usage
+
+```bash
+# Run the import pipeline
+ee-dataset --config specs/import-swe-bench-pro.yaml import run
+
+# Preview without making changes
+ee-dataset --config specs/import-swe-bench-pro.yaml import dry-run
+
+# Check import progress
+ee-dataset --config specs/import-swe-bench-pro.yaml import status
+
+# Reset a specific item for re-import
+ee-dataset --config specs/import-swe-bench-pro.yaml import reset -i django__django-16255
+```
+
+### Import Config Structure
+
+```yaml
+provider:
+  name: huggingface_dataset
+  options:
+    dataset_name: "ScaleAI/SWE-bench_Pro"
+    split: test
+    hf_token: ${HF_TOKEN:-}
+
+generator:
+  name: github_pr_importer
+  options:
+    target_org: dpaia
+    github_token: ${GITHUB_TOKEN}
+    dataset_label: swe-bench-pro
+    state_file: ".state/swe-bench-pro.json"
+    inter_operation_delay: 1.0
+
+    # PR title: Jinja2 template with item fields as variables
+    pr_title_template: "[{{ dataset_label }}] {{ problem_statement | first_sentence | truncate_title }}"
+
+    # PR body: Jinja2 template with item fields as variables
+    # Use {{ metadata(key=value, ...) }} to embed a <!--METADATA--> block
+    pr_body_template: |
+      ## Problem Statement
+
+      {{ problem_statement | default("(no description)") }}
+
+      {% if hints_text %}
+      ## Hints
+
+      {{ hints_text }}
+      {% endif %}
+
+      {{ metadata(instance_id=instance_id, repo=repo, base_commit=base_commit,
+                   version=version, dataset="swe-bench-pro") }}
+
+    # Labels: static values and Jinja2 templates resolved per-item
+    labels:
+      - swe-bench-pro
+      - "{{ repo_language }}"
+      - "{{ issue_categories }}"
+
+    # Repo topics: set on forked repositories
+    repo_topics:
+      - swe-bench-pro
+      - "{{ repo_language }}"
+
+    # GitHub Projects V2: auto-create if needed
+    projects:
+      - name: "SWE Pro"
+        scope: all
+      - name: "{{ repo_language }}"
+        scope: language
+
+selection:
+  resource: dataset_items
+  filters: {}
+
+output:
+  format: jsonl
+  path: results/swe-bench-pro-import.jsonl
+```
+
+### Jinja2 Templates in Generator Options
+
+Labels, repo topics, and project names support Jinja2 `{{ }}` syntax for dynamic values resolved from each dataset item. The legacy `from:field_name` syntax is also supported for backward compatibility.
+
+**Built-in filters** available in all templates:
+
+| Filter | Description | Example |
+|--------|-------------|---------|
+| `first_sentence` | Extract first sentence (up to `. ` or newline) | `{{ text \| first_sentence }}` |
+| `truncate_title` | Truncate to GitHub's 256-char title limit | `{{ text \| truncate_title }}` |
+| `default(val)` | Fallback value for empty/missing fields | `{{ field \| default("N/A") }}` |
+
+**Dynamic values** are expanded: if a field contains a JSON array (e.g. `["bug", "feature"]`), each element becomes a separate label/topic. Values are normalized to lowercase with spaces replaced by hyphens.
+
+### Import State
+
+The importer maintains a JSON state file to track which items have been imported. On subsequent runs, unchanged items are skipped. Use `import reset -i <id>` to force re-import of a specific item.
+
 ## Project Structure
 
 ```
@@ -647,11 +750,12 @@ ee-bench/
 │   │   ├── interfaces.py       # Provider and Generator ABCs
 │   │   ├── engine.py           # DatasetEngine orchestration
 │   │   ├── loader.py           # Plugin discovery
-│   │   └── matcher.py          # Compatibility validation
+│   │   ├── matcher.py          # Compatibility validation
+│   │   └── templates.py        # Jinja2 template rendering (render_template)
 │   │
 │   ├── ee_bench_cli/           # CLI tool
 │   │   ├── cli.py              # Main entry point (--set option)
-│   │   ├── commands/           # CLI commands
+│   │   ├── commands/           # CLI commands (generate, import, config, etc.)
 │   │   ├── config_parser.py    # YAML + Jinja2 config handling
 │   │   └── output.py           # Output formatting
 │   │
@@ -661,10 +765,20 @@ ee-bench/
 │   │   ├── issues_provider.py
 │   │   └── pull_requests_provider.py
 │   │
-│   └── ee_bench_dpaia/         # DPAIA generator
-│       └── generator.py
+│   ├── ee_bench_dpaia/         # DPAIA generator
+│   │   └── generator.py
+│   │
+│   ├── ee_bench_huggingface/   # HuggingFace dataset provider
+│   │   └── provider.py
+│   │
+│   └── ee_bench_importer/      # GitHub PR importer generator
+│       ├── generator.py        # GitHubPRImporterGenerator
+│       ├── pr_body.py          # PR body/title template rendering + metadata
+│       ├── patch_applier.py    # Git Data API patch application
+│       ├── project_manager.py  # GitHub Projects V2 management
+│       └── sync_state.py       # Import state tracking
 │
-├── examples/                   # Example configurations
+├── specs/                      # Import spec YAML files
 └── pyproject.toml             # Workspace configuration
 ```
 

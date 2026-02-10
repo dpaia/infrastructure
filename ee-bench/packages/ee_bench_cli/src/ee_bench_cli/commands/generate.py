@@ -3,17 +3,17 @@
 from __future__ import annotations
 
 import json
-import sys
 from pathlib import Path
 from typing import Any
 
 import click
 
-from ee_bench_generator import DatasetEngine, Selection, load_generator, load_provider
+from ee_bench_generator import DatasetEngine, MultiGeneratorRunner, Selection
 from ee_bench_generator.errors import IncompatiblePluginsError, PluginNotFoundError
 
 from ee_bench_cli.cli import Context, pass_context
 from ee_bench_cli.output import write_records
+from ee_bench_cli.plugin_loader import build_generators_from_config, build_provider_from_config
 
 
 def parse_selection(selection_str: str) -> dict[str, Any]:
@@ -81,6 +81,13 @@ def parse_selection(selection_str: str) -> dict[str, Any]:
     multiple=True,
     help="Generator option as key=value (can be repeated).",
 )
+@click.option(
+    "--defer-validation",
+    is_flag=True,
+    default=False,
+    help="Defer provider/generator compatibility check until after prepare(). "
+    "Useful for providers that discover fields dynamically.",
+)
 @pass_context
 def generate(
     ctx: Context,
@@ -91,6 +98,7 @@ def generate(
     output_format: str | None,
     provider_option: tuple[str, ...],
     generator_option: tuple[str, ...],
+    defer_validation: bool,
 ) -> None:
     """Generate a dataset using the specified provider and generator.
 
@@ -108,81 +116,58 @@ def generate(
         # Config file with CLI overrides
         ee-dataset --config config.yaml generate -o custom_output.jsonl
     """
-    # Resolve options from config file, CLI overrides config
     config = ctx.config or {}
 
-    # Provider (required) - supports both flat and nested format
-    # Flat format: provider: github_issues
-    # Nested format: provider: { name: github_issues, options: { ... } }
-    provider_config = config.get("provider")
-    if isinstance(provider_config, dict):
-        config_provider_name = provider_config.get("name")
-        config_provider_options = provider_config.get("options", {})
-    else:
-        config_provider_name = provider_config
-        config_provider_options = {}
+    # Resolve defer_validation: CLI flag or config validation.defer
+    validation_config = config.get("validation", {})
+    if isinstance(validation_config, dict):
+        defer_validation = defer_validation or validation_config.get("defer", False)
 
-    provider = provider or config_provider_name
-    if not provider:
-        raise click.ClickException(
-            "Provider is required. Use -p/--provider or set 'provider' in config file."
-        )
-
-    # Generator (required) - supports both flat and nested format
-    generator_config = config.get("generator")
-    if isinstance(generator_config, dict):
-        config_generator_name = generator_config.get("name")
-        config_generator_options = generator_config.get("options", {})
-    else:
-        config_generator_name = generator_config
-        config_generator_options = {}
-
-    generator = generator or config_generator_name
-    if not generator:
-        raise click.ClickException(
-            "Generator is required. Use -g/--generator or set 'generator' in config file."
-        )
-
-    # Output settings (with defaults)
-    output_config = config.get("output", {})
-    out = out or Path(output_config.get("path", "out.jsonl"))
-    output_format = output_format or output_config.get("format", "jsonl")
-
-    # Parse provider and generator options from CLI
+    # Parse CLI key=value options
     cli_provider_options = _parse_key_value_options(provider_option)
     cli_generator_options = _parse_key_value_options(generator_option)
 
-    # Merge options: nested config < flat config < CLI options
-    # Priority: CLI options override config options
-    provider_options = {
-        **config_provider_options,  # From nested provider.options
-        **config.get("provider_options", {}),  # From flat provider_options
-        **cli_provider_options,  # From CLI --provider-option
-    }
-    generator_options = {
-        **config_generator_options,  # From nested generator.options
-        **config.get("generator_options", {}),  # From flat generator_options
-        **cli_generator_options,  # From CLI --generator-option
-    }
+    # Detect plural config format
+    use_multi_provider = "providers" in config
+    use_multi_generator = "generators" in config
 
-    # Selection: CLI overrides config
+    # --- Build provider ---
+    try:
+        if use_multi_provider:
+            # Plural providers: use plugin_loader
+            prov, provider_options = build_provider_from_config(config)
+            # CLI provider options are not supported with plural providers
+            if cli_provider_options:
+                click.echo(
+                    "Warning: --provider-option is ignored when using 'providers:' config.",
+                    err=True,
+                )
+        else:
+            # Singular provider: support CLI override
+            prov, provider_options = _build_single_provider_with_cli(
+                config, provider, cli_provider_options
+            )
+    except PluginNotFoundError as e:
+        raise click.ClickException(
+            f"Provider '{e.name}' not found. Use 'ee-dataset list' to see available providers."
+        )
+    except ValueError as e:
+        raise click.ClickException(str(e))
+
+    # --- Selection ---
     selection_data: dict[str, Any] | None = None
-
     if selection:
-        # CLI provided selection (JSON string or file path)
         try:
             selection_data = parse_selection(selection)
         except Exception as e:
             raise click.ClickException(f"Failed to parse selection: {e}")
     elif "selection" in config:
-        # Config file has selection block
         selection_data = config["selection"]
     else:
         raise click.ClickException(
             "Selection is required. Use -s/--selection or set 'selection' in config file."
         )
 
-    # Create Selection object
     try:
         sel = Selection(
             resource=selection_data.get("resource", ""),
@@ -192,50 +177,162 @@ def generate(
     except Exception as e:
         raise click.ClickException(f"Invalid selection: {e}")
 
-    # Load plugins
+    # --- Build generator(s) and run ---
     try:
-        prov = load_provider(provider)
-    except PluginNotFoundError:
+        if use_multi_generator:
+            _run_multi_generator(
+                ctx, config, prov, sel, provider_options,
+                cli_generator_options, defer_validation,
+            )
+        else:
+            _run_single_generator(
+                ctx, config, prov, sel, provider_options,
+                generator, cli_generator_options, out, output_format,
+                defer_validation,
+            )
+    except PluginNotFoundError as e:
         raise click.ClickException(
-            f"Provider '{provider}' not found. Use 'ee-dataset list' to see available providers."
+            f"Generator '{e.name}' not found. Use 'ee-dataset list' to see available generators."
         )
-
-    try:
-        gen = load_generator(generator)
-    except PluginNotFoundError:
-        raise click.ClickException(
-            f"Generator '{generator}' not found. Use 'ee-dataset list' to see available generators."
-        )
-
-    # Create engine
-    try:
-        engine = DatasetEngine(prov, gen)
     except IncompatiblePluginsError as e:
-        raise click.ClickException(
-            f"Provider '{provider}' is not compatible with generator '{generator}': {e}"
-        )
-
-    # Log if verbose
-    if ctx.verbose and not ctx.quiet:
-        click.echo(f"Provider: {provider}", err=True)
-        click.echo(f"Generator: {generator}", err=True)
-        click.echo(f"Output: {out} ({output_format})", err=True)
-
-    # Run generation
-    try:
-        records = engine.run(
-            sel,
-            provider_options=provider_options,
-            generator_options=generator_options,
-        )
-
-        count = write_records(records, out, output_format)
-
-        if not ctx.quiet:
-            click.echo(f"Generated {count} record(s) to {out}")
-
+        raise click.ClickException(f"Plugin incompatibility: {e}")
     except Exception as e:
         raise click.ClickException(f"Generation failed: {e}")
+
+
+def _run_single_generator(
+    ctx: Context,
+    config: dict[str, Any],
+    prov,
+    sel,
+    provider_options: dict[str, Any],
+    generator_cli: str | None,
+    cli_generator_options: dict[str, str],
+    out: Path | None,
+    output_format: str | None,
+    defer_validation: bool = False,
+) -> None:
+    """Run a single generator (original behavior)."""
+    from ee_bench_generator import load_generator
+
+    # Resolve generator name
+    generator_config = config.get("generator")
+    if isinstance(generator_config, dict):
+        config_generator_name = generator_config.get("name")
+        config_generator_options = generator_config.get("options", {})
+    else:
+        config_generator_name = generator_config
+        config_generator_options = {}
+
+    generator_name = generator_cli or config_generator_name
+    if not generator_name:
+        raise click.ClickException(
+            "Generator is required. Use -g/--generator or set 'generator' in config file."
+        )
+
+    # Output settings
+    output_config = config.get("output", {})
+    out = out or Path(output_config.get("path", "out.jsonl"))
+    output_format = output_format or output_config.get("format", "jsonl")
+
+    # Merge generator options: nested config < flat config < CLI
+    generator_options = {
+        **config_generator_options,
+        **config.get("generator_options", {}),
+        **cli_generator_options,
+    }
+
+    gen = load_generator(generator_name)
+
+    engine = DatasetEngine(prov, gen, defer_validation=defer_validation)
+
+    if ctx.verbose and not ctx.quiet:
+        click.echo(f"Provider: {prov.metadata.name}", err=True)
+        click.echo(f"Generator: {generator_name}", err=True)
+        click.echo(f"Output: {out} ({output_format})", err=True)
+
+    records = engine.run(
+        sel,
+        provider_options=provider_options,
+        generator_options=generator_options,
+    )
+
+    count = write_records(records, out, output_format)
+
+    if not ctx.quiet:
+        click.echo(f"Generated {count} record(s) to {out}")
+
+
+def _run_multi_generator(
+    ctx: Context,
+    config: dict[str, Any],
+    prov,
+    sel,
+    provider_options: dict[str, Any],
+    cli_generator_options: dict[str, str],
+    defer_validation: bool = False,
+) -> None:
+    """Run multiple generators using MultiGeneratorRunner."""
+    specs = build_generators_from_config(config)
+
+    if ctx.verbose and not ctx.quiet:
+        click.echo(f"Provider: {prov.metadata.name}", err=True)
+        click.echo(f"Generators: {', '.join(s.name for s in specs)}", err=True)
+
+    runner = MultiGeneratorRunner(prov, specs, defer_validation=defer_validation)
+    iterators = runner.run(
+        sel,
+        provider_options=provider_options,
+    )
+
+    total_count = 0
+    for spec in specs:
+        records = iterators[spec.name]
+        out_cfg = spec.output_config
+        out_path = Path(out_cfg.get("path", f"out-{spec.name}.jsonl"))
+        out_format = out_cfg.get("format", "jsonl")
+
+        count = write_records(records, out_path, out_format)
+        total_count += count
+
+        if not ctx.quiet:
+            click.echo(f"  [{spec.name}] Generated {count} record(s) to {out_path}")
+
+    if not ctx.quiet:
+        click.echo(f"Total: {total_count} record(s) across {len(specs)} generator(s)")
+
+
+def _build_single_provider_with_cli(
+    config: dict[str, Any],
+    provider_cli: str | None,
+    cli_provider_options: dict[str, str],
+) -> tuple:
+    """Build a single provider, allowing CLI overrides."""
+    from ee_bench_generator import load_provider
+
+    provider_config = config.get("provider")
+    if isinstance(provider_config, dict):
+        config_provider_name = provider_config.get("name")
+        config_provider_options = provider_config.get("options", {})
+    else:
+        config_provider_name = provider_config
+        config_provider_options = {}
+
+    provider_name = provider_cli or config_provider_name
+    if not provider_name:
+        raise click.ClickException(
+            "Provider is required. Use -p/--provider or set 'provider' in config file."
+        )
+
+    # Merge options: nested config < flat config < CLI
+    provider_options = {
+        **config_provider_options,
+        **config.get("provider_options", {}),
+        **cli_provider_options,
+    }
+
+    prov = load_provider(provider_name)
+    return prov, provider_options
 
 
 def _parse_key_value_options(options: tuple[str, ...]) -> dict[str, str]:

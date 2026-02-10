@@ -2,17 +2,17 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Any
 
 import click
 
-from ee_bench_generator import DatasetEngine, Selection, load_generator, load_provider
+from ee_bench_generator import DatasetEngine, MultiGeneratorRunner, Selection
 from ee_bench_generator.errors import PluginNotFoundError
 
 from ee_bench_cli.cli import Context, pass_context
 from ee_bench_cli.output import write_records
+from ee_bench_cli.plugin_loader import build_generators_from_config, build_provider_from_config
 
 
 @click.group("import")
@@ -147,33 +147,15 @@ def _execute_import(ctx: Context, dry_run: bool) -> None:
             "Config file is required. Use --config/-c to specify one."
         )
 
-    # Resolve provider
-    provider_config = config.get("provider")
-    if isinstance(provider_config, dict):
-        provider_name = provider_config.get("name")
-        provider_options = provider_config.get("options", {})
-    else:
-        provider_name = provider_config
-        provider_options = {}
-
-    if not provider_name:
-        raise click.ClickException("Provider name is required in config.")
-
-    # Resolve generator
-    generator_config = config.get("generator")
-    if isinstance(generator_config, dict):
-        generator_name = generator_config.get("name")
-        generator_options = generator_config.get("options", {})
-    else:
-        generator_name = generator_config
-        generator_options = {}
-
-    if not generator_name:
-        raise click.ClickException("Generator name is required in config.")
-
-    # Inject dry_run into generator options
-    if dry_run:
-        generator_options["dry_run"] = True
+    # Build provider (supports both singular and plural)
+    try:
+        prov, provider_options = build_provider_from_config(config)
+    except PluginNotFoundError as e:
+        raise click.ClickException(
+            f"Provider '{e.name}' not found. Use 'ee-dataset list' to see available providers."
+        )
+    except ValueError as e:
+        raise click.ClickException(str(e))
 
     # Selection
     selection_data = config.get("selection", {})
@@ -183,18 +165,54 @@ def _execute_import(ctx: Context, dry_run: bool) -> None:
         limit=selection_data.get("limit"),
     )
 
+    # Detect plural generators
+    use_multi_generator = "generators" in config
+
+    if use_multi_generator:
+        _execute_import_multi_generator(
+            ctx, config, prov, sel, provider_options, dry_run
+        )
+    else:
+        _execute_import_single_generator(
+            ctx, config, prov, sel, provider_options, dry_run
+        )
+
+
+def _execute_import_single_generator(
+    ctx: Context,
+    config: dict[str, Any],
+    prov,
+    sel,
+    provider_options: dict[str, Any],
+    dry_run: bool,
+) -> None:
+    """Execute import with a single generator (original behavior)."""
+    from ee_bench_generator import load_generator
+
+    # Resolve generator
+    generator_config = config.get("generator")
+    if isinstance(generator_config, dict):
+        generator_name = generator_config.get("name")
+        generator_options = dict(generator_config.get("options", {}))
+    else:
+        generator_name = generator_config
+        generator_options = {}
+
+    if not generator_name:
+        raise click.ClickException("Generator name is required in config.")
+
+    # Merge flat generator_options
+    flat_opts = config.get("generator_options", {})
+    if flat_opts:
+        generator_options = {**generator_options, **flat_opts}
+
+    if dry_run:
+        generator_options["dry_run"] = True
+
     # Output settings
     output_config = config.get("output", {})
     out_path = Path(output_config.get("path", "results/import-results.jsonl"))
     output_format = output_config.get("format", "jsonl")
-
-    # Load plugins
-    try:
-        prov = load_provider(provider_name)
-    except PluginNotFoundError:
-        raise click.ClickException(
-            f"Provider '{provider_name}' not found. Use 'ee-dataset list' to see available providers."
-        )
 
     try:
         gen = load_generator(generator_name)
@@ -209,11 +227,10 @@ def _execute_import(ctx: Context, dry_run: bool) -> None:
     if ctx.verbose and not ctx.quiet:
         mode = "DRY RUN" if dry_run else "LIVE"
         click.echo(f"Mode: {mode}", err=True)
-        click.echo(f"Provider: {provider_name}", err=True)
+        click.echo(f"Provider: {prov.metadata.name}", err=True)
         click.echo(f"Generator: {generator_name}", err=True)
         click.echo(f"Output: {out_path} ({output_format})", err=True)
 
-    # Run import
     try:
         records = engine.run(
             sel,
@@ -225,6 +242,61 @@ def _execute_import(ctx: Context, dry_run: bool) -> None:
 
         if not ctx.quiet:
             click.echo(f"Processed {count} item(s). Results written to {out_path}")
+
+    except Exception as e:
+        raise click.ClickException(f"Import failed: {e}")
+
+
+def _execute_import_multi_generator(
+    ctx: Context,
+    config: dict[str, Any],
+    prov,
+    sel,
+    provider_options: dict[str, Any],
+    dry_run: bool,
+) -> None:
+    """Execute import with multiple generators."""
+    try:
+        specs = build_generators_from_config(config)
+    except PluginNotFoundError as e:
+        raise click.ClickException(
+            f"Generator '{e.name}' not found. Use 'ee-dataset list' to see available generators."
+        )
+
+    # Inject dry_run into each generator's options
+    if dry_run:
+        for spec in specs:
+            spec.options["dry_run"] = True
+
+    if ctx.verbose and not ctx.quiet:
+        mode = "DRY RUN" if dry_run else "LIVE"
+        click.echo(f"Mode: {mode}", err=True)
+        click.echo(f"Provider: {prov.metadata.name}", err=True)
+        click.echo(f"Generators: {', '.join(s.name for s in specs)}", err=True)
+
+    runner = MultiGeneratorRunner(prov, specs, defer_validation=True)
+
+    try:
+        iterators = runner.run(
+            sel,
+            provider_options=provider_options,
+        )
+
+        total_count = 0
+        for spec in specs:
+            records = iterators[spec.name]
+            out_cfg = spec.output_config
+            out_path = Path(out_cfg.get("path", f"results/import-{spec.name}.jsonl"))
+            out_format = out_cfg.get("format", "jsonl")
+
+            count = write_records(records, out_path, out_format)
+            total_count += count
+
+            if not ctx.quiet:
+                click.echo(f"  [{spec.name}] Processed {count} item(s) to {out_path}")
+
+        if not ctx.quiet:
+            click.echo(f"Total: {total_count} item(s) across {len(specs)} generator(s)")
 
     except Exception as e:
         raise click.ClickException(f"Import failed: {e}")

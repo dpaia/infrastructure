@@ -19,13 +19,17 @@
 #     -S 'labels=["bug"]' \
 #     generate
 
-provider: github_pull_requests
-generator: dpaia_jvm
+provider:
+  name: github_pull_requests
+  type: github
+  options:
+    api:
+      timeout: 60
+      max_retries: 3
 
-provider_options:
-  api:
-    timeout: 60
-    max_retries: 3
+generator:
+  name: dpaia_jvm
+  type: dataset
 
 selection:
   resource: pull_requests

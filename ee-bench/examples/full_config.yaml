@@ -7,22 +7,22 @@
 # Usage (with CLI overrides):
 #   ee-dataset --config examples/full_config.yaml generate -o custom_output.jsonl
 
-# Provider plugin name
-provider: github_pull_requests
+# Provider configuration
+provider:
+  name: github_pull_requests
+  type: github
+  options:
+    api:
+      timeout: 60
+      max_retries: 5
+      retry_delay: 2.0
 
-# Generator plugin name
-generator: dpaia_jvm
-
-# Provider-specific options
-provider_options:
-  api:
-    timeout: 60
-    max_retries: 5
-    retry_delay: 2.0
-
-# Generator-specific options
-generator_options:
-  include_metadata: true
+# Generator configuration
+generator:
+  name: dpaia_jvm
+  type: dataset
+  options:
+    include_metadata: true
 
 # Selection criteria
 selection:

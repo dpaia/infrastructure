@@ -1,11 +1,16 @@
-# Template Config - Testing Jinja2 templates and --set option
+  # Template Config - Testing Jinja2 templates and --set option
 #
 # Usage:
 #   ee-dataset -c examples/template_config.yaml -S org=apache -S project=kafka config show
 #   ee-dataset -c examples/template_config.yaml -S org=apache -S project=kafka -S limit=5 generate
 
-provider: github_pull_requests
-generator: dpaia_jvm
+provider:
+  name: github_pull_requests
+  type: github
+
+generator:
+  name: dpaia_jvm
+  type: dataset
 
 selection:
   resource: pull_requests

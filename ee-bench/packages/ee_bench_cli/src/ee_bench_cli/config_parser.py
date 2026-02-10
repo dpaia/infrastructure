@@ -230,8 +230,10 @@ def load_config(
     with open(path) as f:
         content = f.read()
 
-    # Render Jinja2 templates if there are template variables or Jinja2 syntax
-    if template_vars or "{{" in content or "{%" in content:
+    # Render Jinja2 templates only when explicitly requested (template_vars is not None).
+    # Note: YAML files may contain {{ }} intended for generator-level rendering
+    # (e.g. pr_title_template, labels) — those must NOT be rendered at config load time.
+    if template_vars is not None:
         content = render_template(content, template_vars)
 
     config = yaml.safe_load(content) or {}

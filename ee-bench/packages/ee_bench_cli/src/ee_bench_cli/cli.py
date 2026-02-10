@@ -17,7 +17,7 @@ class Context:
     def __init__(self) -> None:
         self.config_path: Path | None = None
         self.config: dict[str, Any] = {}
-        self.template_vars: dict[str, Any] = {}
+        self.template_vars: dict[str, Any] | None = None
         self.verbose: int = 0
         self.quiet: bool = False
 
@@ -81,7 +81,7 @@ def cli(
 
 
 # Import and register commands
-from ee_bench_cli.commands import check, config_cmd, generate, list_cmd, schema, show, validate
+from ee_bench_cli.commands import check, config_cmd, generate, import_cmd, list_cmd, schema, show, validate
 
 cli.add_command(generate.generate)
 cli.add_command(list_cmd.list_plugins)
@@ -90,6 +90,7 @@ cli.add_command(schema.schema)
 cli.add_command(validate.validate)
 cli.add_command(check.check)
 cli.add_command(config_cmd.config)
+cli.add_command(import_cmd.import_group)
 
 
 def main() -> None:

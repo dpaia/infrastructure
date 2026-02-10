@@ -302,7 +302,7 @@ selection:
         assert "verified" in result.output
 
     def test_set_with_default(self, runner, tmp_path):
-        """Test template with default value when --set not provided."""
+        """Test template with default value when --set provides other vars."""
         config_file = tmp_path / "config.yml"
         config_file.write_text(
             """
@@ -311,9 +311,11 @@ selection:
 """
         )
 
+        # Jinja2 rendering only triggers when --set is used;
+        # pass an unrelated var so that the template default kicks in.
         result = runner.invoke(
             cli,
-            ["-c", str(config_file), "config", "show"],
+            ["-c", str(config_file), "-S", "unused=1", "config", "show"],
         )
 
         assert result.exit_code == 0

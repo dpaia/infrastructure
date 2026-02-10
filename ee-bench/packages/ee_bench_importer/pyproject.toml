@@ -1,27 +1,30 @@
 [project]
-name = "ee_bench_generator"
+name = "ee_bench_importer"
 version = "0.1.0"
+description = "GitHub PR importer generator for ee_bench"
 requires-python = ">=3.11"
-dependencies = []
+dependencies = [
+    "ee_bench_generator",
+    "Jinja2>=3.1",
+    "PyGithub>=2.8",
+    "unidiff>=0.7.5",
+    "whatthepatch>=1.0",
+]
 
 [project.optional-dependencies]
-templates = ["Jinja2>=3.1"]
 dev = [
     "pytest>=8.0",
 ]
 
-[project.entry-points."ee_bench_generator.providers"]
-# Providers register here
-
 [project.entry-points."ee_bench_generator.generators"]
-# Generators register here
+github_pr_importer = "ee_bench_importer:GitHubPRImporterGenerator"
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/ee_bench_generator"]
+packages = ["src/ee_bench_importer"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

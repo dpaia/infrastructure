@@ -1,0 +1,22 @@
+# Export SWE-bench Pro datapoints from dpaia PRs back to JSONL
+# Usage: ee-dataset --config specs/export-swe-bench-pro.yaml generate
+
+provider:
+  name: github_pull_requests
+  options:
+    token: ${GITHUB_TOKEN}
+
+generator: dpaia_jvm
+
+selection:
+  resource: pull_requests
+  filters:
+    repos:
+      - "dpaia/*"
+    labels:
+      - swe-bench-pro
+    state: open
+
+output:
+  format: jsonl
+  path: datasets/swe_bench_pro_export.jsonl

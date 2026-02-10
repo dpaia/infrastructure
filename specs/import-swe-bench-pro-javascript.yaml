@@ -1,0 +1,81 @@
+# Import only JavaScript tasks from SWE-bench Pro
+# Usage: ee-dataset --config specs/import-swe-bench-pro-javascript.yaml import run
+
+provider:
+  name: huggingface_dataset
+  options:
+    dataset_name: "ScaleAI/SWE-bench_Pro"
+    split: test
+    hf_token: ${HF_TOKEN:-}
+    filters:
+      repo_language: JavaScript
+
+generator:
+  name: github_pr_importer
+  options:
+    target_org: dpaia
+    github_token: ${GITHUB_TOKEN}
+    dataset_label: swe-bench-pro
+    state_file: ".state/swe-bench-pro-js.json"
+    inter_operation_delay: 1.0
+    # Repository visibility for forks: "public" or "private"
+    # repo_visibility: private
+    # Project visibility when creating new projects: "PUBLIC", "PRIVATE", or "ORG"
+    # project_visibility: PRIVATE
+    # PR state after creation: "open" or "closed"
+    # pr_state: open
+    pr_title_template: "[{{ dataset_label }}] {{ problem_statement | first_sentence | truncate_title }}"
+    pr_body_template: |
+      ## Problem Statement
+
+      {{ problem_statement | default("(no description)") }}
+
+      {% if hints_text %}
+      ## Hints
+
+      {{ hints_text }}
+      {% endif %}
+
+      {% if requirements %}
+      ## Requirements
+
+      {{ requirements }}
+      {% endif %}
+
+      {% if interface %}
+      ## Interface
+
+      {{ interface }}
+      {% endif %}
+
+      {{ metadata(instance_id=instance_id, repo=repo, base_commit=base_commit,
+                   version=version, repo_language=repo_language,
+                   FAIL_TO_PASS=FAIL_TO_PASS, PASS_TO_PASS=PASS_TO_PASS,
+                   environment_setup_commit=environment_setup_commit,
+                   requirements=requirements, interface=interface,
+                   issue_specificity=issue_specificity, issue_categories=issue_categories,
+                   dockerhub_tag=dockerhub_tag,
+                   before_repo_set_cmd="```\n" ~ before_repo_set_cmd ~ "\n```" if before_repo_set_cmd else "",
+                   selected_test_files_to_run=selected_test_files_to_run,
+                   created_at=created_at, checksum=checksum,
+                   dataset="swe-bench-pro") }}
+    labels:
+      - swe-bench-pro
+      - "{{ repo_language }}"
+      - "{{ issue_categories }}"
+    repo_topics:
+      - swe-bench-pro
+      - javascript
+    projects:
+      - name: "SWE Pro"
+        scope: all
+      - name: "JavaScript"
+        scope: all
+
+selection:
+  resource: dataset_items
+  filters: {}
+
+output:
+  format: jsonl
+  path: results/swe-bench-pro-js-import.jsonl

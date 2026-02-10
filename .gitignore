@@ -20,3 +20,4 @@ __pycache__/
 *$py.class
 *.so
 /docs/
+/ee-bench/results/

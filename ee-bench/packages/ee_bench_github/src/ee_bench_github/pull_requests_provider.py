@@ -30,6 +30,7 @@ class GitHubPullRequestsProvider(Provider):
     - patch (pull_request): Combined diff of all changes
     - FAIL_TO_PASS (pull_request): Parsed test field from body
     - PASS_TO_PASS (pull_request): Parsed test field from body
+    - metadata (pull_request): Parsed <!--METADATA--> block from body as dict
     - repo_tree (repository): List of file paths at base commit
     - repo_url (repository): Repository clone URL
     """
@@ -94,6 +95,11 @@ class GitHubPullRequestsProvider(Provider):
                     "PASS_TO_PASS",
                     source="pull_request",
                     description="Tests that should always pass (from PR body)",
+                ),
+                FieldDescriptor(
+                    "metadata",
+                    source="pull_request",
+                    description="Parsed <!--METADATA--> block from PR body as dict",
                 ),
                 FieldDescriptor(
                     "repo_tree",
@@ -188,6 +194,9 @@ class GitHubPullRequestsProvider(Provider):
         elif name == "PASS_TO_PASS":
             body = pr.get("body") or ""
             return parse_test_fields(body).pass_to_pass
+        elif name == "metadata":
+            body = pr.get("body") or ""
+            return self._parse_metadata_block(body)
         else:
             raise ProviderError(f"Unknown pull_request field: {name}")
 
@@ -261,6 +270,40 @@ class GitHubPullRequestsProvider(Provider):
             except GitHubAPIError as e:
                 raise ProviderError(f"Failed to fetch repo tree: {e}")
         return self._cache[cache_key]
+
+    @staticmethod
+    def _parse_metadata_block(body: str) -> dict[str, str]:
+        """Parse <!--METADATA ... METADATA--> block from PR body.
+
+        Args:
+            body: PR body text.
+
+        Returns:
+            Dictionary of key-value pairs from the metadata block.
+            Empty dict if no metadata block found.
+        """
+        import re
+
+        pattern = re.compile(r"<!--METADATA\n(.*?)\nMETADATA-->", re.DOTALL)
+        match = pattern.search(body)
+        if not match:
+            return {}
+
+        content = match.group(1)
+        result = {}
+        for line in content.split("\n"):
+            line = line.strip()
+            if not line:
+                continue
+            colon_idx = line.find(":")
+            if colon_idx < 0:
+                continue
+            key = line[:colon_idx].strip()
+            value = line[colon_idx + 1:]
+            value = value.replace("\\n", "\n")
+            result[key] = value
+
+        return result
 
     def _expand_pattern(self, pattern: str) -> list[str]:
         """Expand a wildcard pattern to matching repositories.

@@ -46,6 +46,7 @@ from ee_bench_generator.metadata import (
     Selection,
     ValidationResult,
 )
+from ee_bench_generator.templates import render_template
 
 __version__ = "0.1.0"
 
@@ -77,4 +78,6 @@ __all__ = [
     "IncompatiblePluginsError",
     "ProviderError",
     "GeneratorError",
+    # Templates
+    "render_template",
 ]

@@ -29,23 +29,31 @@ class DatasetEngine:
         ...     print(record)
     """
 
-    def __init__(self, provider: Provider, generator: Generator) -> None:
+    def __init__(
+        self, provider: Provider, generator: Generator, *, defer_validation: bool = False
+    ) -> None:
         """Initialize the engine with a provider and generator.
 
         Args:
             provider: The data provider to fetch fields from.
             generator: The generator that produces output records.
+            defer_validation: If True, skip compatibility check at init time.
+                Use this for providers that discover fields dynamically during
+                prepare() (e.g., HuggingFace datasets). Validation will be
+                performed in run() after prepare().
 
         Raises:
             IncompatiblePluginsError: If provider cannot satisfy generator requirements.
         """
-        result = validate_compatibility(provider.metadata, generator.metadata)
-        if not result.compatible:
-            raise IncompatiblePluginsError(result)
-
         self.provider = provider
         self.generator = generator
-        self._validation_result = result
+        self._validation_result = None
+
+        if not defer_validation:
+            result = validate_compatibility(provider.metadata, generator.metadata)
+            if not result.compatible:
+                raise IncompatiblePluginsError(result)
+            self._validation_result = result
 
     @property
     def validation_result(self):
@@ -75,6 +83,15 @@ class DatasetEngine:
         # Prepare the provider with its specific options
         provider_options = options.get("provider_options", {})
         self.provider.prepare(**provider_options)
+
+        # Validate after prepare if deferred (late-binding providers)
+        if self._validation_result is None:
+            result = validate_compatibility(
+                self.provider.metadata, self.generator.metadata
+            )
+            if not result.compatible:
+                raise IncompatiblePluginsError(result)
+            self._validation_result = result
 
         # Let the generator drive the iteration
         yield from self.generator.generate(self.provider, context)

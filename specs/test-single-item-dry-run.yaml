@@ -1,0 +1,74 @@
+# Test: dry-run import of a single SWE-bench Pro item
+# Usage: ee-dataset --config specs/test-single-item-dry-run.yaml import dry-run
+
+provider:
+  name: huggingface_dataset
+  options:
+    dataset_name: "ScaleAI/SWE-bench_Pro"
+    split: test
+    hf_token: ${HF_TOKEN:-}
+    filters:
+      instance_id: instance_protonmail__webclients-1501eb765873b2884b6f1944fd242ecfc9d6b103
+
+generator:
+  name: github_pr_importer
+  options:
+    target_org: dpaia
+    github_token: ${GITHUB_TOKEN:-}
+    dataset_label: swe-bench-pro
+    state_file: ".state/test-dry-run.json"
+    inter_operation_delay: 0
+    pr_title_template: "{{ problem_statement | first_sentence | truncate_title }}"
+    pr_body_template: |
+      ## Problem Statement
+
+      {{ problem_statement | default("(no description)") }}
+
+      {% if hints_text %}
+      ## Hints
+
+      {{ hints_text }}
+      {% endif %}
+
+      {% if requirements %}
+      ## Requirements
+
+      {{ requirements }}
+      {% endif %}
+
+      {% if interface %}
+      ## Interface
+
+      {{ interface }}
+      {% endif %}
+
+      {{ metadata(instance_id=instance_id, base_commit=base_commit,
+                   version=version, repo_language=repo_language,
+                   FAIL_TO_PASS=FAIL_TO_PASS, PASS_TO_PASS=PASS_TO_PASS,
+                   environment_setup_commit=environment_setup_commit,                  
+                   issue_specificity=issue_specificity, issue_categories=issue_categories,
+                   dockerhub_tag=dockerhub_tag,
+                   before_repo_set_cmd="```\n" ~ before_repo_set_cmd ~ "\n```" if before_repo_set_cmd else "",
+                   selected_test_files_to_run=selected_test_files_to_run,
+                   created_at=created_at, dataset="swe-bench-pro") }}
+    labels:
+      - swe-bench-pro
+      - "{{ repo_language }}"
+      - "{{ issue_categories }}"
+      - "{{ issue_specificity }}"
+    repo_topics:
+      - swe-bench-pro
+      - "{{ repo_language }}"
+    projects:
+      - name: "SWE Pro"
+        scope: all
+      - name: "{{ repo_language }}"
+        scope: language
+
+selection:
+  resource: dataset_items
+  filters: {}
+
+output:
+  format: jsonl
+  path: results/test-dry-run.jsonl

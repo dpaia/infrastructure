@@ -135,6 +135,18 @@ class DpaiaJvmGenerator(Generator):
                     required=False,
                     description="Issue labels",
                 ),
+                FieldDescriptor(
+                    "test_patch",
+                    source="pull_request",
+                    required=False,
+                    description="Test-only diff (separated from main patch)",
+                ),
+                FieldDescriptor(
+                    "test_patch",
+                    source="issue",
+                    required=False,
+                    description="Test-only diff (separated from main patch)",
+                ),
                 # Repository fields
                 FieldDescriptor(
                     "repo_tree",
@@ -298,6 +310,11 @@ class DpaiaJvmGenerator(Generator):
                 provider, "labels", "issue", item_context, []
             )
 
+            # Fetch test_patch (may come from a patch splitter enrichment provider)
+            test_patch = self._get_field_with_fallback(
+                provider, "test_patch", primary_source, item_context, ""
+            )
+
             # Get build system
             build_system = self._get_optional_field(
                 provider, "build_system", "repository", item_context, ""
@@ -320,7 +337,7 @@ class DpaiaJvmGenerator(Generator):
                 "repo": repo_url,
                 "base_commit": base_commit,
                 "patch": patch,
-                "test_patch": "",  # Empty by default, can be separated if needed
+                "test_patch": test_patch,
                 "problem_statement": problem_statement,
                 "hints_text": hints_text,
                 "FAIL_TO_PASS": fail_to_pass,

@@ -315,15 +315,20 @@ class CompositeProvider(Provider):
                 # Find the source for this field
                 field_source = self._find_field_source(dep_prov_name, field_name)
 
-                # Recursively resolve the field (may trigger upstream providers)
-                cache_key = (self._current_item_key, field_name, field_source)
-                if cache_key in self._field_cache:
-                    value = self._field_cache[cache_key]
+                # Recursively resolve the field (may trigger upstream providers).
+                # Use a 4-tuple cache key that includes the provider name so that
+                # raw upstream values don't collide with routed values cached by
+                # get_field() (which uses a 3-tuple key).
+                dep_cache_key = (
+                    self._current_item_key, dep_prov_name, field_name, field_source,
+                )
+                if dep_cache_key in self._field_cache:
+                    value = self._field_cache[dep_cache_key]
                 else:
                     value = self._resolve_field(
                         dep_prov_name, field_name, field_source, context
                     )
-                    self._field_cache[cache_key] = value
+                    self._field_cache[dep_cache_key] = value
 
                 providers_ns[dep_prov_name][field_name] = value
 

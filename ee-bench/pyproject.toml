@@ -5,10 +5,12 @@ requires-python = ">=3.11"
 dependencies = [
     "ee_bench_generator",
     "ee_bench_cli",
+    "ee_bench_dsl",
     "ee_bench_github",
     "ee_bench_dpaia",
     "ee_bench_huggingface",
     "ee_bench_importer",
+    "ee_bench_patch_splitter",
 ]
 
 [project.optional-dependencies]
@@ -23,25 +25,31 @@ members = ["packages/*"]
 [tool.uv.sources]
 ee_bench_generator = { workspace = true }
 ee_bench_cli = { workspace = true }
+ee_bench_dsl = { workspace = true }
 ee_bench_github = { workspace = true }
 ee_bench_dpaia = { workspace = true }
 ee_bench_huggingface = { workspace = true }
 ee_bench_importer = { workspace = true }
+ee_bench_patch_splitter = { workspace = true }
 
 [tool.pytest.ini_options]
 testpaths = [
     "packages/ee_bench_generator/tests",
     "packages/ee_bench_cli/tests",
+    "packages/ee_bench_dsl/tests",
     "packages/ee_bench_github/tests",
     "packages/ee_bench_dpaia/tests",
     "packages/ee_bench_huggingface/tests",
     "packages/ee_bench_importer/tests",
+    "packages/ee_bench_patch_splitter/tests",
 ]
 pythonpath = [
     "packages/ee_bench_generator/src",
     "packages/ee_bench_cli/src",
+    "packages/ee_bench_dsl/src",
     "packages/ee_bench_github/src",
     "packages/ee_bench_dpaia/src",
     "packages/ee_bench_huggingface/src",
     "packages/ee_bench_importer/src",
+    "packages/ee_bench_patch_splitter/src",
 ]

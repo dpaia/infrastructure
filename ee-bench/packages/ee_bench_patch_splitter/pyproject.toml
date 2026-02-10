@@ -1,0 +1,27 @@
+[project]
+name = "ee_bench_patch_splitter"
+version = "0.1.0"
+description = "Patch splitter provider for ee_bench - separates source and test diffs"
+requires-python = ">=3.11"
+dependencies = [
+    "ee_bench_generator",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+]
+
+[project.entry-points."ee_bench_generator.providers"]
+patch_splitter = "ee_bench_patch_splitter:PatchSplitterProvider"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/ee_bench_patch_splitter"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

@@ -1,4 +1,6 @@
 # Configuration for generating dataset from a single GitHub issue
+# with automatic test patch splitting.
+#
 # Used by: ee-dataset --config specs/dpaia-issue.yaml -S ORGANIZATION=apache -S REPOSITORY=kafka -S ISSUE_NUMBER=12345 generate
 #
 # Template variables (set via --set):
@@ -6,13 +8,19 @@
 #   REPOSITORY: Repository name
 #   ISSUE_NUMBER: Issue number to process
 
-provider:
-  name: github_issues
-  type: github
-  options:
-    fetch_commits: true          # Enable commit fetching from Timeline API
-    parse_comments: true         # Parse test fields from comments
-    detect_build_system: true    # Detect Maven/Gradle build system
+providers:
+  - name: github
+    type: github_issues
+    role: primary
+    options:
+      fetch_commits: true          # Enable commit fetching from Timeline API
+      parse_comments: true         # Parse test fields from comments
+      detect_build_system: true    # Detect Maven/Gradle build system
+
+  - name: patch_splitter
+    type: patch_splitter
+    item_mapping:
+      patch: "{% raw %}{{ providers.github.patch }}{% endraw %}"
 
 generator:
   name: dpaia_jvm

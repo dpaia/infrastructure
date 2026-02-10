@@ -14,10 +14,12 @@ resolution-markers = [
 members = [
     "ee-bench-cli",
     "ee-bench-dpaia",
+    "ee-bench-dsl",
     "ee-bench-generator",
     "ee-bench-github",
     "ee-bench-huggingface",
     "ee-bench-importer",
+    "ee-bench-patch-splitter",
     "ee-bench-workspace",
 ]
 
@@ -439,6 +441,7 @@ version = "0.1.0"
 source = { editable = "packages/ee_bench_cli" }
 dependencies = [
     { name = "click" },
+    { name = "ee-bench-dsl" },
     { name = "ee-bench-generator" },
     { name = "jinja2" },
     { name = "pyyaml" },
@@ -452,6 +455,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "click", specifier = ">=8.0" },
+    { name = "ee-bench-dsl", editable = "packages/ee_bench_dsl" },
     { name = "ee-bench-generator", editable = "packages/ee_bench_generator" },
     { name = "jinja2", specifier = ">=3.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
@@ -469,6 +473,26 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [{ name = "ee-bench-generator", editable = "packages/ee_bench_generator" }]
+
+[[package]]
+name = "ee-bench-dsl"
+version = "0.1.0"
+source = { editable = "packages/ee_bench_dsl" }
+dependencies = [
+    { name = "ee-bench-generator" },
+]
+
+[package.optional-dependencies]
+dev = [
+    { name = "pytest" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "ee-bench-generator", editable = "packages/ee_bench_generator" },
+    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
+]
+provides-extras = ["dev"]
 
 [[package]]
 name = "ee-bench-generator"
@@ -565,16 +589,38 @@ requires-dist = [
 provides-extras = ["dev"]
 
 [[package]]
+name = "ee-bench-patch-splitter"
+version = "0.1.0"
+source = { editable = "packages/ee_bench_patch_splitter" }
+dependencies = [
+    { name = "ee-bench-generator" },
+]
+
+[package.optional-dependencies]
+dev = [
+    { name = "pytest" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "ee-bench-generator", editable = "packages/ee_bench_generator" },
+    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
+]
+provides-extras = ["dev"]
+
+[[package]]
 name = "ee-bench-workspace"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
     { name = "ee-bench-cli" },
     { name = "ee-bench-dpaia" },
+    { name = "ee-bench-dsl" },
     { name = "ee-bench-generator" },
     { name = "ee-bench-github" },
     { name = "ee-bench-huggingface" },
     { name = "ee-bench-importer" },
+    { name = "ee-bench-patch-splitter" },
 ]
 
 [package.optional-dependencies]
@@ -587,10 +633,12 @@ dev = [
 requires-dist = [
     { name = "ee-bench-cli", editable = "packages/ee_bench_cli" },
     { name = "ee-bench-dpaia", editable = "packages/ee_bench_dpaia" },
+    { name = "ee-bench-dsl", editable = "packages/ee_bench_dsl" },
     { name = "ee-bench-generator", editable = "packages/ee_bench_generator" },
     { name = "ee-bench-github", editable = "packages/ee_bench_github" },
     { name = "ee-bench-huggingface", editable = "packages/ee_bench_huggingface" },
     { name = "ee-bench-importer", editable = "packages/ee_bench_importer" },
+    { name = "ee-bench-patch-splitter", editable = "packages/ee_bench_patch_splitter" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
     { name = "responses", marker = "extra == 'dev'", specifier = ">=0.25" },
 ]

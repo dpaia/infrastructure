@@ -1,0 +1,33 @@
+# DPAIA JVM with Patch Splitter (Multi-Provider Configuration)
+#
+# This configuration demonstrates using the patch_splitter enrichment provider
+# to automatically separate test diffs from source diffs in the output.
+#
+# Usage:
+#   export GITHUB_TOKEN=your_token
+#   ee-dataset --config examples/dpaia_jvm_multi_provider_config.yaml generate
+
+providers:
+  - name: github_prs
+    type: github_pull_requests
+    role: primary
+    options:
+      token: ${GITHUB_TOKEN}
+
+  - name: patch_splitter
+    type: patch_splitter
+    item_mapping:
+      patch: "{{ providers.github_prs.patch }}"
+
+generator:
+  name: dpaia_jvm
+
+selection:
+  resource: pull_requests
+  filters:
+    repo: owner/repo
+    pr_numbers: [42]
+
+output:
+  format: jsonl
+  path: datasets/output.jsonl

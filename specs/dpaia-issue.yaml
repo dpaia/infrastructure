@@ -20,7 +20,7 @@ providers:
   - name: patch_splitter
     type: patch_splitter
     item_mapping:
-      patch: "{% raw %}{{ providers.github.patch }}{% endraw %}"
+      patch: "{{ providers.github.patch }}"
 
 generator:
   name: dpaia_jvm

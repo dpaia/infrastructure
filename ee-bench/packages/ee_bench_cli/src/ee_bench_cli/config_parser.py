@@ -9,7 +9,38 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from jinja2 import Environment, StrictUndefined, TemplateSyntaxError, UndefinedError
+from jinja2 import Environment, TemplateSyntaxError, Undefined
+
+class _PreserveUndefined(Undefined):
+    """Jinja2 Undefined that preserves unresolved ``{{ expr }}`` as-is.
+
+    This enables multi-pass template rendering: config-level variables
+    (e.g. ``{{ ORGANIZATION }}``) are resolved at load time while
+    runtime templates (e.g. ``{{ providers.github.patch }}``) pass
+    through untouched for later resolution by the composite provider.
+    """
+
+    def __str__(self) -> str:
+        name = self._undefined_name or ""
+        return "{{ " + name + " }}" if name else ""
+
+    def __getattr__(self, item: str) -> "_PreserveUndefined":
+        if item.startswith("_"):
+            raise AttributeError(item)
+        new_name = f"{self._undefined_name}.{item}" if self._undefined_name else item
+        return type(self)(
+            hint=self._undefined_hint,
+            obj=self._undefined_obj,
+            name=new_name,
+            exc=self._undefined_exception,
+        )
+
+    def __iter__(self):
+        return iter([])
+
+    def __bool__(self) -> bool:
+        return False
+
 
 # Environment variable pattern: ${VAR} or ${VAR:-default}
 ENV_VAR_PATTERN = re.compile(r"\$\{([^}:]+)(?::-([^}]*))?\}")
@@ -127,13 +158,11 @@ def render_template(content: str, variables: dict[str, Any] | None = None) -> st
         return content
 
     try:
-        env = Environment(undefined=StrictUndefined)
+        env = Environment(undefined=_PreserveUndefined)
         template = env.from_string(content)
         return template.render(**variables)
     except TemplateSyntaxError as e:
         raise ValueError(f"Jinja2 template syntax error: {e}")
-    except UndefinedError as e:
-        raise ValueError(f"Undefined template variable: {e}")
 
 
 def substitute_env_vars(value: str) -> str:

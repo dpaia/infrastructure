@@ -289,11 +289,17 @@ class TestRenderTemplate:
         result = render_template(content, {"limit": 50})
         assert result == "limit: 50"
 
-    def test_undefined_variable_raises_error(self):
-        """Test that undefined variable without default raises error."""
+    def test_undefined_variable_preserved(self):
+        """Test that undefined variable without default is preserved as-is."""
         content = "repo: {{ undefined_var }}"
-        with pytest.raises(ValueError, match="Undefined template variable"):
-            render_template(content, {})
+        result = render_template(content, {})
+        assert result == "repo: {{ undefined_var }}"
+
+    def test_undefined_dotted_path_preserved(self):
+        """Test that dotted-path references (e.g. providers.x.y) are preserved."""
+        content = 'patch: "{{ providers.github.patch }}"'
+        result = render_template(content, {"ORGANIZATION": "apache"})
+        assert result == 'patch: "{{ providers.github.patch }}"'
 
     def test_no_template_passthrough(self):
         """Test that content without templates passes through unchanged."""

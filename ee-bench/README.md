@@ -740,6 +740,207 @@ Labels, repo topics, and project names support Jinja2 `{{ }}` syntax for dynamic
 
 The importer maintains a JSON state file to track which items have been imported. On subsequent runs, unchanged items are skipped. Use `import reset -i <id>` to force re-import of a specific item.
 
+## Multiple Providers and Generators
+
+A single config file can define multiple providers and/or multiple generators. This enables combining data from different sources (e.g. HuggingFace dataset enriched with GitHub PR data) and producing different artifacts from the same run.
+
+### Multiple Providers
+
+Use the `providers:` key (instead of `provider:`) to define a list of providers. Exactly one must have `role: primary` — it drives `iter_items()`. Other providers act as enrichments and receive data from upstream providers via `item_mapping`.
+
+```yaml
+providers:
+  - name: swe_bench_data             # instance identifier (used in cross-references)
+    type: huggingface_dataset         # plugin type to load
+    role: primary                     # drives iteration; exactly one required
+    options:
+      dataset_name: "ScaleAI/SWE-bench_Pro"
+      split: test
+
+  - name: upstream_prs               # unique instance name
+    type: github_pull_requests        # plugin type
+    item_mapping:                     # resolve fields from upstream providers
+      owner: "{{ providers.swe_bench_data.repo | split('/') | first }}"
+      repo: "{{ providers.swe_bench_data.repo | split('/') | last }}"
+      number: "{{ providers.swe_bench_data.pr_number }}"
+    options:
+      token: ${GITHUB_TOKEN}
+
+generator:
+  name: dpaia_jvm
+  type: dataset
+
+selection:
+  resource: dataset_items
+  filters: {}
+
+output:
+  format: jsonl
+  path: datasets/enriched.jsonl
+```
+
+#### How Item Mapping Works
+
+Enrichment providers use `item_mapping` to specify how their input context is derived from upstream provider fields. Templates use Jinja2 syntax with `providers.<name>.<field>` references:
+
+```yaml
+item_mapping:
+  owner: "{{ providers.swe_bench_data.repo | split('/') | first }}"
+  repo: "{{ providers.swe_bench_data.repo | split('/') | last }}"
+  number: "{{ providers.swe_bench_data.pr_number }}"
+```
+
+For each item from the primary provider, the composite resolves these templates by fetching the referenced fields from upstream providers, then passes the resulting context to the enrichment provider.
+
+#### Provider Dependency Chain
+
+Providers can form chains — an enrichment provider can depend on another enrichment provider:
+
+```yaml
+providers:
+  - name: swe_bench_data
+    type: huggingface_dataset
+    role: primary
+    options:
+      dataset_name: "ScaleAI/SWE-bench_Pro"
+      split: test
+
+  - name: upstream_prs
+    type: github_pull_requests
+    item_mapping:
+      owner: "{{ providers.swe_bench_data.repo | split('/') | first }}"
+      repo: "{{ providers.swe_bench_data.repo | split('/') | last }}"
+      number: "{{ providers.swe_bench_data.pr_number }}"
+    options:
+      token: ${GITHUB_TOKEN}
+
+  - name: issue_tracker
+    type: jira_provider
+    item_mapping:
+      project: "{{ providers.upstream_prs.jira_project }}"
+      issue_key: "{{ providers.upstream_prs.jira_key }}"
+    options:
+      url: ${JIRA_URL}
+```
+
+Dependencies are resolved via topological sort. Cyclic dependencies are detected and raise an error.
+
+#### Validation Rules
+
+- `provider` and `providers` are mutually exclusive
+- When `providers:` is used, exactly one must have `role: primary`
+- Provider names must be unique
+- The dependency graph (derived from `providers.<name>.<field>` references) must be acyclic
+
+### Multiple Generators
+
+Use the `generators:` key (instead of `generator:`) to run multiple generators against the same provider. Each generator has its own `output:` block.
+
+```yaml
+provider:
+  name: huggingface_dataset
+  type: huggingface
+  options:
+    dataset_name: "ScaleAI/SWE-bench_Pro"
+    split: test
+
+generators:
+  - name: pr_import
+    type: importer
+    options:
+      target_org: dpaia
+      github_token: ${GITHUB_TOKEN}
+    output:
+      format: jsonl
+      path: results/import.jsonl
+
+  - name: dataset_export
+    type: dataset
+    options:
+      version: "1"
+    output:
+      format: jsonl
+      path: datasets/export.jsonl
+
+selection:
+  resource: dataset_items
+  filters: {}
+```
+
+Each generator runs independently with its own `DatasetEngine`. The provider is shared and prepared once.
+
+#### Validation Rules
+
+- `generator` and `generators` are mutually exclusive
+- Generator names must be unique
+- Each generator entry must have a `name` and `type`
+- When using `generators:`, each generator specifies its own `output:` block; the top-level `output:` is ignored
+
+### Combined: Multiple Providers + Multiple Generators
+
+Both features can be used together:
+
+```yaml
+providers:
+  - name: swe_bench_data
+    type: huggingface_dataset
+    role: primary
+    options:
+      dataset_name: "ScaleAI/SWE-bench_Pro"
+      split: test
+
+  - name: upstream_prs
+    type: github_pull_requests
+    item_mapping:
+      owner: "{{ providers.swe_bench_data.repo | split('/') | first }}"
+      repo: "{{ providers.swe_bench_data.repo | split('/') | last }}"
+      number: "{{ providers.swe_bench_data.pr_number }}"
+    options:
+      token: ${GITHUB_TOKEN}
+
+generators:
+  - name: pr_import
+    type: importer
+    options:
+      target_org: dpaia
+      github_token: ${GITHUB_TOKEN}
+    output:
+      format: jsonl
+      path: results/import.jsonl
+
+  - name: dataset_export
+    type: dataset
+    options:
+      version: "1"
+    output:
+      format: jsonl
+      path: datasets/export.jsonl
+
+selection:
+  resource: dataset_items
+  filters: {}
+```
+
+### Backward Compatibility
+
+The singular `provider:`/`generator:` format continues to work unchanged. The `name` field in singular form acts as both the instance identifier and the plugin type. Adding a `type:` field is optional in singular form but required in plural form.
+
+```yaml
+# Singular form — these are equivalent:
+provider:
+  name: github_issues
+  options: { ... }
+
+provider:
+  name: github_issues
+  type: github
+  options: { ... }
+
+# Flat form also still works:
+provider: github_pull_requests
+provider_options: { ... }
+```
+
 ## Project Structure
 
 ```
@@ -751,12 +952,15 @@ ee-bench/
 │   │   ├── engine.py           # DatasetEngine orchestration
 │   │   ├── loader.py           # Plugin discovery
 │   │   ├── matcher.py          # Compatibility validation
-│   │   └── templates.py        # Jinja2 template rendering (render_template)
+│   │   ├── templates.py        # Jinja2 template rendering (render_template)
+│   │   ├── composite.py        # CompositeProvider (multi-provider support)
+│   │   └── multi_generator.py  # MultiGeneratorRunner (multi-generator support)
 │   │
 │   ├── ee_bench_cli/           # CLI tool
 │   │   ├── cli.py              # Main entry point (--set option)
 │   │   ├── commands/           # CLI commands (generate, import, config, etc.)
 │   │   ├── config_parser.py    # YAML + Jinja2 config handling
+│   │   ├── plugin_loader.py    # Config → provider/generator assembly
 │   │   └── output.py           # Output formatting
 │   │
 │   ├── ee_bench_github/        # GitHub providers

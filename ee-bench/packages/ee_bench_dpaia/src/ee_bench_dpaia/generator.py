@@ -1,4 +1,4 @@
-"""DPAIA JVM Generator implementation."""
+"""DPAIA Generator implementations."""
 
 from __future__ import annotations
 
@@ -8,6 +8,28 @@ from typing import Any, Iterator
 from ee_bench_generator import Generator, Provider
 from ee_bench_generator.clock import now_iso8601_utc
 from ee_bench_generator.metadata import Context, FieldDescriptor, GeneratorMetadata
+
+
+# All SWE-bench Pro metadata field names (excluding instance_id which is handled separately)
+_SWE_PRO_METADATA_FIELDS = [
+    "repo",
+    "base_commit",
+    "version",
+    "repo_language",
+    "FAIL_TO_PASS",
+    "PASS_TO_PASS",
+    "environment_setup_commit",
+    "requirements",
+    "interface",
+    "issue_specificity",
+    "issue_categories",
+    "dockerhub_tag",
+    "before_repo_set_cmd",
+    "selected_test_files_to_run",
+    "created_at",
+    "checksum",
+    "dataset",
+]
 
 
 class DpaiaJvmGenerator(Generator):
@@ -79,6 +101,13 @@ class DpaiaJvmGenerator(Generator):
                 ),
             ],
             optional_fields=[
+                # instance_id from metadata enrichment (overrides generated id)
+                FieldDescriptor(
+                    "instance_id",
+                    source="pull_request",
+                    required=False,
+                    description="Original instance_id from metadata block",
+                ),
                 # Optional fields from pull_request
                 FieldDescriptor(
                     "title",
@@ -273,11 +302,17 @@ class DpaiaJvmGenerator(Generator):
                 current_item=item,
             )
 
-            # Build instance_id from item info
+            # Extract item-level info (needed for fallback instance_id and issue_numbers)
             owner = item.get("owner", "unknown")
             repo = item.get("repo", "unknown")
             number = item.get("number", 0)
-            instance_id = f"{owner}__{repo}__{number}"
+
+            # Try to get instance_id from metadata, fall back to generated
+            instance_id = self._get_field_with_fallback(
+                provider, "instance_id", primary_source, item_context, ""
+            )
+            if not instance_id:
+                instance_id = f"{owner}__{repo}__{number}"
 
             # Fetch required fields (try primary source first, then fallback)
             description = self._get_field_with_fallback(
@@ -413,3 +448,191 @@ class DpaiaJvmGenerator(Generator):
         if title and description:
             return f"{title}\n\n{description}"
         return title or description or ""
+
+
+class DpaiaSweProGenerator(Generator):
+    """Generator that produces records matching the original SWE-bench Pro dataset schema.
+
+    Unlike `DpaiaJvmGenerator` (which is JVM-oriented and loses some fields),
+    this generator round-trips **all** original SWE-bench Pro metadata fields
+    that were embedded during import.
+
+    All metadata fields are declared with ``source="pull_request"`` because
+    :class:`MetadataProvider` exposes them under that source by default.
+    """
+
+    @property
+    def metadata(self) -> GeneratorMetadata:
+        return GeneratorMetadata(
+            name="dpaia_swe_pro",
+            required_fields=[
+                FieldDescriptor(
+                    "description",
+                    source="pull_request",
+                    description="PR body text (used as problem statement)",
+                ),
+                FieldDescriptor(
+                    "patch",
+                    source="pull_request",
+                    description="Source-only diff (from patch_splitter)",
+                ),
+                FieldDescriptor(
+                    "repo_url",
+                    source="repository",
+                    description="Repository clone URL",
+                ),
+            ],
+            optional_fields=[
+                FieldDescriptor(
+                    "title",
+                    source="pull_request",
+                    required=False,
+                    description="PR title (prepended to problem statement)",
+                ),
+                FieldDescriptor(
+                    "instance_id",
+                    source="pull_request",
+                    required=False,
+                    description="Original instance_id from metadata block",
+                ),
+                FieldDescriptor(
+                    "hints_text",
+                    source="pull_request",
+                    required=False,
+                    description="Hints section from PR body",
+                ),
+                FieldDescriptor(
+                    "test_patch",
+                    source="pull_request",
+                    required=False,
+                    description="Test-only diff (from patch_splitter)",
+                ),
+                # All SWE-bench Pro metadata fields
+                *(
+                    FieldDescriptor(
+                        name,
+                        source="pull_request",
+                        required=False,
+                        description=f"SWE-bench Pro metadata field '{name}'",
+                    )
+                    for name in _SWE_PRO_METADATA_FIELDS
+                ),
+            ],
+        )
+
+    def output_schema(self) -> dict[str, Any]:
+        """Return JSON Schema for SWE-bench Pro output records."""
+        return {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "type": "object",
+            "title": "SWE-bench Pro Dataset Record",
+            "description": "A single record matching the original SWE-bench Pro schema",
+            "required": [
+                "instance_id",
+                "patch",
+                "problem_statement",
+                "repo",
+                "base_commit",
+            ],
+            "properties": {
+                "instance_id": {"type": "string"},
+                "patch": {"type": "string"},
+                "test_patch": {"type": "string"},
+                "problem_statement": {"type": "string"},
+                "hints_text": {"type": "string"},
+                "repo": {"type": "string"},
+                "base_commit": {"type": "string"},
+                "version": {"type": "string"},
+                "repo_language": {"type": "string"},
+                "FAIL_TO_PASS": {"type": "string"},
+                "PASS_TO_PASS": {"type": "string"},
+                "environment_setup_commit": {"type": "string"},
+                "requirements": {"type": "string"},
+                "interface": {"type": "string"},
+                "issue_specificity": {"type": "string"},
+                "issue_categories": {"type": "string"},
+                "dockerhub_tag": {"type": "string"},
+                "before_repo_set_cmd": {"type": "string"},
+                "selected_test_files_to_run": {"type": "string"},
+                "created_at": {"type": "string", "format": "date-time"},
+                "checksum": {"type": "string"},
+                "dataset": {"type": "string"},
+            },
+            "additionalProperties": False,
+        }
+
+    def generate(
+        self, provider: Provider, context: Context
+    ) -> Iterator[dict[str, Any]]:
+        for item in provider.iter_items(context):
+            item_context = Context(
+                selection=context.selection,
+                options=context.options,
+                current_item=item,
+            )
+
+            owner = item.get("owner", "unknown")
+            repo_name = item.get("repo", "unknown")
+            number = item.get("number", 0)
+
+            # --- helpers ---
+            def _get(name: str, source: str = "pull_request", default: Any = "") -> Any:
+                if provider.metadata.can_provide(name, source):
+                    try:
+                        value = provider.get_field(name, source, item_context)
+                        if value is not None:
+                            return value
+                    except Exception:
+                        pass
+                return default
+
+            # instance_id: metadata first, then fallback
+            instance_id = _get("instance_id") or f"{owner}__{repo_name}__{number}"
+
+            # problem_statement = title + description (metadata block already stripped by MetadataProvider)
+            title = _get("title")
+            description = _get("description")
+            problem_statement = (
+                f"{title}\n\n{description}" if title and description
+                else title or description or ""
+            )
+
+            # patch / test_patch from provider (patch_splitter splits them)
+            patch = _get("patch")
+            test_patch = _get("test_patch")
+
+            # repo: prefer metadata `repo` (original owner/name), fall back to repo_url
+            repo = _get("repo") or _get("repo_url", source="repository")
+
+            # base_commit: prefer metadata
+            base_commit = _get("base_commit")
+
+            # created_at: prefer metadata, otherwise generate new
+            created_at = _get("created_at") or now_iso8601_utc()
+
+            record: dict[str, Any] = {
+                "instance_id": instance_id,
+                "patch": patch,
+                "test_patch": test_patch,
+                "problem_statement": problem_statement,
+                "hints_text": _get("hints_text"),
+                "repo": repo,
+                "base_commit": base_commit,
+                "version": _get("version"),
+                "repo_language": _get("repo_language"),
+                "FAIL_TO_PASS": _get("FAIL_TO_PASS", default="[]"),
+                "PASS_TO_PASS": _get("PASS_TO_PASS", default="[]"),
+                "environment_setup_commit": _get("environment_setup_commit"),
+                "requirements": _get("requirements"),
+                "interface": _get("interface"),
+                "issue_specificity": _get("issue_specificity"),
+                "issue_categories": _get("issue_categories"),
+                "dockerhub_tag": _get("dockerhub_tag"),
+                "before_repo_set_cmd": _get("before_repo_set_cmd"),
+                "selected_test_files_to_run": _get("selected_test_files_to_run"),
+                "created_at": created_at,
+                "checksum": _get("checksum"),
+                "dataset": _get("dataset"),
+            }
+
+            yield record

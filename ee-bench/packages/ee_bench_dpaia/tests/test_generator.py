@@ -1,4 +1,4 @@
-"""Tests for DPAIA JVM Generator."""
+"""Tests for DPAIA Generators."""
 
 import json
 from datetime import datetime
@@ -8,7 +8,7 @@ import pytest
 
 from ee_bench_generator.metadata import Context, FieldDescriptor, ProviderMetadata, Selection
 
-from ee_bench_dpaia import DpaiaJvmGenerator
+from ee_bench_dpaia import DpaiaJvmGenerator, DpaiaSweProGenerator
 
 
 @pytest.fixture
@@ -267,3 +267,301 @@ class TestBuildProblemStatement:
         """Test with both empty."""
         result = generator._build_problem_statement("", "")
         assert result == ""
+
+
+# ──────────────────────────────────────────────────────────────────────
+# DpaiaSweProGenerator tests
+# ──────────────────────────────────────────────────────────────────────
+
+
+@pytest.fixture
+def swe_pro_generator():
+    return DpaiaSweProGenerator()
+
+
+@pytest.fixture
+def swe_pro_provider():
+    """Provider that mimics a full SWE-bench Pro export pipeline."""
+    provider = MagicMock()
+    provider.metadata = ProviderMetadata(
+        name="mock_swe_pro",
+        sources=["pull_request", "repository"],
+        provided_fields=[
+            FieldDescriptor("description", "pull_request"),
+            FieldDescriptor("title", "pull_request"),
+            FieldDescriptor("patch", "pull_request"),
+            FieldDescriptor("test_patch", "pull_request"),
+            FieldDescriptor("hints_text", "pull_request"),
+            FieldDescriptor("repo_url", "repository"),
+            # metadata fields
+            FieldDescriptor("instance_id", "pull_request"),
+            FieldDescriptor("repo", "pull_request"),
+            FieldDescriptor("base_commit", "pull_request"),
+            FieldDescriptor("version", "pull_request"),
+            FieldDescriptor("repo_language", "pull_request"),
+            FieldDescriptor("FAIL_TO_PASS", "pull_request"),
+            FieldDescriptor("PASS_TO_PASS", "pull_request"),
+            FieldDescriptor("environment_setup_commit", "pull_request"),
+            FieldDescriptor("requirements", "pull_request"),
+            FieldDescriptor("interface", "pull_request"),
+            FieldDescriptor("issue_specificity", "pull_request"),
+            FieldDescriptor("issue_categories", "pull_request"),
+            FieldDescriptor("dockerhub_tag", "pull_request"),
+            FieldDescriptor("before_repo_set_cmd", "pull_request"),
+            FieldDescriptor("selected_test_files_to_run", "pull_request"),
+            FieldDescriptor("created_at", "pull_request"),
+            FieldDescriptor("checksum", "pull_request"),
+            FieldDescriptor("dataset", "pull_request"),
+        ],
+    )
+
+    field_values = {
+        ("description", "pull_request"): "TypeError in crypto module",
+        ("title", "pull_request"): "[swe-bench-pro] Fix crypto bug",
+        ("patch", "pull_request"): "diff --git a/crypto.js b/crypto.js\n+fix",
+        ("test_patch", "pull_request"): "diff --git a/test/crypto.test.js\n+test",
+        ("hints_text", "pull_request"): "Check the key derivation function",
+        ("repo_url", "repository"): "https://github.com/dpaia/webclients.git",
+        ("instance_id", "pull_request"): "instance_protonmail__webclients__42",
+        ("repo", "pull_request"): "protonmail/webclients",
+        ("base_commit", "pull_request"): "9b35b414" + "a" * 32,
+        ("version", "pull_request"): "1.2.3",
+        ("repo_language", "pull_request"): "js",
+        ("FAIL_TO_PASS", "pull_request"): '["test/crypto.test.js::derivation"]',
+        ("PASS_TO_PASS", "pull_request"): '["test/crypto.test.js::encrypt"]',
+        ("environment_setup_commit", "pull_request"): "e" * 40,
+        ("requirements", "pull_request"): "node>=18",
+        ("interface", "pull_request"): "CryptoModule.derive()",
+        ("issue_specificity", "pull_request"): '["crypto_feat"]',
+        ("issue_categories", "pull_request"): '["security_knowledge"]',
+        ("dockerhub_tag", "pull_request"): "protonmail.webclients-1.2.3",
+        ("before_repo_set_cmd", "pull_request"): "git reset --hard HEAD",
+        ("selected_test_files_to_run", "pull_request"): '["test/crypto.test.js"]',
+        ("created_at", "pull_request"): "2025-01-15T10:30:00+00:00",
+        ("checksum", "pull_request"): "abc123def",
+        ("dataset", "pull_request"): "swe-bench-pro",
+    }
+
+    def get_field(name, source, ctx):
+        return field_values.get((name, source))
+
+    provider.get_field.side_effect = get_field
+    provider.iter_items.return_value = iter([
+        {"owner": "dpaia", "repo": "webclients", "number": 7}
+    ])
+
+    return provider
+
+
+class TestDpaiaSweProGeneratorMetadata:
+    """Tests for generator metadata."""
+
+    def test_metadata_name(self, swe_pro_generator):
+        assert swe_pro_generator.metadata.name == "dpaia_swe_pro"
+
+    def test_required_fields(self, swe_pro_generator):
+        required_names = {f.name for f in swe_pro_generator.metadata.required_fields}
+        assert "description" in required_names
+        assert "patch" in required_names
+        assert "repo_url" in required_names
+
+    def test_optional_fields_include_all_swe_pro_metadata(self, swe_pro_generator):
+        optional_names = {f.name for f in swe_pro_generator.metadata.optional_fields}
+        for field in [
+            "instance_id", "title", "hints_text", "test_patch",
+            "repo", "base_commit", "version", "repo_language",
+            "FAIL_TO_PASS", "PASS_TO_PASS", "environment_setup_commit",
+            "requirements", "interface", "issue_specificity",
+            "issue_categories", "dockerhub_tag", "before_repo_set_cmd",
+            "selected_test_files_to_run", "created_at", "checksum", "dataset",
+        ]:
+            assert field in optional_names, f"Missing optional field: {field}"
+
+
+class TestDpaiaSweProGeneratorOutputSchema:
+    """Tests for output schema."""
+
+    def test_schema_required_fields(self, swe_pro_generator):
+        schema = swe_pro_generator.output_schema()
+        for field in ["instance_id", "patch", "problem_statement", "repo", "base_commit"]:
+            assert field in schema["required"]
+
+    def test_schema_no_additional_properties(self, swe_pro_generator):
+        schema = swe_pro_generator.output_schema()
+        assert schema["additionalProperties"] is False
+
+    def test_schema_has_all_swe_pro_fields(self, swe_pro_generator):
+        schema = swe_pro_generator.output_schema()
+        for field in [
+            "repo_language", "environment_setup_commit", "requirements",
+            "interface", "issue_specificity", "issue_categories",
+            "dockerhub_tag", "before_repo_set_cmd", "selected_test_files_to_run",
+            "checksum", "dataset",
+        ]:
+            assert field in schema["properties"], f"Missing property: {field}"
+
+
+class TestDpaiaSweProGeneratorGenerate:
+    """Tests for generate method."""
+
+    def test_generates_record_with_all_metadata(
+        self, swe_pro_generator, swe_pro_provider, context
+    ):
+        records = list(swe_pro_generator.generate(swe_pro_provider, context))
+        assert len(records) == 1
+        r = records[0]
+
+        assert r["instance_id"] == "instance_protonmail__webclients__42"
+        assert r["repo"] == "protonmail/webclients"
+        assert r["base_commit"] == "9b35b414" + "a" * 32
+        assert r["version"] == "1.2.3"
+        assert r["repo_language"] == "js"
+        assert r["FAIL_TO_PASS"] == '["test/crypto.test.js::derivation"]'
+        assert r["PASS_TO_PASS"] == '["test/crypto.test.js::encrypt"]'
+        assert r["environment_setup_commit"] == "e" * 40
+        assert r["requirements"] == "node>=18"
+        assert r["interface"] == "CryptoModule.derive()"
+        assert r["issue_specificity"] == '["crypto_feat"]'
+        assert r["issue_categories"] == '["security_knowledge"]'
+        assert r["dockerhub_tag"] == "protonmail.webclients-1.2.3"
+        assert r["before_repo_set_cmd"] == "git reset --hard HEAD"
+        assert r["selected_test_files_to_run"] == '["test/crypto.test.js"]'
+        assert r["created_at"] == "2025-01-15T10:30:00+00:00"
+        assert r["checksum"] == "abc123def"
+        assert r["dataset"] == "swe-bench-pro"
+
+    def test_problem_statement(self, swe_pro_generator, swe_pro_provider, context):
+        records = list(swe_pro_generator.generate(swe_pro_provider, context))
+        ps = records[0]["problem_statement"]
+        assert "[swe-bench-pro] Fix crypto bug" in ps
+        assert "TypeError in crypto module" in ps
+
+    def test_patch_and_test_patch(self, swe_pro_generator, swe_pro_provider, context):
+        records = list(swe_pro_generator.generate(swe_pro_provider, context))
+        r = records[0]
+        assert "diff --git a/crypto.js" in r["patch"]
+        assert "diff --git a/test/crypto.test.js" in r["test_patch"]
+
+    def test_hints_text(self, swe_pro_generator, swe_pro_provider, context):
+        records = list(swe_pro_generator.generate(swe_pro_provider, context))
+        assert records[0]["hints_text"] == "Check the key derivation function"
+
+    def test_instance_id_fallback(self, swe_pro_generator, context):
+        """When metadata has no instance_id, fall back to owner__repo__number."""
+        provider = MagicMock()
+        provider.metadata = ProviderMetadata(
+            name="minimal",
+            sources=["pull_request", "repository"],
+            provided_fields=[
+                FieldDescriptor("description", "pull_request"),
+                FieldDescriptor("patch", "pull_request"),
+                FieldDescriptor("repo_url", "repository"),
+            ],
+        )
+
+        def get_field(name, source, ctx):
+            return {
+                ("description", "pull_request"): "desc",
+                ("patch", "pull_request"): "diff",
+                ("repo_url", "repository"): "https://github.com/o/r.git",
+            }.get((name, source))
+
+        provider.get_field.side_effect = get_field
+        provider.iter_items.return_value = iter([
+            {"owner": "myorg", "repo": "myrepo", "number": 99}
+        ])
+
+        records = list(swe_pro_generator.generate(provider, context))
+        assert records[0]["instance_id"] == "myorg__myrepo__99"
+
+    def test_repo_fallback_to_repo_url(self, swe_pro_generator, context):
+        """When metadata `repo` is absent, fall back to repo_url."""
+        provider = MagicMock()
+        provider.metadata = ProviderMetadata(
+            name="minimal",
+            sources=["pull_request", "repository"],
+            provided_fields=[
+                FieldDescriptor("description", "pull_request"),
+                FieldDescriptor("patch", "pull_request"),
+                FieldDescriptor("repo_url", "repository"),
+            ],
+        )
+
+        def get_field(name, source, ctx):
+            return {
+                ("description", "pull_request"): "desc",
+                ("patch", "pull_request"): "diff",
+                ("repo_url", "repository"): "https://github.com/o/r.git",
+            }.get((name, source))
+
+        provider.get_field.side_effect = get_field
+        provider.iter_items.return_value = iter([
+            {"owner": "o", "repo": "r", "number": 1}
+        ])
+
+        records = list(swe_pro_generator.generate(provider, context))
+        assert records[0]["repo"] == "https://github.com/o/r.git"
+
+    def test_created_at_fallback_generates_timestamp(self, swe_pro_generator, context):
+        """When metadata has no created_at, a new ISO8601 timestamp is generated."""
+        provider = MagicMock()
+        provider.metadata = ProviderMetadata(
+            name="minimal",
+            sources=["pull_request", "repository"],
+            provided_fields=[
+                FieldDescriptor("description", "pull_request"),
+                FieldDescriptor("patch", "pull_request"),
+                FieldDescriptor("repo_url", "repository"),
+            ],
+        )
+
+        def get_field(name, source, ctx):
+            return {
+                ("description", "pull_request"): "desc",
+                ("patch", "pull_request"): "diff",
+                ("repo_url", "repository"): "https://github.com/o/r.git",
+            }.get((name, source))
+
+        provider.get_field.side_effect = get_field
+        provider.iter_items.return_value = iter([
+            {"owner": "o", "repo": "r", "number": 1}
+        ])
+
+        records = list(swe_pro_generator.generate(provider, context))
+        ts = records[0]["created_at"]
+        assert ts.endswith("Z") or ts.endswith("+00:00")
+
+    def test_missing_optional_fields_get_defaults(self, swe_pro_generator, context):
+        """Missing metadata fields should produce empty-string defaults."""
+        provider = MagicMock()
+        provider.metadata = ProviderMetadata(
+            name="minimal",
+            sources=["pull_request", "repository"],
+            provided_fields=[
+                FieldDescriptor("description", "pull_request"),
+                FieldDescriptor("patch", "pull_request"),
+                FieldDescriptor("repo_url", "repository"),
+            ],
+        )
+
+        def get_field(name, source, ctx):
+            return {
+                ("description", "pull_request"): "desc",
+                ("patch", "pull_request"): "diff",
+                ("repo_url", "repository"): "https://github.com/o/r.git",
+            }.get((name, source))
+
+        provider.get_field.side_effect = get_field
+        provider.iter_items.return_value = iter([
+            {"owner": "o", "repo": "r", "number": 1}
+        ])
+
+        records = list(swe_pro_generator.generate(provider, context))
+        r = records[0]
+
+        assert r["FAIL_TO_PASS"] == "[]"
+        assert r["PASS_TO_PASS"] == "[]"
+        assert r["hints_text"] == ""
+        assert r["repo_language"] == ""
+        assert r["dockerhub_tag"] == ""
+        assert r["dataset"] == ""

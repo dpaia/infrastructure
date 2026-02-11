@@ -1,14 +1,45 @@
 # Export SWE-bench Pro datapoints from dpaia PRs back to JSONL
 # Usage: ee-dataset --config specs/export-swe-bench-pro.yaml generate
 
-provider:
-  name: github_pull_requests
-  type: github
-  options:
-    token: ${GITHUB_TOKEN}
+providers:
+  - name: github
+    type: github_pull_requests
+    role: primary
+    options:
+      token: ${GITHUB_TOKEN}
+
+  - name: metadata
+    type: metadata
+    item_mapping:
+      text: "{{ providers.github.description }}"
+    options:
+      fields:
+        - instance_id
+        - repo
+        - base_commit
+        - version
+        - repo_language
+        - FAIL_TO_PASS
+        - PASS_TO_PASS
+        - environment_setup_commit
+        - requirements
+        - interface
+        - issue_specificity
+        - issue_categories
+        - dockerhub_tag
+        - before_repo_set_cmd
+        - selected_test_files_to_run
+        - created_at
+        - checksum
+        - dataset
+
+  - name: patch_splitter
+    type: patch_splitter
+    item_mapping:
+      patch: "{{ providers.github.patch }}"
 
 generator:
-  name: dpaia_jvm
+  name: dpaia_swe_pro
   type: dataset
 
 selection:

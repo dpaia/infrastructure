@@ -50,7 +50,7 @@ generator:
                    environment_setup_commit=environment_setup_commit,                  
                    issue_specificity=issue_specificity, issue_categories=issue_categories,
                    dockerhub_tag=dockerhub_tag,
-                   before_repo_set_cmd="```\n" ~ before_repo_set_cmd ~ "\n```" if before_repo_set_cmd else "",
+                   before_repo_set_cmd=before_repo_set_cmd,
                    selected_test_files_to_run=selected_test_files_to_run,
                    created_at=created_at, dataset="swe-bench-pro") }}
     labels:

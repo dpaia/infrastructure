@@ -941,6 +941,218 @@ provider: github_pull_requests
 provider_options: { ... }
 ```
 
+## Python DSL (Scripting Layer)
+
+The `ee_bench_dsl` package provides a Python DSL for building pipelines programmatically. It is as concise as YAML for simple cases but unlocks full Python power for conditional logic, multi-step workflows, and ad-hoc transformations.
+
+### Installation
+
+The DSL is included in the workspace. No extra install needed:
+
+```bash
+cd ee-bench && uv sync
+```
+
+### Running Scripts
+
+```bash
+# Via CLI
+ee-dataset run-script scripts/my_pipeline.py
+
+# With environment variables
+ee-dataset run-script scripts/my_pipeline.py -S GITHUB_TOKEN=xxx
+
+# Or directly with Python
+python scripts/my_pipeline.py
+```
+
+### Example 1: Simple pipeline (single provider + generator)
+
+Equivalent to a YAML spec — the name argument IS the plugin type:
+
+```python
+from ee_bench_dsl import Pipeline, env
+
+Pipeline() \
+    .provider("huggingface_dataset",
+        dataset_name="ScaleAI/SWE-bench_Pro",
+        split="test",
+        filters={"repo_language": "Python"},
+    ) \
+    .generator("github_pr_importer",
+        target_org="dpaia",
+        github_token=env("GITHUB_TOKEN"),
+        dataset_label="swe-bench-pro",
+        state_file=".state/swe-bench-pro-python.json",
+        labels=["swe-bench-pro", "from:repo_language"],
+    ) \
+    .defer_validation() \
+    .select("dataset_items") \
+    .output("results/output.jsonl") \
+    .run()
+```
+
+### Example 2: Multiple providers with item_mapping
+
+Multiple `.provider()` calls auto-build a `CompositeProvider`. Use `type=` to separate the instance name from the plugin type:
+
+```python
+from ee_bench_dsl import Pipeline, env
+
+Pipeline() \
+    .provider("swe_bench_data", type="huggingface_dataset", role="primary",
+        dataset_name="ScaleAI/SWE-bench_Pro", split="test") \
+    .provider("upstream_prs", type="github_pull_requests",
+        token=env("GITHUB_TOKEN"),
+        item_mapping={
+            "owner": "{{ providers.swe_bench_data.repo | split('/') | first }}",
+            "repo_name": "{{ providers.swe_bench_data.repo | split('/') | last }}",
+        }) \
+    .generator("github_pr_importer",
+        target_org="dpaia", github_token=env("GITHUB_TOKEN")) \
+    .defer_validation() \
+    .select("dataset_items") \
+    .output("results/output.jsonl") \
+    .run()
+```
+
+### Example 3: Multiple generators
+
+Multiple `.generator()` calls auto-use `MultiGeneratorRunner`. Each generator can have its own output path:
+
+```python
+from ee_bench_dsl import Pipeline, env
+
+Pipeline() \
+    .provider("huggingface_dataset",
+        dataset_name="ScaleAI/SWE-bench_Pro", split="test") \
+    .generator("pr_import", type="github_pr_importer",
+        target_org="dpaia", github_token=env("GITHUB_TOKEN"),
+        output="results/import.jsonl") \
+    .generator("dataset_export", type="dpaia_jvm",
+        output="datasets/export.jsonl") \
+    .defer_validation() \
+    .select("dataset_items") \
+    .run()
+```
+
+### Example 4: Ad-hoc generator (per-item function)
+
+Use `each()` to create an inline generator from a lambda or function:
+
+```python
+from ee_bench_dsl import Pipeline, each
+
+Pipeline() \
+    .provider("huggingface_dataset",
+        dataset_name="ScaleAI/SWE-bench_Pro", split="test") \
+    .generator(each(lambda item, ctx: {
+        "id": item["instance_id"],
+        "lang": item.get("repo_language", "unknown"),
+        "patch_lines": len(item.get("patch", "").splitlines()),
+    })) \
+    .defer_validation() \
+    .select("dataset_items") \
+    .output("results/stats.jsonl") \
+    .run()
+```
+
+### Example 5: Ad-hoc provider (data from any Python source)
+
+Use `from_items()` to wrap any Python iterable as a provider:
+
+```python
+from ee_bench_dsl import Pipeline, from_items, each
+import json
+
+with open("my_data.json") as f:
+    data = json.load(f)
+
+Pipeline() \
+    .provider(from_items(data)) \
+    .generator(each(lambda item, ctx: {"id": item["id"], "text": item["body"]})) \
+    .select("items") \
+    .output("results/formatted.jsonl") \
+    .run()
+```
+
+### Example 6: Multi-step scripting with collect()
+
+Use `.collect()` to get results as a Python list, process them, then feed into another pipeline:
+
+```python
+from ee_bench_dsl import Pipeline, from_items, env, each
+
+# Step 1: Extract
+items = Pipeline() \
+    .provider("huggingface_dataset",
+        dataset_name="ScaleAI/SWE-bench_Pro", split="test") \
+    .generator(each(lambda item, ctx: item)) \
+    .defer_validation() \
+    .select("dataset_items", limit=10) \
+    .collect()  # returns list[dict]
+
+# Step 2: Custom Python processing
+for item in items:
+    item["custom_tag"] = "pilot"
+
+# Step 3: Feed into importer
+Pipeline() \
+    .provider(from_items(items, source="dataset_item")) \
+    .generator("github_pr_importer",
+        target_org="dpaia", github_token=env("GITHUB_TOKEN"), dry_run=True) \
+    .defer_validation() \
+    .select("dataset_items") \
+    .output("results/pilot.jsonl") \
+    .run()
+```
+
+### Example 7: Post-processing transforms
+
+Chain `.transform()` calls to filter or modify records without writing a custom generator:
+
+```python
+from ee_bench_dsl import Pipeline
+
+Pipeline() \
+    .provider("huggingface_dataset",
+        dataset_name="ScaleAI/SWE-bench_Pro", split="test") \
+    .generator("github_pr_importer",
+        target_org="dpaia", github_token="...") \
+    .transform(lambda r: {**r, "batch": "2026-02"}) \
+    .transform(lambda r: r if len(r.get("patch", "")) > 50 else None) \
+    .output("results/filtered.jsonl") \
+    .run()
+```
+
+### DSL API Reference
+
+#### Pipeline
+
+| Method | Description |
+|--------|-------------|
+| `.provider(name, type=, role=, item_mapping=, **opts)` | Add a provider (string name or `Provider` instance) |
+| `.generator(name, type=, output=, **opts)` | Add a generator (string name or `Generator` instance) |
+| `.generator_options(**kw)` | Merge options into the last added generator |
+| `.select(resource, filters=, limit=)` | Set selection criteria |
+| `.filter(**kw)` | Add filters to current selection |
+| `.limit(n)` | Set item limit |
+| `.transform(fn)` | Post-process records (`None` to drop) |
+| `.output(path, fmt="jsonl")` | Set output file (`"jsonl"` or `"json"`) |
+| `.defer_validation()` | Defer compatibility check until run time |
+| `.run()` | Execute and write output; returns record count |
+| `.collect()` | Execute and return `list[dict]` |
+| `.iter()` | Execute and return `Iterator[dict]` |
+
+#### Helpers
+
+| Function | Description |
+|----------|-------------|
+| `from_items(data, source="item")` | Wrap a Python iterable as a `Provider` |
+| `each(fn)` | Wrap a per-item function as a `Generator` |
+| `env("NAME")` | Required env var (raises if missing) |
+| `env("NAME", "default")` | Optional env var with default |
+
 ## Project Structure
 
 ```
@@ -958,10 +1170,18 @@ ee-bench/
 │   │
 │   ├── ee_bench_cli/           # CLI tool
 │   │   ├── cli.py              # Main entry point (--set option)
-│   │   ├── commands/           # CLI commands (generate, import, config, etc.)
+│   │   ├── commands/           # CLI commands (generate, import, run-script, etc.)
 │   │   ├── config_parser.py    # YAML + Jinja2 config handling
 │   │   ├── plugin_loader.py    # Config → provider/generator assembly
 │   │   └── output.py           # Output formatting
+│   │
+│   ├── ee_bench_dsl/           # Python DSL / scripting layer
+│   │   ├── pipeline.py         # Pipeline builder (core DSL)
+│   │   ├── providers.py        # FunctionProvider, from_items()
+│   │   ├── generators.py       # FunctionGenerator, each()
+│   │   ├── env.py              # env() helper
+│   │   ├── output.py           # Lightweight JSON/JSONL writer
+│   │   └── runner.py           # Script execution for CLI
 │   │
 │   ├── ee_bench_github/        # GitHub providers
 │   │   ├── api.py              # GitHub API client

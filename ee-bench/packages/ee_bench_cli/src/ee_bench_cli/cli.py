@@ -81,7 +81,7 @@ def cli(
 
 
 # Import and register commands
-from ee_bench_cli.commands import check, config_cmd, generate, import_cmd, list_cmd, schema, show, validate
+from ee_bench_cli.commands import check, config_cmd, generate, import_cmd, list_cmd, run_script, schema, show, validate
 
 cli.add_command(generate.generate)
 cli.add_command(list_cmd.list_plugins)
@@ -91,6 +91,7 @@ cli.add_command(validate.validate)
 cli.add_command(check.check)
 cli.add_command(config_cmd.config)
 cli.add_command(import_cmd.import_group)
+cli.add_command(run_script.run_script_cmd)
 
 
 def main() -> None:

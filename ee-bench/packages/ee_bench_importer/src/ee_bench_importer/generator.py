@@ -448,8 +448,8 @@ class GitHubPRImporterGenerator(Generator):
             pr = fork_repo.create_pull(
                 title=pr_title,
                 body=pr_body,
-                head=f"{branch_name}/after",
-                base=f"{branch_name}/before",
+                head=f"{branch_name}/before",
+                base=f"{branch_name}/after",
             )
             result_status = "created"
 
@@ -495,8 +495,8 @@ class GitHubPRImporterGenerator(Generator):
             except Exception:
                 pass
 
-        # Search by head branch name (try both /after suffix and plain name)
-        for suffix in ["/after", ""]:
+        # Search by head branch name (try both /before suffix and plain name)
+        for suffix in ["/before", "/after", ""]:
             try:
                 head_ref = f"{fork_repo.owner.login}:{branch_name}{suffix}"
                 pulls = fork_repo.get_pulls(state="all", head=head_ref)
@@ -590,40 +590,70 @@ class GitHubPRImporterGenerator(Generator):
     ) -> None:
         """Add a PR to configured projects.
 
+        Each project entry may specify ``id`` (GitHub node ID) or ``name``.
+        When ``id`` is provided the project is referenced directly without a
+        lookup/create round-trip.  Both fields support Jinja2 ``{{ }}``
+        templates resolved against the current dataset item.
+
         Args:
             project_manager: ProjectManager instance.
             target_org: GitHub organization name.
-            projects_config: List of project config dicts with name and scope.
+            projects_config: List of project config dicts with id/name and scope.
             item: Current dataset item.
             pr: PyGithub PullRequest object.
             visibility: Project visibility ("PUBLIC", "PRIVATE", or "ORG").
         """
         for proj_config in projects_config:
-            project_name = proj_config.get("name", "")
-            if "{{" in project_name:
-                project_name = render_template(project_name, item).strip()
-                if not project_name:
+            project_id: str | None = None
+            project_label: str  # used for log messages
+
+            # --- resolve by id ------------------------------------------------
+            raw_id = proj_config.get("id", "")
+            if raw_id:
+                if "{{" in raw_id:
+                    raw_id = render_template(raw_id, item).strip()
+                if raw_id:
+                    project_id = raw_id
+                    project_label = f"id={project_id}"
+                else:
                     continue
-            elif project_name.startswith("from:"):
-                # backward compat
-                field_name = project_name[5:]
-                project_name = str(item.get(field_name, ""))
+
+            # --- resolve by name (original path) ------------------------------
+            if project_id is None:
+                project_name = proj_config.get("name", "")
+                if "{{" in project_name:
+                    project_name = render_template(project_name, item).strip()
+                    if not project_name:
+                        continue
+                elif project_name.startswith("from:"):
+                    # backward compat
+                    field_name = project_name[5:]
+                    project_name = str(item.get(field_name, ""))
+                    if not project_name:
+                        continue
+
                 if not project_name:
                     continue
 
-            if not project_name:
-                continue
+                project_label = project_name
+                try:
+                    project_id = project_manager.ensure_project(
+                        target_org, project_name, visibility=visibility,
+                    )
+                except Exception as e:
+                    logger.warning(
+                        "Failed to ensure project '%s': %s", project_name, e,
+                    )
+                    continue
 
+            # --- add PR to the resolved project --------------------------------
             try:
-                project_id = project_manager.ensure_project(
-                    target_org, project_name, visibility=visibility,
-                )
                 pr_node_id = pr.raw_data.get("node_id", "")
                 if pr_node_id:
                     project_manager.add_pr_to_project(project_id, pr_node_id)
             except Exception as e:
                 logger.warning(
-                    "Failed to add PR to project '%s': %s", project_name, e
+                    "Failed to add PR to project '%s': %s", project_label, e,
                 )
 
     @staticmethod

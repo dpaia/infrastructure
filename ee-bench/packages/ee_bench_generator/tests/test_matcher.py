@@ -253,3 +253,90 @@ class TestValidateCompatibility:
         assert result.compatible is True
         assert result.missing_required == []
         assert result.missing_optional == []
+
+    def test_source_less_required_field_satisfied(self):
+        """Source-less FieldDescriptor matches any provider with that field name."""
+        provider = ProviderMetadata(
+            name="test_provider",
+            sources=["pull_request"],
+            provided_fields=[
+                FieldDescriptor("patch", "pull_request"),
+            ],
+        )
+        generator = GeneratorMetadata(
+            name="test_generator",
+            required_fields=[
+                FieldDescriptor("patch"),  # no source
+            ],
+        )
+
+        result = validate_compatibility(provider, generator)
+
+        assert result.compatible is True
+        assert result.missing_required == []
+
+    def test_source_less_required_field_not_satisfied(self):
+        """Source-less FieldDescriptor fails when no provider has that field name."""
+        provider = ProviderMetadata(
+            name="test_provider",
+            sources=["pull_request"],
+            provided_fields=[
+                FieldDescriptor("description", "pull_request"),
+            ],
+        )
+        generator = GeneratorMetadata(
+            name="test_generator",
+            required_fields=[
+                FieldDescriptor("patch"),  # no source, not provided
+            ],
+        )
+
+        result = validate_compatibility(provider, generator)
+
+        assert result.compatible is False
+        assert len(result.missing_required) == 1
+        assert result.missing_required[0].name == "patch"
+
+    def test_source_less_optional_field_reports_missing(self):
+        """Source-less optional field is reported as missing when not available."""
+        provider = ProviderMetadata(
+            name="test_provider",
+            sources=["pull_request"],
+            provided_fields=[
+                FieldDescriptor("description", "pull_request"),
+            ],
+        )
+        generator = GeneratorMetadata(
+            name="test_generator",
+            required_fields=[],
+            optional_fields=[
+                FieldDescriptor("labels", required=False),  # no source
+            ],
+        )
+
+        result = validate_compatibility(provider, generator)
+
+        assert result.compatible is True
+        assert len(result.missing_optional) == 1
+        assert result.missing_optional[0].name == "labels"
+
+    def test_explicit_source_still_requires_exact_match(self):
+        """Backward-compatible: explicit source requires exact match."""
+        provider = ProviderMetadata(
+            name="test_provider",
+            sources=["issue"],
+            provided_fields=[
+                FieldDescriptor("description", "issue"),
+            ],
+        )
+        generator = GeneratorMetadata(
+            name="test_generator",
+            required_fields=[
+                FieldDescriptor("description", "pull_request"),
+            ],
+        )
+
+        result = validate_compatibility(provider, generator)
+
+        assert result.compatible is False
+        assert len(result.missing_required) == 1

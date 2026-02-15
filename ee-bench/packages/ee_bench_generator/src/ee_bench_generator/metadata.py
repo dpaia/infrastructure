@@ -13,12 +13,13 @@ class FieldDescriptor:
     Attributes:
         name: The field name (e.g., "description", "patch", "FAIL_TO_PASS").
         source: The data source (e.g., "pull_request", "issue", "repository").
+            When empty, the field is matched by name only regardless of source.
         required: Whether the field is mandatory (default: True).
         description: Human-readable description of the field.
     """
 
     name: str
-    source: str
+    source: str = ""
     required: bool = True
     description: str = ""
 
@@ -42,14 +43,24 @@ class ProviderMetadata:
 
         Args:
             name: The field name to check.
-            source: The source to check.
+            source: The source to check. When empty, matches any source
+                that provides a field with the given name.
 
         Returns:
             True if the provider can supply this field from this source.
         """
+        if not source:
+            return any(f.name == name for f in self.provided_fields)
         return any(
             f.name == name and f.source == source for f in self.provided_fields
         )
+
+    def find_source_for_field(self, name: str) -> str:
+        """Return the source of the first field matching *name*, or ``""``."""
+        for f in self.provided_fields:
+            if f.name == name:
+                return f.source
+        return ""
 
 
 @dataclass

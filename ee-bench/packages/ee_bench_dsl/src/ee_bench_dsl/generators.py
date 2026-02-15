@@ -55,9 +55,6 @@ class FunctionGenerator(Generator):
             optional_fields=[],
         )
 
-    def output_schema(self) -> dict[str, Any]:
-        return {"type": "object"}
-
     def generate(
         self, provider: Provider, context: Context
     ) -> Iterator[dict[str, Any]]:

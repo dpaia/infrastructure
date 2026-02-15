@@ -195,33 +195,6 @@ class TestGenerateCommand:
         assert result.exit_code != 0
 
 
-class TestSchemaCommand:
-    """Tests for schema command."""
-
-    def test_schema_nonexistent_generator(self, runner):
-        """Test schema with nonexistent generator."""
-        result = runner.invoke(cli, ["schema", "--generator", "nonexistent"])
-
-        assert result.exit_code != 0
-        assert "not found" in result.output.lower()
-
-
-class TestValidateCommand:
-    """Tests for validate command."""
-
-    def test_validate_nonexistent_generator(self, runner, tmp_path):
-        """Test validate with nonexistent generator."""
-        data_file = tmp_path / "data.jsonl"
-        data_file.write_text('{"test": "data"}\n')
-
-        result = runner.invoke(
-            cli, ["validate", str(data_file), "--generator", "nonexistent"]
-        )
-
-        assert result.exit_code != 0
-        assert "not found" in result.output.lower()
-
-
 class TestSetOption:
     """Tests for --set / -S option."""
 

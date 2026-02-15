@@ -411,6 +411,96 @@ class TestCompositeProviderGetField:
         with pytest.raises(ProviderError, match="No provider can supply"):
             composite.get_field("nonexistent", "dataset", ctx)
 
+    def test_get_field_source_less_resolves(self):
+        """get_field with empty source resolves by name."""
+        prov = MockProvider(
+            name="primary",
+            provided_fields=[FieldDescriptor("repo", "dataset")],
+            field_values={"repo": "django/django"},
+            items=[{"id": 1}],
+        )
+        composite = CompositeProvider([
+            {"name": "main", "provider": prov, "role": "primary"},
+        ])
+
+        ctx = _make_context()
+        items = list(composite.iter_items(ctx))
+        ctx.current_item = items[0]
+
+        value = composite.get_field("repo", "", ctx)
+        assert value == "django/django"
+
+    def test_get_field_source_less_prefers_enrichment(self):
+        """Later provider in dependency order wins for source-less lookup."""
+        primary = MockProvider(
+            name="hf",
+            provided_fields=[FieldDescriptor("repo", "dataset")],
+            field_values={"repo": "primary_repo"},
+            items=[{"id": 1}],
+        )
+        enrichment = MockProvider(
+            name="gh",
+            provided_fields=[FieldDescriptor("repo", "enriched")],
+            field_values={"repo": "enriched_repo"},
+        )
+        composite = CompositeProvider([
+            {"name": "data", "provider": primary, "role": "primary"},
+            {"name": "prs", "provider": enrichment},
+        ])
+
+        ctx = _make_context()
+        items = list(composite.iter_items(ctx))
+        ctx.current_item = items[0]
+
+        # Enrichment provider comes later in dependency order and overrides
+        value = composite.get_field("repo", "", ctx)
+        assert value == "enriched_repo"
+
+    def test_get_field_source_less_raises_for_unknown(self):
+        """get_field with empty source raises for unknown field name."""
+        prov = MockProvider(
+            name="primary",
+            provided_fields=[FieldDescriptor("repo", "dataset")],
+            items=[{"id": 1}],
+        )
+        composite = CompositeProvider([
+            {"name": "main", "provider": prov, "role": "primary"},
+        ])
+
+        ctx = _make_context()
+        items = list(composite.iter_items(ctx))
+        ctx.current_item = items[0]
+
+        with pytest.raises(ProviderError, match="source-less lookup"):
+            composite.get_field("nonexistent", "", ctx)
+
+    def test_get_field_source_less_caches(self):
+        """Two calls with empty source only fetch once."""
+        call_count = 0
+
+        def counting_field(ctx):
+            nonlocal call_count
+            call_count += 1
+            return "value"
+
+        prov = MockProvider(
+            name="primary",
+            provided_fields=[FieldDescriptor("expensive", "dataset")],
+            field_values={"expensive": counting_field},
+            items=[{"id": 1}],
+        )
+        composite = CompositeProvider([
+            {"name": "main", "provider": prov, "role": "primary"},
+        ])
+
+        ctx = _make_context()
+        items = list(composite.iter_items(ctx))
+        ctx.current_item = items[0]
+
+        composite.get_field("expensive", "", ctx)
+        composite.get_field("expensive", "", ctx)
+        assert call_count == 1
+
 
 class TestCompositeProviderChaining:
     def test_three_provider_chain(self):

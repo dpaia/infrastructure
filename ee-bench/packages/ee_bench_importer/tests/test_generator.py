@@ -38,20 +38,6 @@ class TestMetadata:
         assert "repo_language" in names
 
 
-class TestOutputSchema:
-    def test_schema_has_required_fields(self, generator):
-        schema = generator.output_schema()
-        assert "instance_id" in schema["required"]
-        assert "status" in schema["required"]
-
-    def test_schema_properties(self, generator):
-        schema = generator.output_schema()
-        props = schema["properties"]
-        assert "pr_url" in props
-        assert "pr_number" in props
-        assert "error" in props
-
-
 class TestResolveListValues:
     def test_static_values(self, generator):
         result = generator._resolve_list_values(

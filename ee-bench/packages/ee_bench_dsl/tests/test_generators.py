@@ -65,11 +65,6 @@ class TestFunctionGenerator:
         assert meta.name == "function_generator"
         assert meta.required_fields == []
 
-    def test_output_schema(self):
-        gen = FunctionGenerator(item_fn=lambda i, c: i)
-        assert gen.output_schema() == {"type": "object"}
-
-
 class TestEach:
     def test_creates_function_generator(self):
         gen = each(lambda item, ctx: {"id": item["id"]})

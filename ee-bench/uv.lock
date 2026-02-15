@@ -19,7 +19,9 @@ members = [
     "ee-bench-github",
     "ee-bench-huggingface",
     "ee-bench-importer",
+    "ee-bench-metadata",
     "ee-bench-patch-splitter",
+    "ee-bench-run-scripts",
     "ee-bench-workspace",
 ]
 
@@ -589,6 +591,26 @@ requires-dist = [
 provides-extras = ["dev"]
 
 [[package]]
+name = "ee-bench-metadata"
+version = "0.1.0"
+source = { editable = "packages/ee_bench_metadata" }
+dependencies = [
+    { name = "ee-bench-generator" },
+]
+
+[package.optional-dependencies]
+dev = [
+    { name = "pytest" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "ee-bench-generator", editable = "packages/ee_bench_generator" },
+    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
+]
+provides-extras = ["dev"]
+
+[[package]]
 name = "ee-bench-patch-splitter"
 version = "0.1.0"
 source = { editable = "packages/ee_bench_patch_splitter" }
@@ -609,6 +631,28 @@ requires-dist = [
 provides-extras = ["dev"]
 
 [[package]]
+name = "ee-bench-run-scripts"
+version = "0.1.0"
+source = { editable = "packages/ee_bench_run_scripts" }
+dependencies = [
+    { name = "ee-bench-generator" },
+    { name = "pygithub" },
+]
+
+[package.optional-dependencies]
+dev = [
+    { name = "pytest" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "ee-bench-generator", editable = "packages/ee_bench_generator" },
+    { name = "pygithub", specifier = ">=2.8" },
+    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
+]
+provides-extras = ["dev"]
+
+[[package]]
 name = "ee-bench-workspace"
 version = "0.1.0"
 source = { virtual = "." }
@@ -620,7 +664,9 @@ dependencies = [
     { name = "ee-bench-github" },
     { name = "ee-bench-huggingface" },
     { name = "ee-bench-importer" },
+    { name = "ee-bench-metadata" },
     { name = "ee-bench-patch-splitter" },
+    { name = "ee-bench-run-scripts" },
 ]
 
 [package.optional-dependencies]
@@ -638,7 +684,9 @@ requires-dist = [
     { name = "ee-bench-github", editable = "packages/ee_bench_github" },
     { name = "ee-bench-huggingface", editable = "packages/ee_bench_huggingface" },
     { name = "ee-bench-importer", editable = "packages/ee_bench_importer" },
+    { name = "ee-bench-metadata", editable = "packages/ee_bench_metadata" },
     { name = "ee-bench-patch-splitter", editable = "packages/ee_bench_patch_splitter" },
+    { name = "ee-bench-run-scripts", editable = "packages/ee_bench_run_scripts" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
     { name = "responses", marker = "extra == 'dev'", specifier = ">=0.25" },
 ]

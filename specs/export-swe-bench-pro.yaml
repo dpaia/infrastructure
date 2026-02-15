@@ -32,15 +32,31 @@ providers:
         - created_at
         - checksum
         - dataset
+        - run_script_name
+        - parser_name
 
   - name: patch_splitter
     type: patch_splitter
     item_mapping:
       patch: "{{ providers.github.patch }}"
 
-generator:
-  name: dpaia_swe_pro
-  type: dataset
+generators:
+  - name: dpaia_swe_pro
+    type: dpaia_swe_pro
+    output:
+      format: jsonl
+      path: datasets/swe_bench_pro_export.jsonl
+
+  - name: attachment_downloader
+    type: attachment_export
+    options:
+      github_token: ${GITHUB_TOKEN}
+      dataset_label: swe-bench-pro
+      attachment_dir: ".swe-bench-pro"
+      output_dir: "attachments"
+    output:
+      format: jsonl
+      path: results/swe-bench-pro-attachment-export.jsonl
 
 selection:
   resource: pull_requests

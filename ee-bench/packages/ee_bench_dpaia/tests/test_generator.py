@@ -36,19 +36,19 @@ def mock_provider():
         ],
     )
 
-    # Set up field return values
+    # Set up field return values (keyed by name — generators use source-less lookups)
     def get_field(name, source, context):
         fields = {
-            ("description", "pull_request"): "Fix null pointer exception in Parser",
-            ("title", "pull_request"): "Bug fix: NPE in Parser",
-            ("base_commit", "pull_request"): "abc123def456abc123def456abc123def456abc1",
-            ("patch", "pull_request"): "diff --git a/Parser.java b/Parser.java\n+fix",
-            ("FAIL_TO_PASS", "pull_request"): '["test.ParserTest.testNullInput"]',
-            ("PASS_TO_PASS", "pull_request"): '["test.ParserTest.testValidInput"]',
-            ("repo_url", "repository"): "https://github.com/owner/repo.git",
-            ("repo_tree", "repository"): ["src/Parser.java", "test/ParserTest.java"],
+            "description": "Fix null pointer exception in Parser",
+            "title": "Bug fix: NPE in Parser",
+            "base_commit": "abc123def456abc123def456abc123def456abc1",
+            "patch": "diff --git a/Parser.java b/Parser.java\n+fix",
+            "FAIL_TO_PASS": '["test.ParserTest.testNullInput"]',
+            "PASS_TO_PASS": '["test.ParserTest.testValidInput"]',
+            "repo_url": "https://github.com/owner/repo.git",
+            "repo_tree": ["src/Parser.java", "test/ParserTest.java"],
         }
-        return fields.get((name, source))
+        return fields.get(name)
 
     provider.get_field.side_effect = get_field
 
@@ -95,40 +95,6 @@ class TestDpaiaJvmGeneratorMetadata:
         assert "FAIL_TO_PASS" in optional_names
         assert "PASS_TO_PASS" in optional_names
         assert "hints_text" in optional_names
-
-
-class TestDpaiaJvmGeneratorOutputSchema:
-    """Tests for output schema."""
-
-    def test_schema_has_required_fields(self, generator):
-        """Test schema declares required fields."""
-        schema = generator.output_schema()
-
-        assert "instance_id" in schema["required"]
-        assert "repo" in schema["required"]
-        assert "base_commit" in schema["required"]
-        assert "patch" in schema["required"]
-        assert "problem_statement" in schema["required"]
-        assert "FAIL_TO_PASS" in schema["required"]
-        assert "PASS_TO_PASS" in schema["required"]
-        assert "created_at" in schema["required"]
-
-    def test_schema_has_property_definitions(self, generator):
-        """Test schema has property definitions."""
-        schema = generator.output_schema()
-
-        assert "instance_id" in schema["properties"]
-        assert "repo" in schema["properties"]
-        assert "base_commit" in schema["properties"]
-        assert "hints_text" in schema["properties"]
-
-    def test_schema_is_valid_json_schema(self, generator):
-        """Test schema is valid JSON Schema."""
-        schema = generator.output_schema()
-
-        assert schema.get("$schema") is not None
-        assert schema.get("type") == "object"
-        assert "properties" in schema
 
 
 class TestDpaiaJvmGeneratorGenerate:
@@ -212,12 +178,12 @@ class TestDpaiaJvmGeneratorGenerate:
 
         def get_field(name, source, ctx):
             fields = {
-                ("description", "pull_request"): "Description only",
-                ("base_commit", "pull_request"): "abc123def456abc123def456abc123def456abc1",
-                ("patch", "pull_request"): "diff content",
-                ("repo_url", "repository"): "https://github.com/owner/repo.git",
+                "description": "Description only",
+                "base_commit": "abc123def456abc123def456abc123def456abc1",
+                "patch": "diff content",
+                "repo_url": "https://github.com/owner/repo.git",
             }
-            return fields.get((name, source))
+            return fields.get(name)
 
         provider.get_field.side_effect = get_field
         provider.iter_items.return_value = iter([
@@ -241,32 +207,6 @@ class TestDpaiaJvmGeneratorGenerate:
         records = list(generator.generate(mock_provider, context))
 
         assert records == []
-
-
-class TestBuildProblemStatement:
-    """Tests for problem statement building."""
-
-    def test_title_and_description(self, generator):
-        """Test combining title and description."""
-        result = generator._build_problem_statement(
-            "Title Here", "Description here"
-        )
-        assert result == "Title Here\n\nDescription here"
-
-    def test_title_only(self, generator):
-        """Test with title only."""
-        result = generator._build_problem_statement("Title Here", "")
-        assert result == "Title Here"
-
-    def test_description_only(self, generator):
-        """Test with description only."""
-        result = generator._build_problem_statement("", "Description here")
-        assert result == "Description here"
-
-    def test_both_empty(self, generator):
-        """Test with both empty."""
-        result = generator._build_problem_statement("", "")
-        assert result == ""
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -316,34 +256,34 @@ def swe_pro_provider():
     )
 
     field_values = {
-        ("description", "pull_request"): "TypeError in crypto module",
-        ("title", "pull_request"): "[swe-bench-pro] Fix crypto bug",
-        ("patch", "pull_request"): "diff --git a/crypto.js b/crypto.js\n+fix",
-        ("test_patch", "pull_request"): "diff --git a/test/crypto.test.js\n+test",
-        ("hints_text", "pull_request"): "Check the key derivation function",
-        ("repo_url", "repository"): "https://github.com/dpaia/webclients.git",
-        ("instance_id", "pull_request"): "instance_protonmail__webclients__42",
-        ("repo", "pull_request"): "protonmail/webclients",
-        ("base_commit", "pull_request"): "9b35b414" + "a" * 32,
-        ("version", "pull_request"): "1.2.3",
-        ("repo_language", "pull_request"): "js",
-        ("FAIL_TO_PASS", "pull_request"): '["test/crypto.test.js::derivation"]',
-        ("PASS_TO_PASS", "pull_request"): '["test/crypto.test.js::encrypt"]',
-        ("environment_setup_commit", "pull_request"): "e" * 40,
-        ("requirements", "pull_request"): "node>=18",
-        ("interface", "pull_request"): "CryptoModule.derive()",
-        ("issue_specificity", "pull_request"): '["crypto_feat"]',
-        ("issue_categories", "pull_request"): '["security_knowledge"]',
-        ("dockerhub_tag", "pull_request"): "protonmail.webclients-1.2.3",
-        ("before_repo_set_cmd", "pull_request"): "git reset --hard HEAD",
-        ("selected_test_files_to_run", "pull_request"): '["test/crypto.test.js"]',
-        ("created_at", "pull_request"): "2025-01-15T10:30:00+00:00",
-        ("checksum", "pull_request"): "abc123def",
-        ("dataset", "pull_request"): "swe-bench-pro",
+        "description": "TypeError in crypto module",
+        "title": "[swe-bench-pro] Fix crypto bug",
+        "patch": "diff --git a/crypto.js b/crypto.js\n+fix",
+        "test_patch": "diff --git a/test/crypto.test.js\n+test",
+        "hints_text": "Check the key derivation function",
+        "repo_url": "https://github.com/dpaia/webclients.git",
+        "instance_id": "instance_protonmail__webclients__42",
+        "repo": "protonmail/webclients",
+        "base_commit": "9b35b414" + "a" * 32,
+        "version": "1.2.3",
+        "repo_language": "js",
+        "FAIL_TO_PASS": '["test/crypto.test.js::derivation"]',
+        "PASS_TO_PASS": '["test/crypto.test.js::encrypt"]',
+        "environment_setup_commit": "e" * 40,
+        "requirements": "node>=18",
+        "interface": "CryptoModule.derive()",
+        "issue_specificity": '["crypto_feat"]',
+        "issue_categories": '["security_knowledge"]',
+        "dockerhub_tag": "protonmail.webclients-1.2.3",
+        "before_repo_set_cmd": "git reset --hard HEAD",
+        "selected_test_files_to_run": '["test/crypto.test.js"]',
+        "created_at": "2025-01-15T10:30:00+00:00",
+        "checksum": "abc123def",
+        "dataset": "swe-bench-pro",
     }
 
     def get_field(name, source, ctx):
-        return field_values.get((name, source))
+        return field_values.get(name)
 
     provider.get_field.side_effect = get_field
     provider.iter_items.return_value = iter([
@@ -376,29 +316,6 @@ class TestDpaiaSweProGeneratorMetadata:
             "selected_test_files_to_run", "created_at", "checksum", "dataset",
         ]:
             assert field in optional_names, f"Missing optional field: {field}"
-
-
-class TestDpaiaSweProGeneratorOutputSchema:
-    """Tests for output schema."""
-
-    def test_schema_required_fields(self, swe_pro_generator):
-        schema = swe_pro_generator.output_schema()
-        for field in ["instance_id", "patch", "problem_statement", "repo", "base_commit"]:
-            assert field in schema["required"]
-
-    def test_schema_no_additional_properties(self, swe_pro_generator):
-        schema = swe_pro_generator.output_schema()
-        assert schema["additionalProperties"] is False
-
-    def test_schema_has_all_swe_pro_fields(self, swe_pro_generator):
-        schema = swe_pro_generator.output_schema()
-        for field in [
-            "repo_language", "environment_setup_commit", "requirements",
-            "interface", "issue_specificity", "issue_categories",
-            "dockerhub_tag", "before_repo_set_cmd", "selected_test_files_to_run",
-            "checksum", "dataset",
-        ]:
-            assert field in schema["properties"], f"Missing property: {field}"
 
 
 class TestDpaiaSweProGeneratorGenerate:
@@ -461,10 +378,10 @@ class TestDpaiaSweProGeneratorGenerate:
 
         def get_field(name, source, ctx):
             return {
-                ("description", "pull_request"): "desc",
-                ("patch", "pull_request"): "diff",
-                ("repo_url", "repository"): "https://github.com/o/r.git",
-            }.get((name, source))
+                "description": "desc",
+                "patch": "diff",
+                "repo_url": "https://github.com/o/r.git",
+            }.get(name)
 
         provider.get_field.side_effect = get_field
         provider.iter_items.return_value = iter([
@@ -489,10 +406,10 @@ class TestDpaiaSweProGeneratorGenerate:
 
         def get_field(name, source, ctx):
             return {
-                ("description", "pull_request"): "desc",
-                ("patch", "pull_request"): "diff",
-                ("repo_url", "repository"): "https://github.com/o/r.git",
-            }.get((name, source))
+                "description": "desc",
+                "patch": "diff",
+                "repo_url": "https://github.com/o/r.git",
+            }.get(name)
 
         provider.get_field.side_effect = get_field
         provider.iter_items.return_value = iter([
@@ -517,10 +434,10 @@ class TestDpaiaSweProGeneratorGenerate:
 
         def get_field(name, source, ctx):
             return {
-                ("description", "pull_request"): "desc",
-                ("patch", "pull_request"): "diff",
-                ("repo_url", "repository"): "https://github.com/o/r.git",
-            }.get((name, source))
+                "description": "desc",
+                "patch": "diff",
+                "repo_url": "https://github.com/o/r.git",
+            }.get(name)
 
         provider.get_field.side_effect = get_field
         provider.iter_items.return_value = iter([
@@ -546,10 +463,10 @@ class TestDpaiaSweProGeneratorGenerate:
 
         def get_field(name, source, ctx):
             return {
-                ("description", "pull_request"): "desc",
-                ("patch", "pull_request"): "diff",
-                ("repo_url", "repository"): "https://github.com/o/r.git",
-            }.get((name, source))
+                "description": "desc",
+                "patch": "diff",
+                "repo_url": "https://github.com/o/r.git",
+            }.get(name)
 
         provider.get_field.side_effect = get_field
         provider.iter_items.return_value = iter([

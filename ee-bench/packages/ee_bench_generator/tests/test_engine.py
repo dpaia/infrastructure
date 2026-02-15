@@ -71,9 +71,6 @@ class MockGenerator(Generator):
             optional_fields=self._optional_fields,
         )
 
-    def output_schema(self) -> dict[str, Any]:
-        return {"type": "object", "properties": {}}
-
     def generate(
         self, provider: Provider, context: Context
     ) -> Iterator[dict[str, Any]]:

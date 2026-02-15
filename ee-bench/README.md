@@ -93,12 +93,6 @@ ee-dataset generate \
 - `-P, --provider-option` - Provider option as key=value (can be repeated)
 - `-G, --generator-option` - Generator option as key=value (can be repeated)
 
-### Show output schema
-
-```bash
-ee-dataset schema -g dpaia_jvm
-```
-
 ### Configuration commands
 
 ```bash
@@ -1260,9 +1254,6 @@ class MyGenerator(Generator):
             ],
             optional_fields=[],
         )
-
-    def output_schema(self) -> dict:
-        return {"type": "object", "properties": {...}}
 
     def generate(self, provider: Provider, context: Context):
         for item in provider.iter_items(context):

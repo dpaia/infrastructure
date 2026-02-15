@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
+import random
 import time
 from typing import Any, Iterator
 
@@ -57,6 +58,11 @@ def _expand_value(value: Any) -> list[str]:
     return [s] if s else []
 
 
+def _random_color() -> str:
+    """Generate a random 6-digit hex color string."""
+    return f"{random.randint(0, 0xFFFFFF):06x}"
+
+
 class GitHubPRImporterGenerator(Generator):
     """Generator that imports dataset items as GitHub Pull Requests.
 
@@ -75,99 +81,20 @@ class GitHubPRImporterGenerator(Generator):
         return GeneratorMetadata(
             name="github_pr_importer",
             required_fields=[
-                FieldDescriptor(
-                    "instance_id",
-                    source="dataset_item",
-                    description="Unique task identifier",
-                ),
-                FieldDescriptor(
-                    "repo",
-                    source="dataset_item",
-                    description="Upstream repository (owner/name)",
-                ),
-                FieldDescriptor(
-                    "base_commit",
-                    source="dataset_item",
-                    description="Base commit SHA",
-                ),
-                FieldDescriptor(
-                    "patch",
-                    source="dataset_item",
-                    description="Golden patch (unified diff)",
-                ),
-                FieldDescriptor(
-                    "problem_statement",
-                    source="dataset_item",
-                    description="Problem description text",
-                ),
-                FieldDescriptor(
-                    "checksum",
-                    source="dataset_metadata",
-                    description="SHA-256 checksum of the dataset row",
-                ),
+                FieldDescriptor("instance_id", description="Unique task identifier"),
+                FieldDescriptor("repo", description="Upstream repository (owner/name)"),
+                FieldDescriptor("base_commit", description="Base commit SHA"),
+                FieldDescriptor("patch", description="Golden patch (unified diff)"),
+                FieldDescriptor("problem_statement", description="Problem description text"),
+                FieldDescriptor("checksum", description="SHA-256 checksum of the dataset row"),
             ],
             optional_fields=[
-                FieldDescriptor(
-                    "test_patch",
-                    source="dataset_item",
-                    required=False,
-                    description="Test patch (unified diff)",
-                ),
-                FieldDescriptor(
-                    "hints_text",
-                    source="dataset_item",
-                    required=False,
-                    description="Hints for solving the problem",
-                ),
-                FieldDescriptor(
-                    "repo_language",
-                    source="dataset_item",
-                    required=False,
-                    description="Programming language",
-                ),
-                FieldDescriptor(
-                    "version",
-                    source="dataset_item",
-                    required=False,
-                    description="Version string",
-                ),
+                FieldDescriptor("test_patch", required=False, description="Test patch (unified diff)"),
+                FieldDescriptor("hints_text", required=False, description="Hints for solving the problem"),
+                FieldDescriptor("repo_language", required=False, description="Programming language"),
+                FieldDescriptor("version", required=False, description="Version string"),
             ],
         )
-
-    def output_schema(self) -> dict[str, Any]:
-        return {
-            "$schema": "https://json-schema.org/draft/2020-12/schema",
-            "type": "object",
-            "title": "Import Result Record",
-            "required": ["instance_id", "status"],
-            "properties": {
-                "instance_id": {
-                    "type": "string",
-                    "description": "Task identifier",
-                },
-                "status": {
-                    "type": "string",
-                    "enum": ["created", "updated", "skipped", "error"],
-                    "description": "Import status",
-                },
-                "pr_url": {
-                    "type": "string",
-                    "description": "URL to the created/updated PR",
-                },
-                "pr_number": {
-                    "type": ["integer", "null"],
-                    "description": "PR number",
-                },
-                "fork_repo": {
-                    "type": "string",
-                    "description": "Full name of the fork repository",
-                },
-                "error": {
-                    "type": "string",
-                    "description": "Error message if status is error",
-                },
-            },
-        }
 
     def generate(
         self, provider: Provider, context: Context
@@ -216,6 +143,8 @@ class GitHubPRImporterGenerator(Generator):
 
         # Cache for fork repos (upstream_repo -> PyGithub repo object)
         fork_cache: dict[str, Any] = {}
+        # Cache for labels per repo (repo_full_name -> set of label names)
+        label_cache: dict[str, set[str]] = {}
 
         for item in provider.iter_items(context):
             item_context = Context(
@@ -224,8 +153,8 @@ class GitHubPRImporterGenerator(Generator):
                 current_item=item,
             )
 
-            instance_id = provider.get_field("instance_id", "dataset_item", item_context)
-            checksum = provider.get_field("checksum", "dataset_metadata", item_context)
+            instance_id = provider.get_field("instance_id", "", item_context)
+            checksum = provider.get_field("checksum", "", item_context)
 
             # Check sync status
             sync_status = check_sync_status(state, instance_id, checksum)
@@ -272,6 +201,7 @@ class GitHubPRImporterGenerator(Generator):
                     sync_status=sync_status,
                     state=state,
                     fork_cache=fork_cache,
+                    label_cache=label_cache,
                     repo_visibility=repo_visibility,
                     project_visibility=project_visibility,
                     pr_state=pr_state,
@@ -330,6 +260,7 @@ class GitHubPRImporterGenerator(Generator):
         sync_status: str = "create",
         state: ImportState | None = None,
         fork_cache: dict[str, Any] | None = None,
+        label_cache: dict[str, set[str]] | None = None,
         repo_visibility: str | None = None,
         project_visibility: str | None = None,
         pr_state: str = "open",
@@ -348,17 +279,18 @@ class GitHubPRImporterGenerator(Generator):
         topics_config = topics_config or []
         projects_config = projects_config or []
         fork_cache = fork_cache if fork_cache is not None else {}
+        label_cache = label_cache if label_cache is not None else {}
 
         item = context.current_item
-        instance_id = provider.get_field("instance_id", "dataset_item", context)
-        upstream_repo = provider.get_field("repo", "dataset_item", context)
-        base_commit = provider.get_field("base_commit", "dataset_item", context)
-        patch = provider.get_field("patch", "dataset_item", context)
-        problem_statement = provider.get_field("problem_statement", "dataset_item", context)
+        instance_id = provider.get_field("instance_id", "", context)
+        upstream_repo = provider.get_field("repo", "", context)
+        base_commit = provider.get_field("base_commit", "", context)
+        patch = provider.get_field("patch", "", context)
+        problem_statement = provider.get_field("problem_statement", "", context)
 
         # Optional fields
-        test_patch = self._get_optional(provider, "test_patch", "dataset_item", context, "")
-        hints_text = self._get_optional(provider, "hints_text", "dataset_item", context, "")
+        test_patch = self._get_optional(provider, "test_patch", context, "")
+        hints_text = self._get_optional(provider, "hints_text", context, "")
 
         # 1. Fork the upstream repo into target org (idempotent)
         fork_repo = self._ensure_fork(
@@ -444,19 +376,19 @@ class GitHubPRImporterGenerator(Generator):
             else:
                 pr_title = f"[{dataset_label}] {instance_id}"
 
-            # 7. Create PR: after → before (only shows the patch diff)
+            # 7. Create PR: before → after (shows the patch diff)
             pr = fork_repo.create_pull(
                 title=pr_title,
                 body=pr_body,
-                head=f"{branch_name}/before",
-                base=f"{branch_name}/after",
+                head=f"{branch_name}/after",
+                base=f"{branch_name}/before",
             )
             result_status = "created"
 
         # 8. Add labels
         if labels_config:
             resolved_labels = self._resolve_list_values(labels_config, item)
-            self._ensure_labels(fork_repo, resolved_labels)
+            self._ensure_labels(fork_repo, resolved_labels, label_cache)
             pr.add_to_labels(*resolved_labels)
 
         # 9. Add to projects
@@ -495,8 +427,8 @@ class GitHubPRImporterGenerator(Generator):
             except Exception:
                 pass
 
-        # Search by head branch name (try both /before suffix and plain name)
-        for suffix in ["/before", "/after", ""]:
+        # Search by head branch name (try /after first since that's the PR head)
+        for suffix in ["/after", "/before", ""]:
             try:
                 head_ref = f"{fork_repo.owner.login}:{branch_name}{suffix}"
                 pulls = fork_repo.get_pulls(state="all", head=head_ref)
@@ -569,15 +501,19 @@ class GitHubPRImporterGenerator(Generator):
         except Exception as e:
             logger.warning("Failed to set topics on %s: %s", repo.full_name, e)
 
-    def _ensure_labels(self, repo: Any, label_names: list[str]) -> None:
-        """Ensure labels exist on the repository."""
-        existing_labels = {label.name for label in repo.get_labels()}
+    def _ensure_labels(self, repo: Any, label_names: list[str], label_cache: dict[str, set[str]]) -> None:
+        """Ensure labels exist on the repository, using a cache."""
+        repo_key = repo.full_name
+        if repo_key not in label_cache:
+            label_cache[repo_key] = {label.name for label in repo.get_labels()}
+
         for name in label_names:
-            if name not in existing_labels:
+            if name not in label_cache[repo_key]:
                 try:
-                    repo.create_label(name=name, color="ededed")
+                    repo.create_label(name=name, color=_random_color())
+                    label_cache[repo_key].add(name)
                 except Exception:
-                    pass  # Label may have been created concurrently
+                    label_cache[repo_key].add(name)  # Assume created concurrently
 
     def _add_to_projects(
         self,
@@ -713,14 +649,13 @@ class GitHubPRImporterGenerator(Generator):
     def _get_optional(
         provider: Provider,
         name: str,
-        source: str,
         context: Context,
         default: Any,
     ) -> Any:
-        """Get an optional field from the provider."""
-        if provider.metadata.can_provide(name, source):
+        """Get an optional field from the provider (source-less lookup)."""
+        if provider.metadata.can_provide(name, ""):
             try:
-                return provider.get_field(name, source, context)
+                return provider.get_field(name, "", context)
             except Exception:
                 return default
         return default

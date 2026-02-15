@@ -1,0 +1,32 @@
+[project]
+name = "ee_bench_run_scripts"
+version = "0.1.0"
+description = "Run scripts provider and attachment generators for SWE-bench Pro"
+requires-python = ">=3.11"
+dependencies = [
+    "ee_bench_generator",
+    "PyGithub>=2.8",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+]
+
+[project.entry-points."ee_bench_generator.providers"]
+run_scripts = "ee_bench_run_scripts:RunScriptsProvider"
+
+[project.entry-points."ee_bench_generator.generators"]
+github_attachment = "ee_bench_run_scripts:GitHubAttachmentGenerator"
+attachment_export = "ee_bench_run_scripts:AttachmentExportGenerator"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/ee_bench_run_scripts"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

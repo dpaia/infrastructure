@@ -38,6 +38,14 @@ class TestFieldDescriptor:
         assert field.required is False
         assert field.description == "The unified diff patch"
 
+    def test_create_without_source(self):
+        """Test creating FieldDescriptor without source defaults to empty string."""
+        field = FieldDescriptor("patch")
+
+        assert field.name == "patch"
+        assert field.source == ""
+        assert field.required is True
+
 
 class TestProviderMetadata:
     """Tests for ProviderMetadata dataclass."""
@@ -90,6 +98,46 @@ class TestProviderMetadata:
 
         # Field exists but with different source
         assert metadata.can_provide("description", "issue") is False
+
+    def test_can_provide_name_only_match(self):
+        """Test can_provide with empty source matches by name only."""
+        fields = [FieldDescriptor("description", "pull_request")]
+        metadata = ProviderMetadata(
+            name="test", sources=["pull_request"], provided_fields=fields
+        )
+
+        assert metadata.can_provide("description", "") is True
+
+    def test_can_provide_name_only_no_match(self):
+        """Test can_provide with empty source returns False when name missing."""
+        fields = [FieldDescriptor("description", "pull_request")]
+        metadata = ProviderMetadata(
+            name="test", sources=["pull_request"], provided_fields=fields
+        )
+
+        assert metadata.can_provide("missing", "") is False
+
+    def test_find_source_for_field(self):
+        """Test find_source_for_field returns the source of the matching field."""
+        fields = [
+            FieldDescriptor("description", "pull_request"),
+            FieldDescriptor("repo_tree", "repository"),
+        ]
+        metadata = ProviderMetadata(
+            name="test", sources=["pull_request", "repository"], provided_fields=fields
+        )
+
+        assert metadata.find_source_for_field("description") == "pull_request"
+        assert metadata.find_source_for_field("repo_tree") == "repository"
+
+    def test_find_source_for_field_not_found(self):
+        """Test find_source_for_field returns empty string when not found."""
+        fields = [FieldDescriptor("description", "pull_request")]
+        metadata = ProviderMetadata(
+            name="test", sources=["pull_request"], provided_fields=fields
+        )
+
+        assert metadata.find_source_for_field("missing") == ""
 
 
 class TestGeneratorMetadata:

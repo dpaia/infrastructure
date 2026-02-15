@@ -1,71 +1,95 @@
-# Test: dry-run import of a single SWE-bench Pro item
+# Test: dry-run import of a single SWE-bench Pro item with run scripts
 # Usage: ee-dataset --config specs/test-single-item-dry-run.yaml import dry-run
 
-provider:
-  name: huggingface_dataset
-  type: huggingface
-  options:
-    dataset_name: "ScaleAI/SWE-bench_Pro"
-    split: test
-    hf_token: ${HF_TOKEN:-}
-    filters:
-      instance_id: instance_protonmail__webclients-1501eb765873b2884b6f1944fd242ecfc9d6b103
+providers:
+  - name: huggingface
+    type: huggingface_dataset
+    role: primary
+    options:
+      dataset_name: "ScaleAI/SWE-bench_Pro"
+      split: test
+      hf_token: ${HF_TOKEN:-}
+      filters:
+        instance_id: instance_protonmail__webclients-1501eb765873b2884b6f1944fd242ecfc9d6b103
 
-generator:
-  name: github_pr_importer
-  type: importer
-  options:
-    target_org: dpaia
-    github_token: ${GITHUB_TOKEN:-}
-    dataset_label: swe-bench-pro
-    state_file: ".state/test-dry-run.json"
-    inter_operation_delay: 0
-    pr_title_template: "{{ problem_statement | first_sentence | truncate_title }}"
-    pr_body_template: |
-      ## Problem Statement
+  - name: run_scripts
+    type: run_scripts
+    item_mapping:
+      instance_id: "{{ providers.huggingface.instance_id }}"
+    options:
+      repo: "scaleapi/SWE-bench_Pro-os"
+      github_token: ${GITHUB_TOKEN:-}
 
-      {{ problem_statement | default("(no description)") }}
+generators:
+  - name: github_pr_importer
+    type: github_pr_importer
+    options:
+      target_org: dpaia
+      github_token: ${GITHUB_TOKEN:-}
+      dataset_label: swe-bench-pro
+      state_file: ".state/test-dry-run.json"
+      inter_operation_delay: 0
+      pr_title_template: "{{ problem_statement | first_sentence | truncate_title }}"
+      pr_body_template: |
+        ## Problem Statement
 
-      {% if hints_text %}
-      ## Hints
+        {{ problem_statement | default("(no description)") }}
 
-      {{ hints_text }}
-      {% endif %}
+        {% if hints_text %}
+        ## Hints
 
-      {% if requirements %}
-      ## Requirements
+        {{ hints_text }}
+        {% endif %}
 
-      {{ requirements }}
-      {% endif %}
+        {% if requirements %}
+        ## Requirements
 
-      {% if interface %}
-      ## Interface
+        {{ requirements }}
+        {% endif %}
 
-      {{ interface }}
-      {% endif %}
+        {% if interface %}
+        ## Interface
 
-      {{ metadata(instance_id=instance_id, base_commit=base_commit,
-                   version=version, repo_language=repo_language,
-                   FAIL_TO_PASS=FAIL_TO_PASS, PASS_TO_PASS=PASS_TO_PASS,
-                   environment_setup_commit=environment_setup_commit,                  
-                   issue_specificity=issue_specificity, issue_categories=issue_categories,
-                   dockerhub_tag=dockerhub_tag,
-                   before_repo_set_cmd=before_repo_set_cmd,
-                   selected_test_files_to_run=selected_test_files_to_run,
-                   created_at=created_at, dataset="swe-bench-pro") }}
-    labels:
-      - swe-bench-pro
-      - "{{ repo_language }}"
-      - "{{ issue_categories }}"
-      - "{{ issue_specificity }}"
-    repo_topics:
-      - swe-bench-pro
-      - "{{ repo_language }}"
-    projects:
-      - name: "SWE Pro"
-        scope: all
-      - name: "{{ repo_language }}"
-        scope: language
+        {{ interface }}
+        {% endif %}
+
+        {{ metadata(instance_id=instance_id, base_commit=base_commit,
+                     version=version, repo_language=repo_language,
+                     FAIL_TO_PASS=FAIL_TO_PASS, PASS_TO_PASS=PASS_TO_PASS,
+                     environment_setup_commit=environment_setup_commit,
+                     issue_specificity=issue_specificity, issue_categories=issue_categories,
+                     dockerhub_tag=dockerhub_tag,
+                     before_repo_set_cmd=before_repo_set_cmd,
+                     selected_test_files_to_run=selected_test_files_to_run,
+                     created_at=created_at, dataset="swe-bench-pro") }}
+      labels:
+        - swe-bench-pro
+        - "{{ repo_language }}"
+        - "{{ issue_categories }}"
+        - "{{ issue_specificity }}"
+      repo_topics:
+        - swe-bench-pro
+        - "{{ repo_language }}"
+      projects:
+        - name: "SWE Pro"
+          scope: all
+        - name: "{{ repo_language }}"
+          scope: language
+    output:
+      format: jsonl
+      path: results/test-dry-run-import.jsonl
+
+  - name: attachment_uploader
+    type: github_attachment
+    options:
+      target_org: dpaia
+      github_token: ${GITHUB_TOKEN:-}
+      dataset_label: swe-bench-pro
+      attachment_dir: ".swe-bench-pro"
+      inter_operation_delay: 0
+    output:
+      format: jsonl
+      path: results/test-dry-run-attachments.jsonl
 
 selection:
   resource: dataset_items

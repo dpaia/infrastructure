@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import graphlib
 import re
 from typing import Any, Iterator
 
@@ -58,28 +59,12 @@ def _build_dependency_graph(
 
 def _topological_sort(graph: dict[str, list[str]]) -> list[str]:
     """Topological sort of provider names. Raises CyclicDependencyError on cycles."""
-    visited: dict[str, int] = {}  # 0=in-progress, 1=done
-    order: list[str] = []
-
-    def visit(node: str, path: list[str]) -> None:
-        if node in visited:
-            if visited[node] == 0:
-                cycle_start = path.index(node)
-                raise CyclicDependencyError(path[cycle_start:] + [node])
-            return
-        visited[node] = 0
-        path.append(node)
-        for dep in graph.get(node, []):
-            visit(dep, path)
-        path.pop()
-        visited[node] = 1
-        order.append(node)
-
-    for node in graph:
-        if node not in visited:
-            visit(node, [])
-
-    return order
+    try:
+        ts = graphlib.TopologicalSorter(graph)
+        return list(ts.static_order())
+    except graphlib.CycleError as exc:
+        cycle = list(exc.args[1]) if len(exc.args) > 1 else []
+        raise CyclicDependencyError(cycle) from exc
 
 
 def _extract_dependencies(item_mapping: dict[str, str]) -> dict[str, list[str]]:
@@ -151,12 +136,15 @@ class CompositeProvider(Provider):
 
         # Build field routing table: (field_name, source) -> provider_name
         self._field_routing: dict[tuple[str, str], str] = {}
+        # Name-only routing: field_name -> (provider_name, source)
+        self._field_routing_by_name: dict[str, tuple[str, str]] = {}
         # Process in dependency order so that enrichment providers can override
         # fields from providers they depend on. Primary provider's fields are base.
         for pname in self._dependency_order:
             prov = self._providers_by_name[pname]
             for fd in prov.metadata.provided_fields:
                 self._field_routing[(fd.name, fd.source)] = pname
+                self._field_routing_by_name[fd.name] = (pname, fd.source)
 
         # Per-item field cache: (item_key, provider_name, field_name, source) -> value
         self._field_cache: dict[tuple[Any, str, str, str], Any] = {}
@@ -225,6 +213,16 @@ class CompositeProvider(Provider):
                 else:
                     self._providers_by_name[pname].prepare()
 
+        # Rebuild field routing tables — providers with dynamic fields (e.g.
+        # MetadataProvider) only declare their provided_fields after prepare().
+        self._field_routing = {}
+        self._field_routing_by_name = {}
+        for pname in self._dependency_order:
+            prov = self._providers_by_name[pname]
+            for fd in prov.metadata.provided_fields:
+                self._field_routing[(fd.name, fd.source)] = pname
+                self._field_routing_by_name[fd.name] = (pname, fd.source)
+
     def iter_items(self, context: Context) -> Iterator[dict[str, Any]]:
         """Delegate to primary provider's iter_items(). Clears per-item cache."""
         for item in self.primary.iter_items(context):
@@ -239,21 +237,34 @@ class CompositeProvider(Provider):
         1. Look up the owning provider from field_routing
         2. If primary, delegate directly
         3. If enrichment, resolve item_mapping, create mapped context, delegate
+
+        When *source* is empty, the field is resolved by name only using
+        ``_field_routing_by_name``.  The concrete source discovered there is
+        forwarded to ``_resolve_field`` so that downstream providers always
+        receive a real source string.
         """
         # Check cache first
         cache_key = (self._current_item_key, name, source)
         if cache_key in self._field_cache:
             return self._field_cache[cache_key]
 
-        # Find owning provider
-        routing_key = (name, source)
-        owner_name = self._field_routing.get(routing_key)
-        if owner_name is None:
-            raise ProviderError(
-                f"No provider can supply field '{name}' from source '{source}'"
-            )
+        if not source:
+            entry = self._field_routing_by_name.get(name)
+            if entry is None:
+                raise ProviderError(
+                    f"No provider can supply field '{name}' (source-less lookup)"
+                )
+            owner_name, resolved_source = entry
+        else:
+            routing_key = (name, source)
+            owner_name = self._field_routing.get(routing_key)
+            if owner_name is None:
+                raise ProviderError(
+                    f"No provider can supply field '{name}' from source '{source}'"
+                )
+            resolved_source = source
 
-        value = self._resolve_field(owner_name, name, source, context)
+        value = self._resolve_field(owner_name, name, resolved_source, context)
         self._field_cache[cache_key] = value
         return value
 

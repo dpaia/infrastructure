@@ -1,101 +1,114 @@
-# Import all 731 SWE-bench Pro tasks into dpaia organization
+# Import SWE-bench Pro tasks with run scripts into dpaia organization
 # Usage: ee-dataset --config specs/import-swe-bench-pro.yaml import run
 
-provider:
-  name: huggingface_dataset
-  type: huggingface
-  options:
-    dataset_name: "ScaleAI/SWE-bench_Pro"
-    split: test
-    # HuggingFace token for gated/private datasets (optional for public datasets)
-    # Supports env var reference via ${} syntax from config_parser.py
-    hf_token: ${HF_TOKEN:-}
+providers:
+  - name: huggingface
+    type: huggingface_dataset
+    role: primary
+    options:
+      dataset_name: "ScaleAI/SWE-bench_Pro"
+      split: test
+      hf_token: ${HF_TOKEN:-}
 
-generator:
-  name: github_pr_importer
-  type: importer
-  options:
-    target_org: dpaia
-    # GitHub PAT with repo, project, admin:org scopes
-    github_token: ${GITHUB_TOKEN}
-    dataset_label: swe-bench-pro
-    state_file: ".state/swe-bench-pro.json"
-    inter_operation_delay: 1.0
+  - name: run_scripts
+    type: run_scripts
+    item_mapping:
+      instance_id: "{{ providers.huggingface.instance_id }}"
+    options:
+      repo: "scaleapi/SWE-bench_Pro-os"
+      github_token: ${GITHUB_TOKEN}
 
-    # Repository visibility for forks: "public" or "private"
-    # repo_visibility: private
+generators:
+  - name: github_pr_importer
+    type: github_pr_importer
+    options:
+      target_org: dpaia
+      github_token: ${GITHUB_TOKEN}
+      dataset_label: swe-bench-pro
+      state_file: ".state/swe-bench-pro.json"
+      inter_operation_delay: 1.0
 
-    # Project visibility when creating new projects: "PUBLIC", "PRIVATE", or "ORG"
-    # project_visibility: PRIVATE
+      # Repository visibility for forks: "public" or "private"
+      # repo_visibility: private
 
-    # PR state after creation: "open" or "closed"
-    # Set to "closed" to create PRs in closed state (useful for archival imports)
-    # pr_state: open
+      # Project visibility when creating new projects: "PUBLIC", "PRIVATE", or "ORG"
+      # project_visibility: PRIVATE
 
-    # PR title: Jinja2 template with item fields as variables
-    pr_title_template: "[{{ dataset_label }}] {{ problem_statement | first_sentence | truncate_title }}"
+      # PR state after creation: "open" or "closed"
+      # Set to "closed" to create PRs in closed state (useful for archival imports)
+      # pr_state: open
 
-    # PR body: Jinja2 template with item fields as variables
-    # Use {{ metadata(key=value, ...) }} to embed a <!--METADATA--> block
-    pr_body_template: |
-      ## Problem Statement
+      # PR title: Jinja2 template with item fields as variables
+      pr_title_template: "[{{ dataset_label }}] {{ problem_statement | first_sentence | truncate_title }}"
 
-      {{ problem_statement | default("(no description)") }}
+      # PR body: Jinja2 template with item fields as variables
+      # Use {{ metadata(key=value, ...) }} to embed a <!--METADATA--> block
+      pr_body_template: |
+        ## Problem Statement
 
-      {% if hints_text %}
-      ## Hints
+        {{ problem_statement | default("(no description)") }}
 
-      {{ hints_text }}
-      {% endif %}
+        {% if hints_text %}
+        ## Hints
 
-      {% if requirements %}
-      ## Requirements
+        {{ hints_text }}
+        {% endif %}
 
-      {{ requirements }}
-      {% endif %}
+        {% if requirements %}
+        ## Requirements
 
-      {% if interface %}
-      ## Interface
+        {{ requirements }}
+        {% endif %}
 
-      {{ interface }}
-      {% endif %}
+        {% if interface %}
+        ## Interface
 
-      {{ metadata(instance_id=instance_id, repo=repo, base_commit=base_commit,
-                   version=version, repo_language=repo_language,
-                   FAIL_TO_PASS=FAIL_TO_PASS, PASS_TO_PASS=PASS_TO_PASS,
-                   environment_setup_commit=environment_setup_commit,
-                   requirements=requirements, interface=interface,
-                   issue_specificity=issue_specificity, issue_categories=issue_categories,
-                   dockerhub_tag=dockerhub_tag,
-                   before_repo_set_cmd="```\n" ~ before_repo_set_cmd ~ "\n```" if before_repo_set_cmd else "",
-                   selected_test_files_to_run=selected_test_files_to_run,
-                   created_at=created_at, checksum=checksum,
-                   dataset="swe-bench-pro") }}
+        {{ interface }}
+        {% endif %}
 
-    # PR labels: mix of static values and dynamic values from dataset fields
-    # Values prefixed with "from:" are resolved per-item from provider fields
-    # Plain values are applied to all PRs as-is
-    labels:
-      - swe-bench-pro
-      - "{{ repo_language }}"
-      - "{{ issue_categories }}"
+        {{ metadata(instance_id=instance_id, base_commit=base_commit,
+                     version=version, repo_language=repo_language,
+                     FAIL_TO_PASS=FAIL_TO_PASS, PASS_TO_PASS=PASS_TO_PASS,
+                     environment_setup_commit=environment_setup_commit,
+                     issue_specificity=issue_specificity, issue_categories=issue_categories,
+                     dockerhub_tag=dockerhub_tag,
+                     before_repo_set_cmd=before_repo_set_cmd,
+                     selected_test_files_to_run=selected_test_files_to_run,
+                     created_at=created_at, dataset="swe-bench-pro") }}
 
-    # Repo topics: set on forked repositories
-    repo_topics:
-      - swe-bench-pro
-      - "{{ repo_language }}"
+      # PR labels: mix of static values and dynamic values from dataset fields
+      labels:
+        - swe-bench-pro
+        - "{{ repo_language }}"
+        - "{{ issue_categories }}"
+        - "{{ issue_specificity }}"
 
-    # GitHub Projects V2: auto-create if needed
-    projects:
-      - name: "SWE Pro"
-        scope: all
-      - name: "{{ repo_language }}"
-        scope: language
+      # Repo topics: set on forked repositories
+      repo_topics:
+        - "{{ repo_language }}"
+
+      # GitHub Projects V2: auto-create if needed
+      projects:
+        - name: "SWE Pro"
+          scope: all
+        - name: "{{ repo_language }}"
+          scope: language
+    output:
+      format: jsonl
+      path: results/swe-bench-pro-import.jsonl
+
+  - name: attachment_uploader
+    type: github_attachment
+    options:
+      target_org: dpaia
+      github_token: ${GITHUB_TOKEN}
+      dataset_label: swe-bench-pro
+      attachment_dir: ".swe-bench-pro"
+      inter_operation_delay: 0.5
+    output:
+      format: jsonl
+      path: results/swe-bench-pro-attachments.jsonl
 
 selection:
   resource: dataset_items
   filters: {}
-
-output:
-  format: jsonl
-  path: results/swe-bench-pro-import.jsonl

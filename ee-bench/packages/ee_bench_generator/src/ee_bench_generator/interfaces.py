@@ -45,7 +45,11 @@ class Provider(ABC):
 
         Args:
             name: The field name to retrieve.
-            source: The source to retrieve from.
+            source: The source to retrieve from.  May be an empty string
+                for source-less lookups (match by name only).
+                ``CompositeProvider`` resolves empty sources to a concrete
+                source before delegating to the owning provider, so concrete
+                provider implementations always receive a non-empty source.
             context: Current runtime context with selection and current item.
 
         Returns:
@@ -84,15 +88,6 @@ class Generator(ABC):
 
         Returns:
             GeneratorMetadata declaring required and optional fields.
-        """
-        ...
-
-    @abstractmethod
-    def output_schema(self) -> dict[str, Any]:
-        """Return JSON Schema for the output records.
-
-        Returns:
-            JSON Schema dictionary describing the output format.
         """
         ...
 

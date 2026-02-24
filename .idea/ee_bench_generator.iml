@@ -2,44 +2,10 @@
 <module external.system.id="java-source" type="PYTHON_MODULE" version="4">
   <component name="NewModuleRootManager" inherit-compiler-output="true">
     <exclude-output />
-    <content url="file://$MODULE_DIR$/ee-bench" />
-    <content url="file://$MODULE_DIR$/ee-bench/packages/ee_bench_cli">
-      <sourceFolder url="file://$MODULE_DIR$/ee-bench/packages/ee_bench_cli/src" isTestSource="false" />
-    </content>
-    <content url="file://$MODULE_DIR$/ee-bench/packages/ee_bench_dpaia">
-      <sourceFolder url="file://$MODULE_DIR$/ee-bench/packages/ee_bench_dpaia/src" isTestSource="false" />
-    </content>
-    <content url="file://$MODULE_DIR$/ee-bench/packages/ee_bench_dsl">
-      <sourceFolder url="file://$MODULE_DIR$/ee-bench/packages/ee_bench_dsl/src" isTestSource="false" />
-    </content>
     <content url="file://$MODULE_DIR$/ee-bench/packages/ee_bench_generator">
       <sourceFolder url="file://$MODULE_DIR$/ee-bench/packages/ee_bench_generator/src" />
     </content>
-    <content url="file://$MODULE_DIR$/ee-bench/packages/ee_bench_github">
-      <sourceFolder url="file://$MODULE_DIR$/ee-bench/packages/ee_bench_github/src" isTestSource="false" />
-    </content>
-    <content url="file://$MODULE_DIR$/ee-bench/packages/ee_bench_gradle">
-      <sourceFolder url="file://$MODULE_DIR$/ee-bench/packages/ee_bench_gradle/src" isTestSource="false" />
-    </content>
-    <content url="file://$MODULE_DIR$/ee-bench/packages/ee_bench_huggingface">
-      <sourceFolder url="file://$MODULE_DIR$/ee-bench/packages/ee_bench_huggingface/src" isTestSource="false" />
-    </content>
-    <content url="file://$MODULE_DIR$/ee-bench/packages/ee_bench_importer">
-      <sourceFolder url="file://$MODULE_DIR$/ee-bench/packages/ee_bench_importer/src" isTestSource="false" />
-    </content>
-    <content url="file://$MODULE_DIR$/ee-bench/packages/ee_bench_maven">
-      <sourceFolder url="file://$MODULE_DIR$/ee-bench/packages/ee_bench_maven/src" isTestSource="false" />
-    </content>
-    <content url="file://$MODULE_DIR$/ee-bench/packages/ee_bench_metadata">
-      <sourceFolder url="file://$MODULE_DIR$/ee-bench/packages/ee_bench_metadata/src" isTestSource="false" />
-    </content>
-    <content url="file://$MODULE_DIR$/ee-bench/packages/ee_bench_patch_splitter">
-      <sourceFolder url="file://$MODULE_DIR$/ee-bench/packages/ee_bench_patch_splitter/src" isTestSource="false" />
-    </content>
-    <content url="file://$MODULE_DIR$/ee-bench/packages/ee_bench_run_scripts">
-      <sourceFolder url="file://$MODULE_DIR$/ee-bench/packages/ee_bench_run_scripts/src" isTestSource="false" />
-    </content>
-    <orderEntry type="jdk" jdkName="uv (ee-bench)" jdkType="Python SDK" />
     <orderEntry type="sourceFolder" forTests="false" />
+    <orderEntry type="jdk" jdkName="uv (ee-bench)" jdkType="Python SDK" />
   </component>
 </module>

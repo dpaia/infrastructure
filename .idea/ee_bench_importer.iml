@@ -6,5 +6,6 @@
       <sourceFolder url="file://$MODULE_DIR$/ee-bench/packages/ee_bench_importer/src" />
     </content>
     <orderEntry type="sourceFolder" forTests="false" />
+    <orderEntry type="jdk" jdkName="uv (ee-bench)" jdkType="Python SDK" />
   </component>
 </module>

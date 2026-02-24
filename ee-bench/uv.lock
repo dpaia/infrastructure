@@ -17,8 +17,10 @@ members = [
     "ee-bench-dsl",
     "ee-bench-generator",
     "ee-bench-github",
+    "ee-bench-gradle",
     "ee-bench-huggingface",
     "ee-bench-importer",
+    "ee-bench-maven",
     "ee-bench-metadata",
     "ee-bench-patch-splitter",
     "ee-bench-run-scripts",
@@ -541,6 +543,26 @@ requires-dist = [
 provides-extras = ["dev"]
 
 [[package]]
+name = "ee-bench-gradle"
+version = "0.1.0"
+source = { editable = "packages/ee_bench_gradle" }
+dependencies = [
+    { name = "ee-bench-generator" },
+]
+
+[package.optional-dependencies]
+dev = [
+    { name = "pytest" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "ee-bench-generator", editable = "packages/ee_bench_generator" },
+    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
+]
+provides-extras = ["dev"]
+
+[[package]]
 name = "ee-bench-huggingface"
 version = "0.1.0"
 source = { editable = "packages/ee_bench_huggingface" }
@@ -587,6 +609,26 @@ requires-dist = [
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
     { name = "unidiff", specifier = ">=0.7.5" },
     { name = "whatthepatch", specifier = ">=1.0" },
+]
+provides-extras = ["dev"]
+
+[[package]]
+name = "ee-bench-maven"
+version = "0.1.0"
+source = { editable = "packages/ee_bench_maven" }
+dependencies = [
+    { name = "ee-bench-generator" },
+]
+
+[package.optional-dependencies]
+dev = [
+    { name = "pytest" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "ee-bench-generator", editable = "packages/ee_bench_generator" },
+    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
 ]
 provides-extras = ["dev"]
 
@@ -662,8 +704,10 @@ dependencies = [
     { name = "ee-bench-dsl" },
     { name = "ee-bench-generator" },
     { name = "ee-bench-github" },
+    { name = "ee-bench-gradle" },
     { name = "ee-bench-huggingface" },
     { name = "ee-bench-importer" },
+    { name = "ee-bench-maven" },
     { name = "ee-bench-metadata" },
     { name = "ee-bench-patch-splitter" },
     { name = "ee-bench-run-scripts" },
@@ -682,8 +726,10 @@ requires-dist = [
     { name = "ee-bench-dsl", editable = "packages/ee_bench_dsl" },
     { name = "ee-bench-generator", editable = "packages/ee_bench_generator" },
     { name = "ee-bench-github", editable = "packages/ee_bench_github" },
+    { name = "ee-bench-gradle", editable = "packages/ee_bench_gradle" },
     { name = "ee-bench-huggingface", editable = "packages/ee_bench_huggingface" },
     { name = "ee-bench-importer", editable = "packages/ee_bench_importer" },
+    { name = "ee-bench-maven", editable = "packages/ee_bench_maven" },
     { name = "ee-bench-metadata", editable = "packages/ee_bench_metadata" },
     { name = "ee-bench-patch-splitter", editable = "packages/ee_bench_patch_splitter" },
     { name = "ee-bench-run-scripts", editable = "packages/ee_bench_run_scripts" },

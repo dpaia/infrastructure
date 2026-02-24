@@ -55,9 +55,12 @@ class MetadataProvider(Provider):
     **Configuration (via ``prepare()``):**
 
     ``fields``
-        **Required.**  Explicit list of metadata field names to serve.
-        This list drives ``metadata.provided_fields`` declarations and
-        ``get_field()`` validation.
+        **Required.**  Either an explicit list of metadata field names to
+        serve, or the string ``"auto"`` (or ``"*"``) to enable
+        auto-discovery mode.  In auto mode the provider sets the
+        ``wildcard`` flag on its metadata so that ``CompositeProvider``
+        routes *any* unknown field to it, and ``get_field()`` accepts
+        arbitrary names.
 
     ``source``
         Source name for field descriptors.  Defaults to ``"pull_request"``.
@@ -69,6 +72,7 @@ class MetadataProvider(Provider):
     def __init__(self) -> None:
         self._fields: list[str] = []
         self._source: str = "pull_request"
+        self._auto_discover: bool = False
         self._cache_key: str | None = None
         self._cache_result: dict[str, str] = {}
 
@@ -85,6 +89,7 @@ class MetadataProvider(Provider):
                 )
                 for name in self._fields
             ],
+            wildcard=self._auto_discover,
         )
 
     def prepare(self, **options: Any) -> None:
@@ -92,9 +97,15 @@ class MetadataProvider(Provider):
         if not fields:
             raise ProviderError(
                 "MetadataProvider requires 'fields' option — "
-                "an explicit list of metadata field names to provide"
+                "an explicit list of metadata field names to provide, "
+                "or \"auto\" for auto-discovery mode"
             )
-        self._fields = list(fields)
+        if fields in ("auto", "*"):
+            self._auto_discover = True
+            self._fields = []
+        else:
+            self._auto_discover = False
+            self._fields = list(fields)
         self._source = options.get("source", "pull_request")
 
     def iter_items(self, context: Context) -> Iterator[dict[str, Any]]:  # noqa: ARG002
@@ -105,7 +116,7 @@ class MetadataProvider(Provider):
         )
 
     def get_field(self, name: str, source: str, context: Context) -> Any:  # noqa: ARG002
-        if name not in self._fields:
+        if not self._auto_discover and name not in self._fields:
             raise ProviderError(
                 f"MetadataProvider does not provide field '{name}' "
                 f"(configured fields: {self._fields})"
@@ -120,3 +131,12 @@ class MetadataProvider(Provider):
             self._cache_result = parse_metadata_block(text)
 
         return self._cache_result.get(name, "")
+
+    def get_discovered_field_names(self) -> set[str]:
+        """Return all keys found in the last parsed METADATA block.
+
+        Only meaningful after ``get_field()`` has been called at least
+        once (which triggers parsing).  Returns an empty set if nothing
+        has been parsed yet.
+        """
+        return set(self._cache_result.keys())

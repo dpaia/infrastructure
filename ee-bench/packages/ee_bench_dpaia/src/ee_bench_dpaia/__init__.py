@@ -5,10 +5,12 @@ DPAIA (Data Patcher AI Agent) format.
 """
 
 from ee_bench_dpaia.generator import DpaiaJvmGenerator, DpaiaSweProGenerator
+from ee_bench_dpaia.unified_generator import EEBenchCodegenGenerator
 
 __version__ = "0.1.0"
 
 __all__ = [
     "DpaiaJvmGenerator",
     "DpaiaSweProGenerator",
+    "EEBenchCodegenGenerator",
 ]

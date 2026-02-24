@@ -585,3 +585,680 @@ class TestCompositeProviderChaining:
                     "item_mapping": {"y": "{{ providers.a.x }}"},
                 },
             ])
+
+
+class WildcardProvider(Provider):
+    """Mock wildcard provider for testing."""
+
+    def __init__(
+        self,
+        name: str = "wildcard",
+        field_values: dict[str, Any] | None = None,
+        discovered_fields: set[str] | None = None,
+    ):
+        self._name = name
+        self._field_values = field_values or {}
+        self._discovered_fields = discovered_fields or set()
+
+    @property
+    def metadata(self) -> ProviderMetadata:
+        return ProviderMetadata(
+            name=self._name,
+            sources=["pull_request"],
+            provided_fields=[],
+            wildcard=True,
+        )
+
+    def prepare(self, **options: Any) -> None:
+        pass
+
+    def get_field(self, name: str, source: str, context: Context) -> Any:
+        return self._field_values.get(name, "")
+
+    def iter_items(self, context: Context) -> Iterator[dict[str, Any]]:
+        raise NotImplementedError
+
+    def get_discovered_field_names(self) -> set[str]:
+        return self._discovered_fields
+
+
+class TestCompositeProviderWildcard:
+    def test_wildcard_provider_resolves_unknown_field(self):
+        """Fields not declared by any provider are routed to wildcard provider."""
+        primary = MockProvider(
+            name="primary",
+            provided_fields=[FieldDescriptor("repo", "dataset")],
+            field_values={"repo": "django/django"},
+            items=[{"id": 1}],
+        )
+        wildcard = WildcardProvider(
+            field_values={"custom_field": "custom_value"},
+        )
+        composite = CompositeProvider([
+            {"name": "main", "provider": primary, "role": "primary"},
+            {"name": "wc", "provider": wildcard},
+        ])
+
+        ctx = _make_context()
+        items = list(composite.iter_items(ctx))
+        ctx.current_item = items[0]
+
+        # Known field from primary
+        assert composite.get_field("repo", "dataset", ctx) == "django/django"
+        # Unknown field resolved by wildcard
+        assert composite.get_field("custom_field", "", ctx) == "custom_value"
+
+    def test_explicit_fields_override_wildcard(self):
+        """Explicit field declarations always win over wildcard."""
+        primary = MockProvider(
+            name="primary",
+            provided_fields=[FieldDescriptor("repo", "dataset")],
+            field_values={"repo": "primary_repo"},
+            items=[{"id": 1}],
+        )
+        wildcard = WildcardProvider(
+            field_values={"repo": "wildcard_repo"},
+        )
+        composite = CompositeProvider([
+            {"name": "main", "provider": primary, "role": "primary"},
+            {"name": "wc", "provider": wildcard},
+        ])
+
+        ctx = _make_context()
+        items = list(composite.iter_items(ctx))
+        ctx.current_item = items[0]
+
+        # Primary's explicit field wins
+        assert composite.get_field("repo", "", ctx) == "primary_repo"
+
+    def test_composite_metadata_has_wildcard_flag(self):
+        """Composite metadata reflects wildcard from sub-providers."""
+        primary = MockProvider(
+            name="primary",
+            provided_fields=[FieldDescriptor("repo", "dataset")],
+            items=[{"id": 1}],
+        )
+        wildcard = WildcardProvider()
+        composite = CompositeProvider([
+            {"name": "main", "provider": primary, "role": "primary"},
+            {"name": "wc", "provider": wildcard},
+        ])
+        assert composite.metadata.wildcard is True
+
+    def test_no_wildcard_no_flag(self):
+        """Composite without wildcard providers has wildcard=False."""
+        primary = MockProvider(
+            name="primary",
+            provided_fields=[FieldDescriptor("repo", "dataset")],
+            items=[{"id": 1}],
+        )
+        composite = CompositeProvider([
+            {"name": "main", "provider": primary, "role": "primary"},
+        ])
+        assert composite.metadata.wildcard is False
+
+    def test_get_extra_fields(self):
+        """get_extra_fields collects dynamically-discovered fields."""
+        primary = MockProvider(
+            name="primary",
+            provided_fields=[FieldDescriptor("repo", "dataset")],
+            field_values={"repo": "django/django"},
+            items=[{"id": 1}],
+        )
+        wildcard = WildcardProvider(
+            field_values={
+                "dynamic_a": "val_a",
+                "dynamic_b": "val_b",
+                "repo": "should_not_appear",  # already in routing table
+            },
+            discovered_fields={"dynamic_a", "dynamic_b", "repo"},
+        )
+        composite = CompositeProvider([
+            {"name": "main", "provider": primary, "role": "primary"},
+            {"name": "wc", "provider": wildcard},
+        ])
+
+        ctx = _make_context()
+        items = list(composite.iter_items(ctx))
+        ctx.current_item = items[0]
+
+        extras = composite.get_extra_fields(ctx)
+        # Only fields NOT in the routing table
+        assert "dynamic_a" in extras
+        assert "dynamic_b" in extras
+        assert extras["dynamic_a"] == "val_a"
+        assert extras["dynamic_b"] == "val_b"
+        # "repo" is in the routing table so should not appear
+        assert "repo" not in extras
+
+    def test_get_extra_fields_empty_without_wildcard(self):
+        """get_extra_fields returns empty when no wildcard providers."""
+        primary = MockProvider(
+            name="primary",
+            provided_fields=[FieldDescriptor("repo", "dataset")],
+            items=[{"id": 1}],
+        )
+        composite = CompositeProvider([
+            {"name": "main", "provider": primary, "role": "primary"},
+        ])
+
+        ctx = _make_context()
+        items = list(composite.iter_items(ctx))
+        ctx.current_item = items[0]
+
+        assert composite.get_extra_fields(ctx) == {}
+
+    def test_wildcard_provider_with_item_mapping(self):
+        """Wildcard provider receives mapped context through item_mapping."""
+        primary = MockProvider(
+            name="primary",
+            provided_fields=[FieldDescriptor("description", "pull_request")],
+            field_values={"description": "body text with <!--METADATA\nfoo:bar\nMETADATA-->"},
+            items=[{"id": 1}],
+        )
+        wildcard = WildcardProvider(
+            field_values={"some_meta_field": "meta_value"},
+        )
+        composite = CompositeProvider([
+            {"name": "main", "provider": primary, "role": "primary"},
+            {
+                "name": "wc",
+                "provider": wildcard,
+                "item_mapping": {
+                    "text": "{{ providers.main.description }}",
+                },
+            },
+        ])
+
+        ctx = _make_context()
+        items = list(composite.iter_items(ctx))
+        ctx.current_item = items[0]
+
+        assert composite.get_field("some_meta_field", "", ctx) == "meta_value"
+
+
+class TestTopologicalSortDeclarationOrder:
+    def test_preserves_declaration_order(self):
+        """Independent providers sorted by spec (declaration) order."""
+        graph = {"a": [], "b": [], "c": []}
+        order = _topological_sort(graph, declaration_order=["c", "a", "b"])
+        assert order == ["c", "a", "b"]
+
+    def test_respects_dependencies_over_declaration(self):
+        """Dependencies override declaration order."""
+        graph = {"a": ["b"], "b": [], "c": []}
+        order = _topological_sort(graph, declaration_order=["a", "b", "c"])
+        assert order.index("b") < order.index("a")
+
+    def test_mixed_independent_and_dependent(self):
+        """Dependent nodes come after deps, independent by declaration."""
+        graph = {"x": [], "y": ["x"], "z": []}
+        order = _topological_sort(graph, declaration_order=["z", "x", "y"])
+        # z and x are independent; z is declared first
+        # y depends on x so comes after x
+        assert order.index("x") < order.index("y")
+        assert order[0] == "z"
+
+
+class NoneReturningProvider(Provider):
+    """Mock provider that returns None for specified fields."""
+
+    def __init__(
+        self,
+        name: str = "none_provider",
+        provided_fields: list[FieldDescriptor] | None = None,
+        none_fields: set[str] | None = None,
+        field_values: dict[str, Any] | None = None,
+    ):
+        self._name = name
+        self._provided_fields = provided_fields or []
+        self._none_fields = none_fields or set()
+        self._field_values = field_values or {}
+
+    @property
+    def metadata(self) -> ProviderMetadata:
+        sources = list({f.source for f in self._provided_fields})
+        return ProviderMetadata(
+            name=self._name,
+            sources=sources,
+            provided_fields=self._provided_fields,
+        )
+
+    def prepare(self, **options: Any) -> None:
+        pass
+
+    def get_field(self, name: str, source: str, context: Context) -> Any:
+        if name in self._none_fields:
+            return None
+        if name in self._field_values:
+            val = self._field_values[name]
+            if callable(val):
+                return val(context)
+            return val
+        if context.current_item and name in context.current_item:
+            return context.current_item[name]
+        return f"value_for_{name}"
+
+    def iter_items(self, context: Context) -> Iterator[dict[str, Any]]:
+        raise NotImplementedError
+
+
+class TestFieldChainFallback:
+    def test_field_chain_fallback_on_none(self):
+        """Provider returns None, previous provider in chain used."""
+        primary = MockProvider(
+            name="primary",
+            provided_fields=[FieldDescriptor("data", "s")],
+            field_values={"data": "primary_value"},
+            items=[{"id": 1}],
+        )
+        # First enrichment: always returns a value
+        first = MockProvider(
+            name="first",
+            provided_fields=[FieldDescriptor("data", "s")],
+            field_values={"data": "first_value"},
+        )
+        # Second enrichment: returns None → should fall back to first
+        second = NoneReturningProvider(
+            name="second",
+            provided_fields=[FieldDescriptor("data", "s")],
+            none_fields={"data"},
+        )
+        composite = CompositeProvider([
+            {"name": "primary", "provider": primary, "role": "primary"},
+            {"name": "first", "provider": first},
+            {"name": "second", "provider": second},
+        ])
+
+        ctx = _make_context()
+        items = list(composite.iter_items(ctx))
+        ctx.current_item = items[0]
+
+        value = composite.get_field("data", "", ctx)
+        assert value == "first_value"
+
+    def test_field_chain_single_provider_no_fallback(self):
+        """Single provider, no None check (backward compat)."""
+        primary = MockProvider(
+            name="primary",
+            provided_fields=[FieldDescriptor("data", "s")],
+            field_values={"data": "the_value"},
+            items=[{"id": 1}],
+        )
+        composite = CompositeProvider([
+            {"name": "primary", "provider": primary, "role": "primary"},
+        ])
+
+        ctx = _make_context()
+        items = list(composite.iter_items(ctx))
+        ctx.current_item = items[0]
+
+        value = composite.get_field("data", "", ctx)
+        assert value == "the_value"
+
+    def test_field_chain_all_none_falls_to_wildcard(self):
+        """All chain providers return None, wildcard used."""
+        primary = MockProvider(
+            name="primary",
+            provided_fields=[FieldDescriptor("repo", "dataset")],
+            items=[{"id": 1}],
+        )
+        # Two providers both return None for "data"
+        prov_a = NoneReturningProvider(
+            name="a",
+            provided_fields=[FieldDescriptor("data", "s")],
+            none_fields={"data"},
+        )
+        prov_b = NoneReturningProvider(
+            name="b",
+            provided_fields=[FieldDescriptor("data", "s")],
+            none_fields={"data"},
+        )
+        wildcard = WildcardProvider(field_values={"data": "wildcard_value"})
+
+        composite = CompositeProvider([
+            {"name": "primary", "provider": primary, "role": "primary"},
+            {"name": "a", "provider": prov_a},
+            {"name": "b", "provider": prov_b},
+            {"name": "wc", "provider": wildcard},
+        ])
+
+        ctx = _make_context()
+        items = list(composite.iter_items(ctx))
+        ctx.current_item = items[0]
+
+        value = composite.get_field("data", "", ctx)
+        assert value == "wildcard_value"
+
+    def test_field_chain_last_wins_when_all_return_values(self):
+        """Last provider's value used when all return non-None."""
+        primary = MockProvider(
+            name="primary",
+            provided_fields=[FieldDescriptor("data", "s")],
+            field_values={"data": "primary_value"},
+            items=[{"id": 1}],
+        )
+        first = MockProvider(
+            name="first",
+            provided_fields=[FieldDescriptor("data", "s")],
+            field_values={"data": "first_value"},
+        )
+        second = MockProvider(
+            name="second",
+            provided_fields=[FieldDescriptor("data", "s")],
+            field_values={"data": "second_value"},
+        )
+        composite = CompositeProvider([
+            {"name": "primary", "provider": primary, "role": "primary"},
+            {"name": "first", "provider": first},
+            {"name": "second", "provider": second},
+        ])
+
+        ctx = _make_context()
+        items = list(composite.iter_items(ctx))
+        ctx.current_item = items[0]
+
+        value = composite.get_field("data", "", ctx)
+        assert value == "second_value"
+
+
+class TestFieldsNamespace:
+    def test_fields_namespace_in_jinja2(self):
+        """{{ fields.X }} resolves from upstream provider."""
+        primary = MockProvider(
+            name="primary",
+            provided_fields=[
+                FieldDescriptor("data", "s"),
+                FieldDescriptor("label", "s"),
+            ],
+            field_values={"data": "hello", "label": "world"},
+            items=[{"id": 1}],
+        )
+        enrichment = MockProvider(
+            name="enrichment",
+            provided_fields=[FieldDescriptor("combined", "s")],
+            field_values={
+                "combined": lambda ctx: f"{ctx.current_item.get('d')}_{ctx.current_item.get('l')}",
+            },
+        )
+        composite = CompositeProvider([
+            {"name": "primary", "provider": primary, "role": "primary"},
+            {
+                "name": "enrichment",
+                "provider": enrichment,
+                "item_mapping": {
+                    "d": "{{ fields.data }}",
+                    "l": "{{ fields.label }}",
+                },
+            },
+        ])
+
+        ctx = _make_context()
+        items = list(composite.iter_items(ctx))
+        ctx.current_item = items[0]
+
+        value = composite.get_field("combined", "", ctx)
+        assert value == "hello_world"
+
+    def test_fields_namespace_excludes_current_provider(self):
+        """{{ fields.X }} in provider B resolves from provider A (upstream), not B itself."""
+        primary = MockProvider(
+            name="primary",
+            provided_fields=[FieldDescriptor("value", "s")],
+            field_values={"value": "from_primary"},
+            items=[{"id": 1}],
+        )
+        # Provider A provides "value" with enrichment
+        prov_a = MockProvider(
+            name="a",
+            provided_fields=[FieldDescriptor("value", "s")],
+            field_values={"value": lambda ctx: f"a_{ctx.current_item.get('v', '')}"},
+        )
+        # Provider B also provides "value" and uses {{ fields.value }}
+        # which should resolve from A (upstream), not from B itself
+        prov_b = MockProvider(
+            name="b",
+            provided_fields=[FieldDescriptor("value", "s")],
+            field_values={"value": lambda ctx: f"b_{ctx.current_item.get('v', '')}"},
+        )
+        composite = CompositeProvider([
+            {"name": "primary", "provider": primary, "role": "primary"},
+            {
+                "name": "a",
+                "provider": prov_a,
+                "item_mapping": {
+                    "v": "{{ fields.value }}",
+                },
+            },
+            {
+                "name": "b",
+                "provider": prov_b,
+                "item_mapping": {
+                    "v": "{{ fields.value }}",
+                },
+            },
+        ])
+
+        ctx = _make_context()
+        items = list(composite.iter_items(ctx))
+        ctx.current_item = items[0]
+
+        # get_field("value", "") goes to chain: primary, a, b
+        # b is tried first (last in chain): b gets fields.value -> resolves from a
+        # a gets fields.value -> resolves from primary -> "from_primary"
+        # a returns "a_from_primary"
+        # b gets "a_from_primary" and returns "b_a_from_primary"
+        value = composite.get_field("value", "", ctx)
+        assert value == "b_a_from_primary"
+
+
+class RequiredInputsProvider(Provider):
+    """Mock provider that declares required_inputs."""
+
+    def __init__(
+        self,
+        name: str = "ri_provider",
+        provided_fields: list[FieldDescriptor] | None = None,
+        required_inputs: list[FieldDescriptor] | None = None,
+        field_values: dict[str, Any] | None = None,
+    ):
+        self._name = name
+        self._provided_fields = provided_fields or []
+        self._required_inputs = required_inputs or []
+        self._field_values = field_values or {}
+
+    @property
+    def metadata(self) -> ProviderMetadata:
+        sources = list({f.source for f in self._provided_fields})
+        return ProviderMetadata(
+            name=self._name,
+            sources=sources,
+            provided_fields=self._provided_fields,
+            required_inputs=self._required_inputs,
+        )
+
+    def prepare(self, **options: Any) -> None:
+        pass
+
+    def get_field(self, name: str, source: str, context: Context) -> Any:
+        if name in self._field_values:
+            val = self._field_values[name]
+            if callable(val):
+                return val(context)
+            return val
+        if context.current_item and name in context.current_item:
+            return context.current_item[name]
+        return f"value_for_{name}"
+
+    def iter_items(self, context: Context) -> Iterator[dict[str, Any]]:
+        raise NotImplementedError
+
+
+class TestRequiredInputsAutoWiring:
+    def test_auto_wires_required_input_from_upstream(self):
+        """required_inputs are resolved from upstream and merged into mapped_item."""
+        primary = MockProvider(
+            name="primary",
+            provided_fields=[
+                FieldDescriptor("repo_tree", "repository"),
+                FieldDescriptor("build_system", "dataset"),
+            ],
+            field_values={"repo_tree": ["build.gradle", "src/main/java/App.java"],
+                          "build_system": "gradle"},
+            items=[{"id": 1}],
+        )
+        enrichment = RequiredInputsProvider(
+            name="enricher",
+            provided_fields=[FieldDescriptor("result", "")],
+            required_inputs=[
+                FieldDescriptor(name="repo_tree", required=True),
+            ],
+            field_values={
+                "result": lambda ctx: f"tree_len={len(ctx.current_item.get('repo_tree', []))}",
+            },
+        )
+        composite = CompositeProvider([
+            {"name": "data", "provider": primary, "role": "primary"},
+            {
+                "name": "enricher",
+                "provider": enrichment,
+                "item_mapping": {
+                    "build_system": "{{ providers.data.build_system }}",
+                },
+            },
+        ])
+
+        ctx = _make_context()
+        items = list(composite.iter_items(ctx))
+        ctx.current_item = items[0]
+
+        result = composite.get_field("result", "", ctx)
+        assert result == "tree_len=2"
+
+    def test_item_mapping_overrides_auto_wiring(self):
+        """Explicit item_mapping takes precedence over auto-wiring."""
+        primary = MockProvider(
+            name="primary",
+            provided_fields=[
+                FieldDescriptor("repo_tree", "repository"),
+            ],
+            field_values={"repo_tree": ["file1", "file2", "file3"]},
+            items=[{"id": 1}],
+        )
+        enrichment = RequiredInputsProvider(
+            name="enricher",
+            provided_fields=[FieldDescriptor("result", "")],
+            required_inputs=[
+                FieldDescriptor(name="repo_tree", required=True),
+            ],
+            field_values={
+                "result": lambda ctx: f"tree={ctx.current_item.get('repo_tree')}",
+            },
+        )
+        composite = CompositeProvider([
+            {"name": "data", "provider": primary, "role": "primary"},
+            {
+                "name": "enricher",
+                "provider": enrichment,
+                "item_mapping": {
+                    # Explicit mapping overrides auto-wiring
+                    "repo_tree": "{{ providers.data.repo_tree }}",
+                },
+            },
+        ])
+
+        ctx = _make_context()
+        items = list(composite.iter_items(ctx))
+        ctx.current_item = items[0]
+
+        # The Jinja2 template renders the list as a string
+        result = composite.get_field("result", "", ctx)
+        assert "file1" in result
+
+    def test_optional_input_skipped_when_unavailable(self):
+        """Optional required_inputs are silently skipped if no upstream provides them."""
+        primary = MockProvider(
+            name="primary",
+            provided_fields=[
+                FieldDescriptor("build_system", "dataset"),
+            ],
+            field_values={"build_system": "gradle"},
+            items=[{"id": 1}],
+        )
+        enrichment = RequiredInputsProvider(
+            name="enricher",
+            provided_fields=[FieldDescriptor("result", "")],
+            required_inputs=[
+                FieldDescriptor(name="repo_tree", required=False),
+            ],
+            field_values={
+                "result": lambda ctx: f"has_tree={ctx.current_item.get('repo_tree') is not None}",
+            },
+        )
+        composite = CompositeProvider([
+            {"name": "data", "provider": primary, "role": "primary"},
+            {
+                "name": "enricher",
+                "provider": enrichment,
+                "item_mapping": {
+                    "build_system": "{{ providers.data.build_system }}",
+                },
+            },
+        ])
+
+        ctx = _make_context()
+        items = list(composite.iter_items(ctx))
+        ctx.current_item = items[0]
+
+        # repo_tree is optional and not available — should not error
+        result = composite.get_field("result", "", ctx)
+        assert result == "has_tree=False"
+
+    def test_validate_required_inputs_raises_for_unsatisfied(self):
+        """prepare() raises when a mandatory required_input cannot be satisfied."""
+        primary = MockProvider(
+            name="primary",
+            provided_fields=[
+                FieldDescriptor("build_system", "dataset"),
+            ],
+            field_values={"build_system": "gradle"},
+            items=[{"id": 1}],
+        )
+        enrichment = RequiredInputsProvider(
+            name="enricher",
+            provided_fields=[FieldDescriptor("result", "")],
+            required_inputs=[
+                FieldDescriptor(name="nonexistent_field", required=True),
+            ],
+        )
+        composite = CompositeProvider([
+            {"name": "data", "provider": primary, "role": "primary"},
+            {"name": "enricher", "provider": enrichment},
+        ], validate=False)
+
+        with pytest.raises(CompositeProviderConfigError, match="nonexistent_field"):
+            composite.prepare()
+
+    def test_validate_optional_inputs_no_error(self):
+        """prepare() does not raise for optional required_inputs that can't be satisfied."""
+        primary = MockProvider(
+            name="primary",
+            provided_fields=[
+                FieldDescriptor("build_system", "dataset"),
+            ],
+            items=[{"id": 1}],
+        )
+        enrichment = RequiredInputsProvider(
+            name="enricher",
+            provided_fields=[FieldDescriptor("result", "")],
+            required_inputs=[
+                FieldDescriptor(name="nonexistent_field", required=False),
+            ],
+        )
+        composite = CompositeProvider([
+            {"name": "data", "provider": primary, "role": "primary"},
+            {"name": "enricher", "provider": enrichment},
+        ], validate=False)
+
+        # Should not raise
+        composite.prepare()

@@ -32,11 +32,16 @@ class ProviderMetadata:
         name: Provider name (e.g., "github_pull_requests").
         sources: List of data sources this provider supports.
         provided_fields: List of fields this provider can supply.
+        wildcard: When True, this provider can supply any field name
+            (used for auto-discovery providers like MetadataProvider
+            in ``fields: "auto"`` mode).
     """
 
     name: str
     sources: list[str]
     provided_fields: list[FieldDescriptor]
+    required_inputs: list[FieldDescriptor] = field(default_factory=list)
+    wildcard: bool = False
 
     def can_provide(self, name: str, source: str) -> bool:
         """Check if this provider can supply a specific field from a source.
@@ -49,6 +54,8 @@ class ProviderMetadata:
         Returns:
             True if the provider can supply this field from this source.
         """
+        if self.wildcard:
+            return True
         if not source:
             return any(f.name == name for f in self.provided_fields)
         return any(

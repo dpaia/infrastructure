@@ -1,8 +1,14 @@
-"""DPAIA Generator implementations."""
+"""DPAIA Generator implementations.
+
+.. deprecated::
+    ``DpaiaJvmGenerator`` and ``DpaiaSweProGenerator`` are deprecated.
+    Use :class:`~ee_bench_dpaia.unified_generator.EEBenchCodegenGenerator` instead.
+"""
 
 from __future__ import annotations
 
 import json
+import warnings
 from typing import Any, Iterator
 
 from ee_bench_generator import Generator, Provider
@@ -89,6 +95,9 @@ class DpaiaJvmGenerator(Generator):
     ) -> Iterator[dict[str, Any]]:
         """Generate DPAIA dataset records.
 
+        .. deprecated::
+            Use :class:`~ee_bench_dpaia.unified_generator.EEBenchCodegenGenerator` instead.
+
         Args:
             provider: The data provider to fetch fields from.
             context: Runtime context with selection and options.
@@ -96,6 +105,11 @@ class DpaiaJvmGenerator(Generator):
         Yields:
             DPAIA-format dataset records.
         """
+        warnings.warn(
+            "DpaiaJvmGenerator is deprecated, use EEBenchCodegenGenerator instead",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         for item in provider.iter_items(context):
             item_context = Context(
                 selection=context.selection,
@@ -207,6 +221,11 @@ class DpaiaSweProGenerator(Generator):
     def generate(
         self, provider: Provider, context: Context
     ) -> Iterator[dict[str, Any]]:
+        warnings.warn(
+            "DpaiaSweProGenerator is deprecated, use EEBenchCodegenGenerator instead",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         for item in provider.iter_items(context):
             item_context = Context(
                 selection=context.selection,

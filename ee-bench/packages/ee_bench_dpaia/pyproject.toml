@@ -11,6 +11,7 @@ dependencies = [
 [project.entry-points."ee_bench_generator.generators"]
 dpaia_jvm = "ee_bench_dpaia:DpaiaJvmGenerator"
 dpaia_swe_pro = "ee_bench_dpaia:DpaiaSweProGenerator"
+ee_bench_codegen = "ee_bench_dpaia:EEBenchCodegenGenerator"
 
 [build-system]
 requires = ["hatchling"]

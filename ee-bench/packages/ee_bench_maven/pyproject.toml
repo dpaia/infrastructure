@@ -1,7 +1,7 @@
 [project]
-name = "ee_bench_metadata"
+name = "ee_bench_maven"
 version = "0.1.0"
-description = "Metadata enrichment provider for ee_bench - extracts metadata from embedded HTML comment blocks"
+description = "Maven build-system provider for ee_bench - computes is_maven and enriches test names"
 requires-python = ">=3.11"
 dependencies = [
     "ee_bench_generator",
@@ -13,15 +13,14 @@ dev = [
 ]
 
 [project.entry-points."ee_bench_generator.providers"]
-metadata = "ee_bench_metadata:MetadataProvider"
-markdown_sections = "ee_bench_metadata:SectionProvider"
+maven = "ee_bench_maven:MavenProvider"
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/ee_bench_metadata"]
+packages = ["src/ee_bench_maven"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

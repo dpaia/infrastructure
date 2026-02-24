@@ -24,8 +24,8 @@ generators:
     options:
       target_org: dpaia
       github_token: ${GITHUB_TOKEN}
-      dataset_label: swe-bench-pro
-      state_file: ".state/swe-bench-pro.json"
+      dataset_label: ee-bench-codegen
+      state_file: ".state/ee-bench-codegen.json"
       inter_operation_delay: 1.0
 
       # Repository visibility for forks: "public" or "private"
@@ -74,11 +74,11 @@ generators:
                      dockerhub_tag=dockerhub_tag,
                      before_repo_set_cmd=before_repo_set_cmd,
                      selected_test_files_to_run=selected_test_files_to_run,
-                     created_at=created_at, dataset="swe-bench-pro") }}
+                     created_at=created_at, dataset="ee-bench") }}
 
       # PR labels: mix of static values and dynamic values from dataset fields
       labels:
-        - swe-bench-pro
+        - ee-bench-codegen
         - "{{ repo_language }}"
         - "{{ issue_categories }}"
         - "{{ issue_specificity }}"
@@ -89,25 +89,25 @@ generators:
 
       # GitHub Projects V2: auto-create if needed
       projects:
-        - name: "SWE Pro"
+        - name: "EE Bench"
           scope: all
         - name: "{{ repo_language }}"
           scope: language
     output:
       format: jsonl
-      path: results/swe-bench-pro-import.jsonl
+      path: results/ee-bench-codegen-import.jsonl
 
   - name: attachment_uploader
     type: github_attachment
     options:
       target_org: dpaia
       github_token: ${GITHUB_TOKEN}
-      dataset_label: swe-bench-pro
-      attachment_dir: ".swe-bench-pro"
+      dataset_label: ee-bench
+      attachment_dir: ".ee-bench"
       inter_operation_delay: 0.5
     output:
       format: jsonl
-      path: results/swe-bench-pro-attachments.jsonl
+      path: results/ee-bench-attachments.jsonl
 
 selection:
   resource: dataset_items

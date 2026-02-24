@@ -190,3 +190,79 @@ class TestMetadataProvider:
         ctx2 = _make_context(other_body)
         result = self.provider.get_field("instance_id", "pull_request", ctx2)
         assert result == "other__id__99"
+
+
+# ---------------------------------------------------------------------------
+# MetadataProvider auto-discovery mode tests
+# ---------------------------------------------------------------------------
+
+
+class TestMetadataProviderAutoDiscovery:
+    def setup_method(self) -> None:
+        self.provider = MetadataProvider()
+
+    def test_prepare_auto_mode(self) -> None:
+        self.provider.prepare(fields="auto")
+        assert self.provider._auto_discover is True
+        assert self.provider._fields == []
+
+    def test_prepare_star_mode(self) -> None:
+        self.provider.prepare(fields="*")
+        assert self.provider._auto_discover is True
+
+    def test_auto_mode_metadata_has_wildcard_flag(self) -> None:
+        self.provider.prepare(fields="auto")
+        assert self.provider.metadata.wildcard is True
+        assert self.provider.metadata.provided_fields == []
+
+    def test_auto_mode_can_provide_any_field(self) -> None:
+        self.provider.prepare(fields="auto")
+        meta = self.provider.metadata
+        assert meta.can_provide("anything", "pull_request")
+        assert meta.can_provide("nonexistent_field", "")
+
+    def test_auto_mode_get_field_returns_parsed_values(self) -> None:
+        self.provider.prepare(fields="auto")
+        ctx = _make_context(SAMPLE_BODY)
+        assert self.provider.get_field("instance_id", "pull_request", ctx) == "protonmail__webclients__42"
+        assert self.provider.get_field("repo", "pull_request", ctx) == "protonmail/webclients"
+        assert self.provider.get_field("version", "pull_request", ctx) == "1.0"
+
+    def test_auto_mode_get_field_missing_key_returns_empty(self) -> None:
+        self.provider.prepare(fields="auto")
+        ctx = _make_context(SAMPLE_BODY)
+        assert self.provider.get_field("nonexistent_key", "pull_request", ctx) == ""
+
+    def test_auto_mode_get_field_no_metadata_block(self) -> None:
+        self.provider.prepare(fields="auto")
+        ctx = _make_context(BODY_NO_METADATA)
+        assert self.provider.get_field("any_field", "pull_request", ctx) == ""
+
+    def test_get_discovered_field_names_after_parsing(self) -> None:
+        self.provider.prepare(fields="auto")
+        ctx = _make_context(SAMPLE_BODY)
+        # Trigger parsing
+        self.provider.get_field("instance_id", "pull_request", ctx)
+        discovered = self.provider.get_discovered_field_names()
+        assert discovered == {
+            "instance_id", "repo", "base_commit", "version",
+            "FAIL_TO_PASS", "PASS_TO_PASS", "repo_language",
+        }
+
+    def test_get_discovered_field_names_before_parsing(self) -> None:
+        self.provider.prepare(fields="auto")
+        assert self.provider.get_discovered_field_names() == set()
+
+    def test_explicit_mode_no_wildcard(self) -> None:
+        self.provider.prepare(fields=["instance_id", "repo"])
+        assert self.provider.metadata.wildcard is False
+
+    def test_explicit_mode_get_discovered_field_names(self) -> None:
+        """get_discovered_field_names works in explicit mode too."""
+        self.provider.prepare(fields=["instance_id"])
+        ctx = _make_context(SAMPLE_BODY)
+        self.provider.get_field("instance_id", "pull_request", ctx)
+        # Returns all parsed keys, not just configured fields
+        discovered = self.provider.get_discovered_field_names()
+        assert "instance_id" in discovered
+        assert "repo" in discovered

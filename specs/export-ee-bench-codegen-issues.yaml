@@ -1,12 +1,17 @@
-# Export SWE-bench Pro datapoints from dpaia PRs back to JSONL
-# Usage: ee-dataset --config specs/export-swe-bench-pro.yaml generate
+# Export EE-bench codegen datapoints from dpaia issues to JSONL
+# Uses auto metadata discovery for issues with embedded METADATA blocks
+# Usage: ee-dataset --config specs/export-ee-bench-codegen-issues.yaml generate
+# Test single issue: ee-dataset --config specs/export-ee-bench-codegen-issues.yaml \
+#   -S REPO=dpaia/spring-boot-microshop -S 'ISSUE_NUMBERS=[1]' generate
 
 providers:
   - name: github
-    type: github_pull_requests
+    type: github_issues
     role: primary
     options:
       token: ${GITHUB_TOKEN}
+      fetch_commits: true
+      parse_comments: true
 
   - name: sections
     type: markdown_sections
@@ -45,33 +50,29 @@ providers:
       FAIL_TO_PASS: "{{ fields.FAIL_TO_PASS }}"
       PASS_TO_PASS: "{{ fields.PASS_TO_PASS }}"
 
-generators:
-  - name: ee-bench-codegen
-    type: ee_bench_codegen
-    output:
-      format: jsonl
-      path: datasets/ee-bench-codegen_export.jsonl
-
-  - name: attachment_downloader
-    type: attachment_export
-    options:
-      github_token: ${GITHUB_TOKEN}
-      dataset_label: ee-bench-codegen
-      attachment_dir: ".ee-bench"
-      output_dir: "attachments"
-    output:
-      format: jsonl
-      path: results/ee-bench-codegen-attachment-export.jsonl
+generator:
+  name: ee_bench_codegen
+  options:
+    version: "{{ VERSION | default('1.0') }}"
+    tags:
+      exclude:
+        - "ee-bench-*"
+        - Epic
+        - Review
+        - Invalid
+        - Wontfix
+        - Verified
+        - Bugfix
+        - Documentation
 
 selection:
-  resource: pull_requests
+  resource: issues
   filters:
-    repos:
-      - "dpaia/*"
-    labels:
-      - ee-bench-codegen
+    repo: "{{ REPO | default('dpaia/*') }}"
+    labels: [ee-bench-codegen]
+    issue_numbers: {{ ISSUE_NUMBERS | default('[]') }}
     state: open
 
 output:
   format: jsonl
-  path: datasets/swe_bench_pro_export.jsonl
+  path: datasets/ee-bench-codegen-issues_export.jsonl

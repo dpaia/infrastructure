@@ -22,6 +22,10 @@ from ee_bench_generator.metadata import (
 #   {{ providers.swe_bench_data.repo | split('/') | first }}
 _PROVIDER_REF_PATTERN = re.compile(r"providers\.(\w+)\.(\w+)")
 
+# Pattern to extract bare field references from item_mapping templates:
+#   {{ fields.FAIL_TO_PASS }}
+_FIELDS_REF_PATTERN = re.compile(r"fields\.(\w+)")
+
 
 class CyclicDependencyError(EEBenchError):
     """Raised when provider dependency graph contains a cycle."""
@@ -57,11 +61,28 @@ def _build_dependency_graph(
     return graph
 
 
-def _topological_sort(graph: dict[str, list[str]]) -> list[str]:
-    """Topological sort of provider names. Raises CyclicDependencyError on cycles."""
+def _topological_sort(
+    graph: dict[str, list[str]],
+    declaration_order: list[str] | None = None,
+) -> list[str]:
+    """Topological sort of provider names. Raises CyclicDependencyError on cycles.
+
+    When *declaration_order* is given it is used as a tiebreaker for
+    independent nodes (nodes that become ready at the same level).
+    """
     try:
         ts = graphlib.TopologicalSorter(graph)
-        return list(ts.static_order())
+        if declaration_order is None:
+            return list(ts.static_order())
+        ts.prepare()
+        result: list[str] = []
+        while ts.is_active():
+            ready = set(ts.get_ready())
+            for name in declaration_order:
+                if name in ready:
+                    result.append(name)
+                    ts.done(name)
+        return result
     except graphlib.CycleError as exc:
         cycle = list(exc.args[1]) if len(exc.args) > 1 else []
         raise CyclicDependencyError(cycle) from exc
@@ -132,12 +153,15 @@ class CompositeProvider(Provider):
 
         # Build dependency DAG and topological order
         dep_graph = _build_dependency_graph(provider_configs)
-        self._dependency_order = _topological_sort(dep_graph)
+        declaration_order = [cfg["name"] for cfg in provider_configs]
+        self._dependency_order = _topological_sort(dep_graph, declaration_order)
 
         # Build field routing table: (field_name, source) -> provider_name
         self._field_routing: dict[tuple[str, str], str] = {}
         # Name-only routing: field_name -> (provider_name, source)
         self._field_routing_by_name: dict[str, tuple[str, str]] = {}
+        # Field chain: field_name -> [(provider_name, source), ...] in dependency order
+        self._field_chain_by_name: dict[str, list[tuple[str, str]]] = {}
         # Process in dependency order so that enrichment providers can override
         # fields from providers they depend on. Primary provider's fields are base.
         for pname in self._dependency_order:
@@ -145,6 +169,16 @@ class CompositeProvider(Provider):
             for fd in prov.metadata.provided_fields:
                 self._field_routing[(fd.name, fd.source)] = pname
                 self._field_routing_by_name[fd.name] = (pname, fd.source)
+                self._field_chain_by_name.setdefault(fd.name, []).append(
+                    (pname, fd.source)
+                )
+
+        # Track wildcard providers (lowest routing priority)
+        self._wildcard_providers: list[tuple[str, Provider]] = []
+        for pname in self._dependency_order:
+            prov = self._providers_by_name[pname]
+            if prov.metadata.wildcard:
+                self._wildcard_providers.append((pname, prov))
 
         # Per-item field cache: (item_key, provider_name, field_name, source) -> value
         self._field_cache: dict[tuple[Any, str, str, str], Any] = {}
@@ -179,10 +213,15 @@ class CompositeProvider(Provider):
                     seen.add(key)
             all_sources.update(prov.metadata.sources)
 
+        has_wildcard = any(
+            self._providers_by_name[pname].metadata.wildcard
+            for pname in self._dependency_order
+        )
         return ProviderMetadata(
             name="composite",
             sources=sorted(all_sources),
             provided_fields=all_fields,
+            wildcard=has_wildcard,
         )
 
     def prepare(self, **options: Any) -> None:
@@ -217,11 +256,53 @@ class CompositeProvider(Provider):
         # MetadataProvider) only declare their provided_fields after prepare().
         self._field_routing = {}
         self._field_routing_by_name = {}
+        self._field_chain_by_name = {}
+        self._wildcard_providers = []
         for pname in self._dependency_order:
             prov = self._providers_by_name[pname]
+            if prov.metadata.wildcard:
+                self._wildcard_providers.append((pname, prov))
             for fd in prov.metadata.provided_fields:
                 self._field_routing[(fd.name, fd.source)] = pname
                 self._field_routing_by_name[fd.name] = (pname, fd.source)
+                self._field_chain_by_name.setdefault(fd.name, []).append(
+                    (pname, fd.source)
+                )
+
+        self._validate_required_inputs()
+
+    def _validate_required_inputs(self) -> None:
+        """Verify that all mandatory required_inputs can be satisfied by upstream providers.
+
+        For each enrichment provider, check that every required_input with
+        ``required=True`` can be resolved from providers earlier in the
+        dependency order (or from the item_mapping).  Raises
+        ``CompositeProviderConfigError`` if an unsatisfied mandatory input is found.
+        """
+        for pname in self._dependency_order:
+            if pname == self._primary_name:
+                continue
+            prov = self._providers_by_name[pname]
+            cfg = self._configs_by_name[pname]
+            item_mapping = cfg.get("item_mapping", {})
+            for ri in prov.metadata.required_inputs:
+                if ri.name in item_mapping:
+                    continue  # explicitly mapped — OK
+                if not ri.required:
+                    continue  # optional — skip validation
+                # Check if any upstream provider can supply the field
+                can_resolve = (
+                    ri.name in self._field_routing_by_name
+                    or any(
+                        wc_prov.metadata.can_provide(ri.name, "")
+                        for _, wc_prov in self._wildcard_providers
+                    )
+                )
+                if not can_resolve:
+                    raise CompositeProviderConfigError(
+                        f"Provider '{pname}' requires input '{ri.name}' "
+                        f"but no upstream provider can supply it"
+                    )
 
     def iter_items(self, context: Context) -> Iterator[dict[str, Any]]:
         """Delegate to primary provider's iter_items(). Clears per-item cache."""
@@ -238,6 +319,10 @@ class CompositeProvider(Provider):
         2. If primary, delegate directly
         3. If enrichment, resolve item_mapping, create mapped context, delegate
 
+        When multiple providers declare the same field (chain length > 1),
+        the **last** provider in chain order is tried first.  If it returns
+        ``None`` the previous provider is tried, and so on (chain fallback).
+
         When *source* is empty, the field is resolved by name only using
         ``_field_routing_by_name``.  The concrete source discovered there is
         forwarded to ``_resolve_field`` so that downstream providers always
@@ -249,24 +334,71 @@ class CompositeProvider(Provider):
             return self._field_cache[cache_key]
 
         if not source:
+            chain = self._field_chain_by_name.get(name)
+            if chain and len(chain) > 1:
+                # Multi-provider chain: try in reverse order (last wins)
+                value = self._resolve_field_chain(name, chain, context)
+                if value is not None:
+                    self._field_cache[cache_key] = value
+                    return value
+                # All returned None — try wildcard
+                for wc_name, wc_prov in self._wildcard_providers:
+                    if wc_prov.metadata.can_provide(name, ""):
+                        wc_source = wc_prov.metadata.sources[0] if wc_prov.metadata.sources else ""
+                        value = self._resolve_field(wc_name, name, wc_source, context)
+                        if value is not None:
+                            self._field_cache[cache_key] = value
+                            return value
+                raise ProviderError(
+                    f"All chain providers returned None for field '{name}'"
+                )
+
             entry = self._field_routing_by_name.get(name)
             if entry is None:
-                raise ProviderError(
-                    f"No provider can supply field '{name}' (source-less lookup)"
-                )
-            owner_name, resolved_source = entry
+                # Fall through to wildcard providers
+                if self._wildcard_providers:
+                    wc_name, wc_prov = self._wildcard_providers[0]
+                    owner_name = wc_name
+                    resolved_source = wc_prov.metadata.sources[0] if wc_prov.metadata.sources else ""
+                else:
+                    raise ProviderError(
+                        f"No provider can supply field '{name}' (source-less lookup)"
+                    )
+            else:
+                owner_name, resolved_source = entry
         else:
             routing_key = (name, source)
             owner_name = self._field_routing.get(routing_key)
             if owner_name is None:
-                raise ProviderError(
-                    f"No provider can supply field '{name}' from source '{source}'"
-                )
+                # Fall through to wildcard providers
+                if self._wildcard_providers:
+                    wc_name, _wc_prov = self._wildcard_providers[0]
+                    owner_name = wc_name
+                else:
+                    raise ProviderError(
+                        f"No provider can supply field '{name}' from source '{source}'"
+                    )
             resolved_source = source
 
         value = self._resolve_field(owner_name, name, resolved_source, context)
         self._field_cache[cache_key] = value
         return value
+
+    def _resolve_field_chain(
+        self,
+        name: str,
+        chain: list[tuple[str, str]],
+        context: Context,
+    ) -> Any | None:
+        """Try providers in reverse chain order; return first non-None value."""
+        for pname, psource in reversed(chain):
+            try:
+                value = self._resolve_field(pname, name, psource, context)
+                if value is not None:
+                    return value
+            except ProviderError:
+                continue
+        return None
 
     def _resolve_field(
         self, provider_name: str, name: str, source: str, context: Context
@@ -288,7 +420,23 @@ class CompositeProvider(Provider):
             )
 
         # Resolve upstream fields referenced in item_mapping templates
-        mapped_item = self._resolve_item_mapping(item_mapping, context)
+        mapped_item = self._resolve_item_mapping(
+            item_mapping, context, for_provider=provider_name
+        )
+
+        # Auto-wire required_inputs not already in mapped_item
+        provider = self._providers_by_name[provider_name]
+        for ri in provider.metadata.required_inputs:
+            if ri.name not in mapped_item:
+                try:
+                    value = self._resolve_field_upstream(
+                        ri.name, provider_name, context
+                    )
+                    mapped_item[ri.name] = value
+                except ProviderError:
+                    if ri.required:
+                        raise
+                    # Optional input — silently skip
 
         # Create a new context with the mapped item
         mapped_context = Context(
@@ -301,8 +449,49 @@ class CompositeProvider(Provider):
             name, source, mapped_context
         )
 
+    def _resolve_field_upstream(
+        self, name: str, current_provider: str, context: Context
+    ) -> Any:
+        """Resolve a field from providers BEFORE *current_provider* in the chain.
+
+        This prevents circular dependency when a provider's ``item_mapping``
+        references ``{{ fields.X }}`` — it only looks at providers earlier
+        in the chain.
+        """
+        chain = self._field_chain_by_name.get(name, [])
+        # Find current provider's position
+        current_idx = next(
+            (i for i, (p, _) in enumerate(chain) if p == current_provider), -1
+        )
+        # Try providers before current position, in reverse order
+        end = current_idx - 1 if current_idx >= 0 else len(chain) - 1
+        for i in range(end, -1, -1):
+            pname, psource = chain[i]
+            try:
+                value = self._resolve_field(pname, name, psource, context)
+                if value is not None:
+                    return value
+            except ProviderError:
+                continue
+        # Not in chain — try routing table (primary provider)
+        entry = self._field_routing_by_name.get(name)
+        if entry:
+            pname, psource = entry
+            if pname != current_provider:
+                return self._resolve_field(pname, name, psource, context)
+        # Fall through to wildcard
+        for wc_name, wc_prov in self._wildcard_providers:
+            if wc_prov.metadata.can_provide(name, ""):
+                wc_source = wc_prov.metadata.sources[0] if wc_prov.metadata.sources else ""
+                return self._resolve_field(wc_name, name, wc_source, context)
+        raise ProviderError(f"No upstream provider for field '{name}'")
+
     def _resolve_item_mapping(
-        self, item_mapping: dict[str, str], context: Context
+        self,
+        item_mapping: dict[str, str],
+        context: Context,
+        *,
+        for_provider: str | None = None,
     ) -> dict[str, Any]:
         """Resolve item_mapping templates by fetching upstream provider fields."""
         # Build the providers namespace for Jinja2 rendering
@@ -343,15 +532,43 @@ class CompositeProvider(Provider):
 
                 providers_ns[dep_prov_name][field_name] = value
 
+        # Build the fields proxy for {{ fields.X }} references
+        fields_proxy = _FieldsProxy(self, context, for_provider) if for_provider else None
+
+        # Eagerly resolve any {{ fields.X }} references so that the Jinja2
+        # template receives plain values (avoids StrictUndefined issues).
+        fields_ns: dict[str, Any] = {}
+        if fields_proxy is not None:
+            for template_str in item_mapping.values():
+                for match in _FIELDS_REF_PATTERN.finditer(str(template_str)):
+                    fname = match.group(1)
+                    if fname not in fields_ns:
+                        fields_ns[fname] = fields_proxy._resolve(fname)
+
         # Render each template in item_mapping
         mapped_item: dict[str, Any] = {}
         for field_name, template_str in item_mapping.items():
             tmpl = self._jinja_env.from_string(str(template_str))
-            rendered = tmpl.render(providers=providers_ns)
+            rendered = tmpl.render(providers=providers_ns, fields=fields_ns)
             # Try to convert numeric strings back to numbers
             mapped_item[field_name] = _coerce_value(rendered)
 
         return mapped_item
+
+    def get_extra_fields(self, context: Context) -> dict[str, Any]:
+        """Get all fields from wildcard providers not in the standard routing table.
+
+        This allows generators to collect dynamically-discovered fields
+        (e.g. from MetadataProvider in auto mode) that weren't declared
+        at configuration time.
+        """
+        result: dict[str, Any] = {}
+        for pname, prov in self._wildcard_providers:
+            if hasattr(prov, "get_discovered_field_names"):
+                for field_name in prov.get_discovered_field_names():
+                    if field_name not in self._field_routing_by_name and field_name not in result:
+                        result[field_name] = self.get_field(field_name, "", context)
+        return result
 
     def _find_field_source(self, provider_name: str, field_name: str) -> str:
         """Find the source for a field from a specific provider."""
@@ -359,6 +576,9 @@ class CompositeProvider(Provider):
         for fd in prov.metadata.provided_fields:
             if fd.name == field_name:
                 return fd.source
+        # Wildcard providers can serve any field
+        if prov.metadata.wildcard:
+            return prov.metadata.sources[0] if prov.metadata.sources else ""
         # Field might be in current_item (primary provider's iter_items output)
         # Use a generic source
         if provider_name == self._primary_name:
@@ -368,6 +588,32 @@ class CompositeProvider(Provider):
         raise ProviderError(
             f"Provider '{provider_name}' has no field '{field_name}' in its metadata"
         )
+
+
+class _FieldsProxy:
+    """Lazy proxy for ``{{ fields.X }}`` references in Jinja2 templates.
+
+    Resolves fields from providers *upstream* of the current provider
+    to prevent circular dependencies.
+    """
+
+    def __init__(
+        self,
+        composite: CompositeProvider,
+        context: Context,
+        exclude_provider: str | None,
+    ) -> None:
+        self._composite = composite
+        self._context = context
+        self._exclude_provider = exclude_provider
+
+    def _resolve(self, name: str) -> Any:
+        return self._composite._resolve_field_upstream(
+            name, self._exclude_provider, self._context
+        )
+
+    def __getattr__(self, name: str) -> Any:
+        return self._resolve(name)
 
 
 def _coerce_value(value: str) -> Any:

@@ -15,7 +15,6 @@ providers:
     options:
       fetch_commits: true          # Enable commit fetching from Timeline API
       parse_comments: true         # Parse test fields from comments
-      detect_build_system: true    # Detect Maven/Gradle build system
 
   - name: patch_splitter
     type: patch_splitter
@@ -23,8 +22,7 @@ providers:
       patch: "{{ providers.github.patch }}"
 
 generator:
-  name: dpaia_jvm
-  type: dataset
+  name: ee_bench_codegen
   options:
     version: "${VERSION:-1}"
 

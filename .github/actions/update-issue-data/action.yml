@@ -214,26 +214,31 @@ runs:
         VERSION: ${{ steps.get-version-value.outputs.field_value }}
       run: |
         chmod +x .github/python/${{ inputs.generator }}.py
+        # Write data to a temp file to avoid ARG_MAX limits with large patches
+        DATA_FILE="${RUNNER_TEMP}/data_value_${ISSUE_NUMBER}.json"
+        .github/python/${{ inputs.generator }}.py > "$DATA_FILE"
+        echo "data_value_file=${DATA_FILE}" >> $GITHUB_OUTPUT
         echo "data_value<<EOF" >> $GITHUB_OUTPUT
-        .github/python/${{ inputs.generator }}.py >> $GITHUB_OUTPUT
+        cat "$DATA_FILE" >> $GITHUB_OUTPUT
         echo "EOF" >> $GITHUB_OUTPUT
-        # also extract version for later numeric update
-        if command -v jq >/dev/null 2>&1; then
-          VER=$(echo "$DATA_VALUE" | jq -r '.version // empty')
-          echo "version_value=${VER}" >> $GITHUB_OUTPUT
-        fi
 
     - name: Check for errors
       id: check-error
       shell: bash
       env:
-        DATA_VALUE: ${{ steps.generate-data.outputs.data_value }}
+        DATA_VALUE_FILE: ${{ steps.generate-data.outputs.data_value_file }}
         EXTRACT_ERROR: ${{ steps.extract-fields.outputs.has_error }}
         EMPTY_TEST_FIELDS: ${{ steps.check-test-fields.outputs.empty_test_fields }}
         FAIL_TO_PASS: ${{ steps.extract-fields.outputs.fail_to_pass }}
         PASS_TO_PASS: ${{ steps.extract-fields.outputs.pass_to_pass }}
       run: |
-        if [ "$EXTRACT_ERROR" == "true" ] || [ "$EMPTY_TEST_FIELDS" == "true" ] || ([ -n "$DATA_VALUE" ] && echo "$DATA_VALUE" | jq -e '.has_error == true' > /dev/null 2>&1); then
+        HAS_DATA_ERROR=false
+        if [ -n "$DATA_VALUE_FILE" ] && [ -f "$DATA_VALUE_FILE" ]; then
+          if jq -e '.has_error == true' "$DATA_VALUE_FILE" > /dev/null 2>&1; then
+            HAS_DATA_ERROR=true
+          fi
+        fi
+        if [ "$EXTRACT_ERROR" == "true" ] || [ "$EMPTY_TEST_FIELDS" == "true" ] || [ "$HAS_DATA_ERROR" == "true" ]; then
           if [ "$EMPTY_TEST_FIELDS" == "true" ]; then
             echo "Both FAIL_TO_PASS and PASS_TO_PASS are empty."
           else
@@ -275,7 +280,7 @@ runs:
         organization: ${{ inputs.organization }}
         repository: ${{ inputs.repository }}
         issue_id: ${{ inputs.issue_id }}
-        data_value: ${{ steps.generate-data.outputs.data_value }}
+        data_value_file: ${{ steps.generate-data.outputs.data_value_file }}
         title: ${{ steps.generate-commit-message.outputs.title }}
         commit_message: ${{ steps.generate-commit-message.outputs.commit_message }}
         github_token: ${{ inputs.github_token }}
@@ -325,14 +330,13 @@ runs:
       if: inputs.update_status == 'true'
       shell: bash
       env:
-        DATA_VALUE: ${{ steps.generate-data.outputs.data_value }}
+        DATA_VALUE_FILE: ${{ steps.generate-data.outputs.data_value_file }}
         HAS_ERROR: ${{ steps.check-error.outputs.has_error }}
       run: |
-        if [ "$HAS_ERROR" = "true" ] || [ -z "$DATA_VALUE" ]; then
+        if [ "$HAS_ERROR" = "true" ] || [ -z "$DATA_VALUE_FILE" ] || [ ! -f "$DATA_VALUE_FILE" ]; then
           echo "value=1" >> $GITHUB_OUTPUT
         else
-          V=$(echo "$DATA_VALUE" | jq -r '.version // "1"')
-          # convert to number-like
+          V=$(jq -r '.version // "1"' "$DATA_VALUE_FILE")
           V_NUM=$(echo "$V" | awk '{print $1 + 0}')
           if [ -z "$V_NUM" ]; then V_NUM=1; fi
           echo "value=$V_NUM" >> $GITHUB_OUTPUT

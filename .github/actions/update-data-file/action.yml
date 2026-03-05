@@ -12,8 +12,8 @@ inputs:
   issue_id:
     description: 'Issue number'
     required: true
-  data_value:
-    description: 'JSON data to be written to the file'
+  data_value_file:
+    description: 'Path to file containing JSON data to be written'
     required: true
   commit_message:
     description: 'Commit message for the file update'
@@ -56,7 +56,7 @@ runs:
       shell: bash
       env:
         GH_TOKEN: ${{ inputs.github_token }}
-        DATA_VALUE: ${{ inputs.data_value }}
+        DATA_VALUE_FILE: ${{ inputs.data_value_file }}
         ISSUE_ID: ${{ inputs.issue_id }}
         REPOSITORY: ${{ inputs.repository }}
         DATASET_REPO: ${{ inputs.dataset_repo }}
@@ -69,15 +69,14 @@ runs:
       run: |
         echo "Creating or updating repository file with JSON data..."
 
-        # Extract instance_id from the JSON data
-        INSTANCE_ID=$(echo "$DATA_VALUE" | jq -r '.instance_id')
+        # Extract instance_id from the JSON data file
+        INSTANCE_ID=$(jq -r '.instance_id' "$DATA_VALUE_FILE")
 
-        # Create a temporary file with the JSON data
         FILE_PATH="${REPOSITORY}/${INSTANCE_ID}.json"
 
         # Replace slashes with underscores for the local filename to avoid directory issues
         LOCAL_FILENAME="${FILE_PATH//\//__}"
-        echo "$DATA_VALUE" > "$LOCAL_FILENAME"
+        cp "$DATA_VALUE_FILE" "$LOCAL_FILENAME"
 
         # Create a temporary directory for the repository
         TEMP_DIR=$(mktemp -d)

@@ -12,8 +12,12 @@ inputs:
   item_id:
     description: 'Project item node ID'
     required: true
-  status:
-    description: 'Status value to set (e.g., "In progress", "Done", "Failed")'
+  field_name:
+    description: 'Single-select field name to update (e.g., "Status", "Priority")'
+    required: false
+    default: 'Status'
+  value:
+    description: 'Field value to set (e.g., "In progress", "Done", "Failed")'
     required: true
   github_token:
     description: 'GitHub token for API access'
@@ -35,7 +39,8 @@ runs:
         ORG_NAME: ${{ inputs.organization }}
         PROJECT_NUMBER: ${{ inputs.project_number }}
         ITEM_ID: ${{ inputs.item_id }}
-        STATUS_VALUE: ${{ inputs.status }}
+        FIELD_NAME: ${{ inputs.field_name }}
+        FIELD_VALUE: ${{ inputs.value }}
       run: |
         echo "Resolving project ID for $ORG_NAME project #$PROJECT_NUMBER..."
         project_id=$(gh api graphql -f query='
@@ -52,7 +57,7 @@ runs:
         fi
         echo "project_id=$project_id" >> $GITHUB_OUTPUT
 
-        echo "Resolving Status field ID and option ID for '$STATUS_VALUE'..."
+        echo "Resolving '$FIELD_NAME' field ID and option ID for '$FIELD_VALUE'..."
         FIELDS_JSON=$(gh api graphql -f query='
           query($project: ID!) {
             node(id: $project) {
@@ -70,22 +75,24 @@ runs:
             }
           }' -f project="$project_id")
 
-        FIELD_ID=$(echo "$FIELDS_JSON" | jq -r '.data.node.fields.nodes[] | select(.name == "Status") | .id')
+        FIELD_ID=$(echo "$FIELDS_JSON" | jq -r --arg fn "$FIELD_NAME" \
+          '.data.node.fields.nodes[] | select(.name == $fn) | .id')
         if [ -z "$FIELD_ID" ] || [ "$FIELD_ID" = "null" ]; then
-          echo "Error: Status field not found in project" >&2
+          echo "Error: field '$FIELD_NAME' not found in project" >&2
           exit 1
         fi
 
-        OPTION_ID=$(echo "$FIELDS_JSON" | jq -r --arg val "$STATUS_VALUE" \
-          '.data.node.fields.nodes[] | select(.name == "Status") | .options[] | select(.name == $val) | .id')
+        OPTION_ID=$(echo "$FIELDS_JSON" | jq -r --arg fn "$FIELD_NAME" --arg val "$FIELD_VALUE" \
+          '.data.node.fields.nodes[] | select(.name == $fn) | .options[] | select(.name == $val) | .id')
         if [ -z "$OPTION_ID" ] || [ "$OPTION_ID" = "null" ]; then
-          echo "Error: Status option '$STATUS_VALUE' not found" >&2
+          echo "Error: option '$FIELD_VALUE' not found for field '$FIELD_NAME'" >&2
           echo "Available options:"
-          echo "$FIELDS_JSON" | jq -r '.data.node.fields.nodes[] | select(.name == "Status") | .options[].name'
+          echo "$FIELDS_JSON" | jq -r --arg fn "$FIELD_NAME" \
+            '.data.node.fields.nodes[] | select(.name == $fn) | .options[].name'
           exit 1
         fi
 
-        echo "Setting Status='$STATUS_VALUE' (field=$FIELD_ID, option=$OPTION_ID) on item $ITEM_ID..."
+        echo "Setting $FIELD_NAME='$FIELD_VALUE' (field=$FIELD_ID, option=$OPTION_ID) on item $ITEM_ID..."
         gh api graphql -f query='
           mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!, $optionId: String!) {
             updateProjectV2ItemFieldValue(
@@ -98,4 +105,4 @@ runs:
             ) { projectV2Item { id } }
           }' -f projectId="$project_id" -f itemId="$ITEM_ID" -f fieldId="$FIELD_ID" -f optionId="$OPTION_ID"
 
-        echo "Status set to '$STATUS_VALUE' on item $ITEM_ID"
+        echo "$FIELD_NAME set to '$FIELD_VALUE' on item $ITEM_ID"

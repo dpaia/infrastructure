@@ -107,10 +107,37 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: "verification-${{ inputs.organization }}-${{ inputs.repository }}-${{ inputs.pr_number }}"
+          name: "verification-${{ inputs.organization }}-${{ inputs.repository }}-${{ inputs.pr_number }}-${{ inputs.run_key }}"
           path: ${{ runner.temp }}/validation-output.txt
           if-no-files-found: warn
           retention-days: 7
+
+      - name: Comment on source PR
+        if: always()
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
+          RESULT: ${{ steps.validate.outputs.result }}
+          INSTANCE_ID: ${{ steps.generate.outputs.instance_id }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          if [ "$RESULT" = "success" ]; then
+            ICON="✅"
+            MSG="Datapoint verification **passed**."
+          else
+            ICON="❌"
+            MSG="Datapoint verification **failed**."
+          fi
+
+          COMMENT_BODY="${ICON} ${MSG}
+
+          **Instance:** \`${INSTANCE_ID}\`
+          **Run key:** \`${{ inputs.run_key }}\`
+          **Details:** [Workflow run](${RUN_URL})"
+
+          gh pr comment "${{ inputs.pr_number }}" \
+            --repo "${{ inputs.organization }}/${{ inputs.repository }}" \
+            --body "$COMMENT_BODY" || true
 
       - name: Summary
         if: always()

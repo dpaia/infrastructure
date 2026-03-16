@@ -103,6 +103,33 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
 
+      - name: Comment on dataset PR
+        if: always()
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
+          RESULT: ${{ steps.validate.outputs.result }}
+          INSTANCE_ID: ${{ steps.detect.outputs.instance_id }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          if [ "$RESULT" = "success" ]; then
+            ICON="✅"
+            MSG="Datapoint validation **passed**."
+          else
+            ICON="❌"
+            MSG="Datapoint validation **failed**."
+          fi
+
+          COMMENT_BODY="${ICON} ${MSG}
+
+          **Instance:** \`${INSTANCE_ID}\`
+          **Run key:** \`${{ inputs.run_key }}\`
+          **Details:** [Workflow run](${RUN_URL})"
+
+          gh pr comment "${{ inputs.pr_number }}" \
+            --repo "${{ inputs.organization }}/${{ inputs.repository }}" \
+            --body "$COMMENT_BODY" || true
+
       - name: Summary
         if: always()
         run: |

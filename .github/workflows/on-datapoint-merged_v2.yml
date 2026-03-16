@@ -63,24 +63,40 @@ jobs:
           DATA_PERMALINK="https://github.com/${DATASET_REPO}/blob/main/${EVAL_TYPE}/${INSTANCE_ID}/datapoint.json"
           echo "data_permalink=$DATA_PERMALINK" >> $GITHUB_OUTPUT
 
-      - name: Update Dataset Metadata project to Done
+      - name: Query Dataset Metadata project items
+        id: dataset-items
+        uses: ./.github/actions/query-project-items
+        with:
+          organization: dpaia
+          project_number: '21'
+          github_token: ${{ secrets.PROJECT_TOKEN }}
+
+      - name: Find dataset PR item and update to Done
+        id: find-item
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
+          ITEMS_JSON: ${{ steps.dataset-items.outputs.items }}
           DATASET_REPO: "${{ inputs.organization }}/${{ inputs.repository }}"
           PR_NUMBER: ${{ inputs.pr_number }}
           DATA_PERMALINK: ${{ steps.metadata.outputs.data_permalink }}
         run: |
-          # Get dataset PR node ID
-          PR_NODE_ID=$(gh api graphql -f query='
-            query($owner: String!, $name: String!, $number: Int!) {
-              repository(owner: $owner, name: $name) {
-                pullRequest(number: $number) { id }
-              }
-            }' -f owner="${{ inputs.organization }}" -f name="${{ inputs.repository }}" -F number="$PR_NUMBER" \
-            --jq '.data.repository.pullRequest.id')
+          ITEMS_FILE="${RUNNER_TEMP}/dataset-items.json"
+          echo "$ITEMS_JSON" > "$ITEMS_FILE"
 
-          # Get Dataset Metadata project
+          # Find item by PR number and repo
+          ITEM_ID=$(jq -r --arg num "$PR_NUMBER" --arg repo "${{ inputs.repository }}" \
+            '.[] | select((.number | tostring) == $num and .repo == $repo) | .item_id' \
+            "$ITEMS_FILE" | head -1)
+
+          if [ -z "$ITEM_ID" ] || [ "$ITEM_ID" = "null" ]; then
+            echo "Warning: dataset PR not found in Dataset Metadata project, skipping status update"
+            exit 0
+          fi
+
+          echo "item_id=$ITEM_ID" >> $GITHUB_OUTPUT
+
+          # Update Data field with permalink
           PROJECT_ID=$(gh api graphql -f query='
             query($org: String!, $number: Int!) {
               organization(login: $org) {
@@ -88,36 +104,12 @@ jobs:
               }
             }' -f org="dpaia" -F number=21 --jq '.data.organization.projectV2.id')
 
-          # Find project item for this PR
-          ITEM_ID=$(gh api graphql -f query='
-            query($projectId: ID!) {
-              node(id: $projectId) {
-                ... on ProjectV2 {
-                  items(first: 100) {
-                    nodes {
-                      id
-                      content { ... on PullRequest { id } }
-                    }
-                  }
-                }
-              }
-            }' -f projectId="$PROJECT_ID" \
-            --jq ".data.node.items.nodes[] | select(.content.id == \"$PR_NODE_ID\") | .id")
-
-          if [ -z "$ITEM_ID" ] || [ "$ITEM_ID" = "null" ]; then
-            echo "Warning: dataset PR not found in Dataset Metadata project, skipping status update"
-            exit 0
-          fi
-
-          # Set Status to Done using set-project-status action pattern (inline)
-          # First get field + option IDs
           FIELDS_JSON=$(gh api graphql -f query='
             query($project: ID!) {
               node(id: $project) {
                 ... on ProjectV2 {
                   fields(first: 100) {
                     nodes {
-                      ... on ProjectV2SingleSelectField { id name options { id name } }
                       ... on ProjectV2Field { id name }
                     }
                   }
@@ -125,19 +117,6 @@ jobs:
               }
             }' -f project="$PROJECT_ID")
 
-          STATUS_FIELD_ID=$(echo "$FIELDS_JSON" | jq -r '.data.node.fields.nodes[] | select(.name == "Status") | .id')
-          DONE_OPTION_ID=$(echo "$FIELDS_JSON" | jq -r '.data.node.fields.nodes[] | select(.name == "Status") | .options[] | select(.name == "Done") | .id')
-
-          gh api graphql -f query='
-            mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!, $optionId: String!) {
-              updateProjectV2ItemFieldValue(
-                input: { projectId: $projectId, itemId: $itemId, fieldId: $fieldId, value: { singleSelectOptionId: $optionId } }
-              ) { projectV2Item { id } }
-            }' -f projectId="$PROJECT_ID" -f itemId="$ITEM_ID" -f fieldId="$STATUS_FIELD_ID" -f optionId="$DONE_OPTION_ID"
-
-          echo "Dataset Metadata status set to Done"
-
-          # Update Data field with permalink
           DATA_FIELD_ID=$(echo "$FIELDS_JSON" | jq -r '.data.node.fields.nodes[] | select(.name == "Data") | .id')
           if [ -n "$DATA_FIELD_ID" ] && [ "$DATA_FIELD_ID" != "null" ]; then
             gh api graphql -f query='
@@ -149,11 +128,21 @@ jobs:
             echo "Data field updated with permalink"
           fi
 
-      - name: Update source eval project to Done
+      - name: Set Dataset Metadata status to Done
+        if: steps.find-item.outputs.item_id != ''
+        uses: ./.github/actions/set-project-status
+        with:
+          organization: dpaia
+          project_number: '21'
+          item_id: ${{ steps.find-item.outputs.item_id }}
+          value: 'Done'
+          github_token: ${{ secrets.PROJECT_TOKEN }}
+
+      - name: Resolve eval project for source PR
+        id: resolve-eval
         if: steps.metadata.outputs.source_pr != ''
         shell: bash
         env:
-          GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
           SOURCE_PR: ${{ steps.metadata.outputs.source_pr }}
           EVAL_TYPE: ${{ steps.metadata.outputs.eval_type }}
         run: |
@@ -165,74 +154,53 @@ jobs:
           fi
           read -r SRC_OWNER SRC_REPO SRC_NUMBER <<< "$PR_PARTS"
 
-          # Get source PR node ID
-          SRC_PR_NODE_ID=$(gh api graphql -f query='
-            query($owner: String!, $name: String!, $number: Int!) {
-              repository(owner: $owner, name: $name) {
-                pullRequest(number: $number) { id }
-              }
-            }' -f owner="$SRC_OWNER" -f name="$SRC_REPO" -F number="$SRC_NUMBER" \
-            --jq '.data.repository.pullRequest.id')
-
           # Determine eval project number from eval_type
-          # TODO: make this configurable
           case "$EVAL_TYPE" in
             codegen) PROJECT_NUM=12 ;;
             debugging) PROJECT_NUM=13 ;;
             *) echo "Unknown eval_type for project mapping: $EVAL_TYPE"; exit 0 ;;
           esac
 
-          PROJECT_ID=$(gh api graphql -f query='
-            query($org: String!, $number: Int!) {
-              organization(login: $org) {
-                projectV2(number: $number) { id }
-              }
-            }' -f org="dpaia" -F number="$PROJECT_NUM" --jq '.data.organization.projectV2.id')
+          echo "project_number=$PROJECT_NUM" >> $GITHUB_OUTPUT
+          echo "src_repo=$SRC_REPO" >> $GITHUB_OUTPUT
+          echo "src_number=$SRC_NUMBER" >> $GITHUB_OUTPUT
 
-          # Find item in eval project
-          ITEM_ID=$(gh api graphql -f query='
-            query($projectId: ID!) {
-              node(id: $projectId) {
-                ... on ProjectV2 {
-                  items(first: 100) {
-                    nodes {
-                      id
-                      content { ... on PullRequest { id } }
-                    }
-                  }
-                }
-              }
-            }' -f projectId="$PROJECT_ID" \
-            --jq ".data.node.items.nodes[] | select(.content.id == \"$SRC_PR_NODE_ID\") | .id")
+      - name: Query eval project items
+        id: eval-items
+        if: steps.resolve-eval.outputs.project_number != ''
+        uses: ./.github/actions/query-project-items
+        with:
+          organization: dpaia
+          project_number: ${{ steps.resolve-eval.outputs.project_number }}
+          github_token: ${{ secrets.PROJECT_TOKEN }}
+
+      - name: Find source PR in eval project
+        id: find-eval-item
+        if: steps.eval-items.outputs.count != '0'
+        shell: bash
+        env:
+          ITEMS_JSON: ${{ steps.eval-items.outputs.items }}
+          SRC_REPO: ${{ steps.resolve-eval.outputs.src_repo }}
+          SRC_NUMBER: ${{ steps.resolve-eval.outputs.src_number }}
+        run: |
+          ITEM_ID=$(echo "$ITEMS_JSON" | jq -r --arg num "$SRC_NUMBER" --arg repo "$SRC_REPO" \
+            '.[] | select((.number | tostring) == $num and .repo == $repo) | .item_id' | head -1)
 
           if [ -z "$ITEM_ID" ] || [ "$ITEM_ID" = "null" ]; then
             echo "Warning: source PR not found in eval project, skipping"
             exit 0
           fi
+          echo "item_id=$ITEM_ID" >> $GITHUB_OUTPUT
 
-          # Set to Done
-          FIELDS_JSON=$(gh api graphql -f query='
-            query($project: ID!) {
-              node(id: $project) {
-                ... on ProjectV2 {
-                  fields(first: 100) {
-                    nodes {
-                      ... on ProjectV2SingleSelectField { id name options { id name } }
-                    }
-                  }
-                }
-              }
-            }' -f project="$PROJECT_ID")
-
-          STATUS_FID=$(echo "$FIELDS_JSON" | jq -r '.data.node.fields.nodes[] | select(.name == "Status") | .id')
-          DONE_OID=$(echo "$FIELDS_JSON" | jq -r '.data.node.fields.nodes[] | select(.name == "Status") | .options[] | select(.name == "Done") | .id')
-
-          gh api graphql -f query='
-            mutation($p: ID!, $i: ID!, $f: ID!, $o: String!) {
-              updateProjectV2ItemFieldValue(input: { projectId: $p, itemId: $i, fieldId: $f, value: { singleSelectOptionId: $o } }) { projectV2Item { id } }
-            }' -f p="$PROJECT_ID" -f i="$ITEM_ID" -f f="$STATUS_FID" -f o="$DONE_OID"
-
-          echo "Source PR eval project status set to Done"
+      - name: Set source eval project status to Done
+        if: steps.find-eval-item.outputs.item_id != ''
+        uses: ./.github/actions/set-project-status
+        with:
+          organization: dpaia
+          project_number: ${{ steps.resolve-eval.outputs.project_number }}
+          item_id: ${{ steps.find-eval-item.outputs.item_id }}
+          value: 'Done'
+          github_token: ${{ secrets.PROJECT_TOKEN }}
 
       - name: Summary
         if: always()

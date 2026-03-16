@@ -58,7 +58,7 @@ if [ "$MODE" = "folder" ]; then
 elif [ "$MODE" = "jsonl" ]; then
   # Extract matching record to a temp file (avoids shell variable escaping issues)
   RECORD_FILE="$STAGE_DIR/record.json"
-  jq -c "select(.instance_id == \"$INSTANCE_ID\")" "$JSONL_FILE" > "$RECORD_FILE"
+  jq -c --arg id "$INSTANCE_ID" 'select(.instance_id == $id)' "$JSONL_FILE" > "$RECORD_FILE"
 
   if [ ! -s "$RECORD_FILE" ]; then
     echo "Error: instance_id \"$INSTANCE_ID\" not found in $JSONL_FILE"

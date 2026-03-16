@@ -64,6 +64,7 @@ runs:
                     nodes {
                       id
                       content {
+                        __typename
                         ... on PullRequest {
                           number
                           title
@@ -114,7 +115,7 @@ runs:
             .data.organization.projectV2.items.nodes[] |
             {
               item_id: .id,
-              content_type: (if .content.headRefOid then "PullRequest" else "Issue" end),
+              content_type: (.content.__typename // "Unknown"),
               number: .content.number,
               title: .content.title,
               state: .content.state,
@@ -124,7 +125,7 @@ runs:
               repo: .content.repository.name,
               fields: (
                 [.fieldValues.nodes[] | select(.field.name != null) |
-                  { key: .field.name, value: (.text // .name // (.number | tostring) // .date // null) }
+                  { key: .field.name, value: (.text // .name // (if .number != null then (.number | tostring) else null end) // .date // null) }
                 ] | from_entries
               )
             }
@@ -135,16 +136,11 @@ runs:
           mv "${ITEMS_FILE}.tmp" "$ITEMS_FILE"
         done
 
-        # Apply filters
-        FILTER_EXPR='.'
-        if [ -n "$STATUS_FILTER" ]; then
-          FILTER_EXPR="$FILTER_EXPR | map(select(.fields.Status == \"$STATUS_FILTER\"))"
-        fi
-        if [ -n "$EVAL_TYPE_FILTER" ]; then
-          FILTER_EXPR="$FILTER_EXPR | map(select(.fields[\"Eval Type\"] == \"$EVAL_TYPE_FILTER\"))"
-        fi
-
-        RESULT=$(jq "$FILTER_EXPR" "$ITEMS_FILE")
+        # Apply filters (using --arg to avoid jq injection)
+        RESULT=$(jq --arg s "$STATUS_FILTER" --arg e "$EVAL_TYPE_FILTER" \
+          '[.[] | select(if $s == "" then true else .fields.Status == $s end) |
+                  select(if $e == "" then true else .fields["Eval Type"] == $e end)]' \
+          "$ITEMS_FILE")
         COUNT=$(echo "$RESULT" | jq 'length')
 
         echo "Found $COUNT items (status_filter='$STATUS_FILTER', eval_type_filter='$EVAL_TYPE_FILTER')"

@@ -26,6 +26,7 @@ PR_NUMBER = int(args.get("PR_NUMBER", "0")) or None
 DATA_FILE = args.get("DATA_FILE", "")  # Local JSON/JSONL to merge authoritative fields
 APPEND = args.get("APPEND", "").lower() in ("true", "1", "yes")
 INSTANCE_ID = args.get("INSTANCE_ID", "")
+OUTPUT_DIR = args.get("OUTPUT_DIR", "")
 
 # Load local data override (base_commit, FAIL_TO_PASS, patch, test_patch, etc.)
 # If the file contains a JSON array, build a lookup dict keyed by instance_id.
@@ -103,10 +104,11 @@ def strip_test_field_lines(text: str) -> str:
     return _TEST_FIELD_LINE_RE.sub("", text).strip()
 
 
-def write_instance_dir(record: dict) -> None:
+def write_instance_dir(record: dict, output_base: str = "") -> None:
     """Write per-instance directory with unpacked artifacts and a datapoint.json."""
     iid = record["instance_id"]
-    base = f"datasets/unified/{iid}"
+    root = output_base or "datasets/unified"
+    base = f"{root}/{iid}"
     os.makedirs(base, exist_ok=True)
 
     dp = dict(record)
@@ -162,7 +164,7 @@ records = []
 if PR_NUMBER:
     filters = {"repo": REPO, "pr_numbers": [PR_NUMBER]}
 else:
-    filters = []
+    filters = None
 
 for item in github.provide(filters=filters, limit=LIMIT):
     # Derive a preliminary instance_id for logging and local_data lookup
@@ -238,10 +240,11 @@ for item in github.provide(filters=filters, limit=LIMIT):
     records.append(record)
 
 # --- Write output ---
-os.makedirs("datasets", exist_ok=True)
+_output_root = OUTPUT_DIR or "datasets"
+os.makedirs(_output_root, exist_ok=True)
 
 # 1. Self-contained JSONL
-output_path = "datasets/ee-bench-unified.jsonl"
+output_path = os.path.join(_output_root, "ee-bench-unified.jsonl")
 if APPEND:
     existing_ids = set()
     if os.path.exists(output_path):
@@ -263,7 +266,8 @@ else:
             f.write(json.dumps(record) + "\n")
 
 # 2. Per-instance directories with unpacked artifacts
+_instance_dir_root = OUTPUT_DIR or ""
 for record in records:
-    write_instance_dir(record)
+    write_instance_dir(record, output_base=_instance_dir_root)
 
 logger.info("Done. %d records exported.", len(records))

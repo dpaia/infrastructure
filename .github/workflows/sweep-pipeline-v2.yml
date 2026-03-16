@@ -13,12 +13,20 @@ jobs:
       - name: Checkout infrastructure
         uses: actions/checkout@v4
 
-      - name: Query eval project items
-        id: eval-items
+      - name: Query eval project items (codegen)
+        id: eval-items-codegen
         uses: ./.github/actions/query-project-items
         with:
           organization: dpaia
           project_number: '12'
+          github_token: ${{ secrets.PROJECT_TOKEN }}
+
+      - name: Query eval project items (debugging)
+        id: eval-items-debugging
+        uses: ./.github/actions/query-project-items
+        with:
+          organization: dpaia
+          project_number: '13'
           github_token: ${{ secrets.PROJECT_TOKEN }}
 
       - name: Query Dataset Metadata items
@@ -34,25 +42,31 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
-          EVAL_ITEMS: ${{ steps.eval-items.outputs.items }}
+          EVAL_ITEMS_CODEGEN: ${{ steps.eval-items-codegen.outputs.items }}
+          EVAL_ITEMS_DEBUGGING: ${{ steps.eval-items-debugging.outputs.items }}
           DATASET_ITEMS: ${{ steps.dataset-items.outputs.items }}
         run: |
           set +e
 
-          EVAL_FILE="${RUNNER_TEMP}/eval-items.json"
           DATASET_FILE="${RUNNER_TEMP}/dataset-items.json"
-          echo "$EVAL_ITEMS" > "$EVAL_FILE"
           echo "$DATASET_ITEMS" > "$DATASET_FILE"
 
-          REPAIRS=0
+          # Merge eval items from all projects, tagging each with its eval_type
+          EVAL_FILE="${RUNNER_TEMP}/eval-items.json"
+          jq -n --argjson codegen "$EVAL_ITEMS_CODEGEN" --argjson debugging "$EVAL_ITEMS_DEBUGGING" \
+            '[$codegen[] | . + {eval_type: "codegen"}] + [$debugging[] | . + {eval_type: "debugging"}]' \
+            > "$EVAL_FILE"
+
           ISSUES_FOUND=0
+          REPAIRS=0
 
           echo "=== Checking source PRs in Review without verification ==="
-          jq -c '.[] | select(.fields.Status == "Review") | select(.content_type == "PullRequest")' "$EVAL_FILE" | while IFS= read -r item; do
+          while IFS= read -r item; do
             OWNER=$(echo "$item" | jq -r '.owner')
             REPO=$(echo "$item" | jq -r '.repo')
             NUMBER=$(echo "$item" | jq -r '.number')
             HEAD_SHA=$(echo "$item" | jq -r '.head_sha')
+            EVAL_TYPE=$(echo "$item" | jq -r '.eval_type')
 
             # Check if there's a recent passing or in-progress check
             CHECKS=$(gh api "repos/$OWNER/$REPO/commits/$HEAD_SHA/check-runs" \
@@ -62,25 +76,26 @@ jobs:
               echo "INCONSISTENCY: $OWNER/$REPO#$NUMBER in Review but no verification check for SHA $HEAD_SHA"
               ISSUES_FOUND=$((ISSUES_FOUND + 1))
 
-              # Dispatch repair
+              # Dispatch repair with correct eval_type
               gh workflow run verify-source_v2.yml \
                 --repo dpaia/infrastructure \
                 -f organization="$OWNER" \
                 -f repository="$REPO" \
                 -f pr_number="$NUMBER" \
-                -f eval_type="codegen" \
+                -f eval_type="$EVAL_TYPE" \
                 -f run_key="sweep-$(date +%s)-$NUMBER"
               REPAIRS=$((REPAIRS + 1))
-              echo "  -> Dispatched verification repair"
+              echo "  -> Dispatched verification repair (eval_type=$EVAL_TYPE)"
             fi
-          done
+          done < <(jq -c '.[] | select(.fields.Status == "Review") | select(.content_type == "PullRequest")' "$EVAL_FILE")
 
           echo ""
           echo "=== Checking source PRs in Verified without dataset PR ==="
-          jq -c '.[] | select(.fields.Status == "Verified") | select(.content_type == "PullRequest")' "$EVAL_FILE" | while IFS= read -r item; do
+          while IFS= read -r item; do
             OWNER=$(echo "$item" | jq -r '.owner')
             REPO=$(echo "$item" | jq -r '.repo')
             NUMBER=$(echo "$item" | jq -r '.number')
+            EVAL_TYPE=$(echo "$item" | jq -r '.eval_type')
 
             # Check if a dataset PR exists for this source
             SOURCE_URL="https://github.com/$OWNER/$REPO/pull/$NUMBER"
@@ -95,16 +110,16 @@ jobs:
                 -f organization="$OWNER" \
                 -f repository="$REPO" \
                 -f pr_number="$NUMBER" \
-                -f eval_type="codegen" \
+                -f eval_type="$EVAL_TYPE" \
                 -f run_key="sweep-$(date +%s)-$NUMBER"
               REPAIRS=$((REPAIRS + 1))
-              echo "  -> Dispatched generation repair"
+              echo "  -> Dispatched generation repair (eval_type=$EVAL_TYPE)"
             fi
-          done
+          done < <(jq -c '.[] | select(.fields.Status == "Verified") | select(.content_type == "PullRequest")' "$EVAL_FILE")
 
           echo ""
           echo "=== Checking merged dataset PRs not marked Done ==="
-          jq -c '.[] | select(.fields.Status != "Done") | select(.state == "MERGED")' "$DATASET_FILE" | while IFS= read -r item; do
+          while IFS= read -r item; do
             ITEM_NUMBER=$(echo "$item" | jq -r '.number')
             ITEM_TITLE=$(echo "$item" | jq -r '.title')
             CURRENT_STATUS=$(echo "$item" | jq -r '.fields.Status')
@@ -120,7 +135,7 @@ jobs:
               -f run_key="sweep-$(date +%s)-$ITEM_NUMBER"
             REPAIRS=$((REPAIRS + 1))
             echo "  -> Dispatched post-merge repair"
-          done
+          done < <(jq -c '.[] | select(.fields.Status != "Done") | select(.state == "MERGED")' "$DATASET_FILE")
 
           echo ""
           echo "=== Sweep complete ==="

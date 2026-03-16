@@ -46,13 +46,17 @@ runs:
       shell: bash
       env:
         GH_TOKEN: ${{ inputs.github_token }}
+        EE_IMPORT_REF: ${{ inputs.ee_bench_import_ref }}
+        EE_IMPORT_REPO: ${{ inputs.ee_bench_import_repo }}
       run: |
         EE_IMPORT_DIR="${RUNNER_TEMP}/ee-bench-import"
         rm -rf "$EE_IMPORT_DIR"
-        git clone --depth 1 --branch "${{ inputs.ee_bench_import_ref }}" \
-          "https://x-access-token:${GH_TOKEN}@github.com/${{ inputs.ee_bench_import_repo }}.git" \
-          "$EE_IMPORT_DIR"
-        SHA=$(git -C "$EE_IMPORT_DIR" rev-parse HEAD)
+        git init "$EE_IMPORT_DIR"
+        cd "$EE_IMPORT_DIR"
+        git remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${EE_IMPORT_REPO}.git"
+        git fetch --depth 1 origin "$EE_IMPORT_REF"
+        git checkout FETCH_HEAD
+        SHA=$(git rev-parse HEAD)
         echo "sha=$SHA" >> $GITHUB_OUTPUT
         echo "dir=$EE_IMPORT_DIR" >> $GITHUB_OUTPUT
         echo "Checked out ee-bench-import at $SHA"

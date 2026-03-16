@@ -20,7 +20,7 @@ inputs:
     required: true
   dataset_repo:
     description: 'Dataset repository (owner/name)'
-    required: true
+    required: false
     default: 'dpaia/dataset'
   github_token:
     description: 'GitHub token with contents:write and pull_requests:write on the dataset repo'
@@ -110,9 +110,9 @@ runs:
           git push -u origin "$BRANCH_NAME"
         fi
 
-        # Build PR body with structured metadata block (use temp file to avoid escaping)
+        # Build PR body with structured metadata block
         PR_BODY_FILE="${RUNNER_TEMP}/pr-body.md"
-        cat > "$PR_BODY_FILE" <<PR_BODY_EOF
+        cat > "$PR_BODY_FILE" <<PR_BODY_DELIM
         ## Datapoint: ${INSTANCE_ID}
 
         **Eval type:** ${EVAL_TYPE}
@@ -126,7 +126,9 @@ runs:
         source_commit: ${SOURCE_COMMIT}
         generated_at: ${GENERATED_AT}
         -->
-        PR_BODY_EOF
+        PR_BODY_DELIM
+        # Strip leading whitespace from heredoc content
+        sed -i.bak 's/^        //' "$PR_BODY_FILE" && rm -f "${PR_BODY_FILE}.bak"
 
         # Check for existing PR
         EXISTING_PR=$(gh pr list --repo "$DATASET_REPO" --head "$BRANCH_NAME" --state open --json number -q '.[0].number' 2>/dev/null || echo "")
@@ -144,7 +146,8 @@ runs:
             --base "main" \
             --title "Add datapoint: ${INSTANCE_ID}" \
             --body-file "$PR_BODY_FILE")
-          PR_NUMBER=$(gh pr list --repo "$DATASET_REPO" --head "$BRANCH_NAME" --state open --json number -q '.[0].number')
+          # Parse PR number from the returned URL instead of a racy gh pr list
+          PR_NUMBER=$(echo "$PR_URL" | grep -oE '[0-9]+$')
           echo "pr_number=$PR_NUMBER" >> $GITHUB_OUTPUT
           echo "pr_url=$PR_URL" >> $GITHUB_OUTPUT
         fi

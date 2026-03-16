@@ -22,7 +22,7 @@ on:
         type: string
         default: 'dataset-export'
       search_query:
-        description: 'Optional GitHub search query to filter Dataset Metadata items'
+        description: 'Optional regex pattern to filter items by title (case-insensitive). This is a title regex, not GitHub search syntax.'
         required: false
         type: string
         default: ''
@@ -96,11 +96,10 @@ jobs:
             echo "After search filter: $FILTERED_COUNT items"
           fi
 
-          INSTANCE_IDS=()
           EXPORTED=0
           SKIPPED=0
 
-          jq -c '.[]' "$ITEMS_FILE" | while IFS= read -r item; do
+          while IFS= read -r item; do
             DATA_VALUE=$(echo "$item" | jq -r '.fields.Data // empty')
             ITEM_TITLE=$(echo "$item" | jq -r '.title // "unknown"')
 
@@ -131,21 +130,17 @@ jobs:
               if [ -f "$INSTANCE_SRC/datapoint.json" ]; then
                 jq -c '.' "$INSTANCE_SRC/datapoint.json" >> "$OUTPUT_DIR/${OUTPUT_NAME}.jsonl"
                 echo "$INSTANCE_ID" >> "${RUNNER_TEMP}/exported-ids.txt"
+                EXPORTED=$((EXPORTED + 1))
               fi
             elif [ "$FORMAT" = "folders" ]; then
               cp -r "$INSTANCE_SRC" "$OUTPUT_DIR/$INSTANCE_ID"
               echo "$INSTANCE_ID" >> "${RUNNER_TEMP}/exported-ids.txt"
+              EXPORTED=$((EXPORTED + 1))
             fi
-          done
+          done < <(jq -c '.[]' "$ITEMS_FILE")
 
-          # Count exported
-          EXPORTED_COUNT=0
-          if [ -f "${RUNNER_TEMP}/exported-ids.txt" ]; then
-            EXPORTED_COUNT=$(wc -l < "${RUNNER_TEMP}/exported-ids.txt" | tr -d ' ')
-          fi
-
-          echo "Exported $EXPORTED_COUNT datapoints, skipped $SKIPPED"
-          echo "count=$EXPORTED_COUNT" >> $GITHUB_OUTPUT
+          echo "Exported $EXPORTED datapoints, skipped $SKIPPED"
+          echo "count=$EXPORTED" >> $GITHUB_OUTPUT
 
       - name: Generate manifest
         shell: bash

@@ -103,7 +103,8 @@ jobs:
           dataset_repo: dpaia/dataset
           github_token: ${{ secrets.PROJECT_TOKEN }}
 
-      - name: Add to Dataset Metadata project and set status
+      - name: Add to Dataset Metadata project
+        id: add-to-project
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
@@ -135,7 +136,17 @@ jobs:
             }" -f projectId="$PROJECT_ID" -f contentId="$PR_NODE_ID" \
             --jq '.data.addProjectV2ItemById.item.id')
 
+          echo "item_id=$ITEM_ID" >> $GITHUB_OUTPUT
           echo "Added dataset PR to Dataset Metadata project (item=$ITEM_ID)"
+
+      - name: Set project status to In progress
+        uses: ./.github/actions/set-project-status
+        with:
+          organization: dpaia
+          project_number: '21'
+          item_id: ${{ steps.add-to-project.outputs.item_id }}
+          value: 'In progress'
+          github_token: ${{ secrets.PROJECT_TOKEN }}
 
       - name: Comment on source PR
         shell: bash

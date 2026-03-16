@@ -1,0 +1,101 @@
+name: 'Set Project Status'
+description: 'Sets a single-select Status field on a GitHub Projects v2 item'
+author: 'JetBrains'
+
+inputs:
+  organization:
+    description: 'GitHub organization name'
+    required: true
+  project_number:
+    description: 'Project number within the organization'
+    required: true
+  item_id:
+    description: 'Project item node ID'
+    required: true
+  status:
+    description: 'Status value to set (e.g., "In progress", "Done", "Failed")'
+    required: true
+  github_token:
+    description: 'GitHub token for API access'
+    required: true
+
+outputs:
+  project_id:
+    description: 'The resolved project node ID'
+    value: ${{ steps.set-status.outputs.project_id }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Set project item status
+      id: set-status
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github_token }}
+        ORG_NAME: ${{ inputs.organization }}
+        PROJECT_NUMBER: ${{ inputs.project_number }}
+        ITEM_ID: ${{ inputs.item_id }}
+        STATUS_VALUE: ${{ inputs.status }}
+      run: |
+        echo "Resolving project ID for $ORG_NAME project #$PROJECT_NUMBER..."
+        project_id=$(gh api graphql -f query='
+          query($org: String!, $number: Int!) {
+            organization(login: $org) {
+              projectV2(number: $number) { id }
+            }
+          }' -f org="$ORG_NAME" -F number="$PROJECT_NUMBER" \
+          --jq '.data.organization.projectV2.id')
+
+        if [ -z "$project_id" ] || [ "$project_id" = "null" ]; then
+          echo "Error: could not resolve project ID" >&2
+          exit 1
+        fi
+        echo "project_id=$project_id" >> $GITHUB_OUTPUT
+
+        echo "Resolving Status field ID and option ID for '$STATUS_VALUE'..."
+        FIELDS_JSON=$(gh api graphql -f query='
+          query($project: ID!) {
+            node(id: $project) {
+              ... on ProjectV2 {
+                fields(first: 100) {
+                  nodes {
+                    ... on ProjectV2SingleSelectField {
+                      id
+                      name
+                      options { id name }
+                    }
+                  }
+                }
+              }
+            }
+          }' -f project="$project_id")
+
+        FIELD_ID=$(echo "$FIELDS_JSON" | jq -r '.data.node.fields.nodes[] | select(.name == "Status") | .id')
+        if [ -z "$FIELD_ID" ] || [ "$FIELD_ID" = "null" ]; then
+          echo "Error: Status field not found in project" >&2
+          exit 1
+        fi
+
+        OPTION_ID=$(echo "$FIELDS_JSON" | jq -r --arg val "$STATUS_VALUE" \
+          '.data.node.fields.nodes[] | select(.name == "Status") | .options[] | select(.name == $val) | .id')
+        if [ -z "$OPTION_ID" ] || [ "$OPTION_ID" = "null" ]; then
+          echo "Error: Status option '$STATUS_VALUE' not found" >&2
+          echo "Available options:"
+          echo "$FIELDS_JSON" | jq -r '.data.node.fields.nodes[] | select(.name == "Status") | .options[].name'
+          exit 1
+        fi
+
+        echo "Setting Status='$STATUS_VALUE' (field=$FIELD_ID, option=$OPTION_ID) on item $ITEM_ID..."
+        gh api graphql -f query='
+          mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!, $optionId: String!) {
+            updateProjectV2ItemFieldValue(
+              input: {
+                projectId: $projectId
+                itemId: $itemId
+                fieldId: $fieldId
+                value: { singleSelectOptionId: $optionId }
+              }
+            ) { projectV2Item { id } }
+          }' -f projectId="$project_id" -f itemId="$ITEM_ID" -f fieldId="$FIELD_ID" -f optionId="$OPTION_ID"
+
+        echo "Status set to '$STATUS_VALUE' on item $ITEM_ID"

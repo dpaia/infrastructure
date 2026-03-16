@@ -1,0 +1,152 @@
+name: 'Create Datapoint PR'
+description: 'Creates or updates a PR in the dataset repository with generated datapoint files and structured metadata'
+author: 'JetBrains'
+
+inputs:
+  instance_id:
+    description: 'Unique instance identifier (e.g., dpaia__spring-boot-microshop-42)'
+    required: true
+  eval_type:
+    description: 'Evaluation type (e.g., codegen, debugging)'
+    required: true
+  source_pr_url:
+    description: 'URL of the source PR that generated this datapoint'
+    required: true
+  source_commit:
+    description: 'Head SHA of the source PR at generation time'
+    required: true
+  datapoint_path:
+    description: 'Local path to the generated datapoint directory (must contain datapoint.json and subdirectories)'
+    required: true
+  dataset_repo:
+    description: 'Dataset repository (owner/name)'
+    required: true
+    default: 'dpaia/dataset'
+  github_token:
+    description: 'GitHub token with contents:write and pull_requests:write on the dataset repo'
+    required: true
+
+outputs:
+  pr_number:
+    description: 'PR number in the dataset repository'
+    value: ${{ steps.create-pr.outputs.pr_number }}
+  pr_url:
+    description: 'URL of the dataset PR'
+    value: ${{ steps.create-pr.outputs.pr_url }}
+  branch_name:
+    description: 'Branch name created in the dataset repo'
+    value: ${{ steps.create-pr.outputs.branch_name }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Create or update datapoint PR
+      id: create-pr
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github_token }}
+        INSTANCE_ID: ${{ inputs.instance_id }}
+        EVAL_TYPE: ${{ inputs.eval_type }}
+        SOURCE_PR_URL: ${{ inputs.source_pr_url }}
+        SOURCE_COMMIT: ${{ inputs.source_commit }}
+        DATAPOINT_PATH: ${{ inputs.datapoint_path }}
+        DATASET_REPO: ${{ inputs.dataset_repo }}
+      run: |
+        set -euo pipefail
+
+        BRANCH_NAME="datapoint/${EVAL_TYPE}/${INSTANCE_ID}"
+        DATASET_DIR="${RUNNER_TEMP}/dataset-checkout"
+        GENERATED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+        echo "branch_name=$BRANCH_NAME" >> $GITHUB_OUTPUT
+
+        # Validate datapoint path
+        if [ ! -d "$DATAPOINT_PATH" ]; then
+          echo "Error: datapoint path '$DATAPOINT_PATH' does not exist" >&2
+          exit 1
+        fi
+        if [ ! -f "$DATAPOINT_PATH/datapoint.json" ]; then
+          echo "Error: datapoint.json not found in '$DATAPOINT_PATH'" >&2
+          exit 1
+        fi
+
+        # Clone dataset repo
+        rm -rf "$DATASET_DIR"
+        git clone --depth 1 "https://x-access-token:${GH_TOKEN}@github.com/${DATASET_REPO}.git" "$DATASET_DIR"
+        cd "$DATASET_DIR"
+        git config user.name "github-actions[bot]"
+        git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+        # Check if branch already exists on remote
+        BRANCH_EXISTS="false"
+        if git ls-remote --heads origin "$BRANCH_NAME" | grep -q "$BRANCH_NAME"; then
+          BRANCH_EXISTS="true"
+          echo "Branch '$BRANCH_NAME' exists, will update"
+          git fetch origin "$BRANCH_NAME"
+          git checkout -b "$BRANCH_NAME" "origin/$BRANCH_NAME"
+        else
+          echo "Creating new branch '$BRANCH_NAME'"
+          git checkout -b "$BRANCH_NAME"
+        fi
+
+        # Copy datapoint files into the target directory
+        TARGET_DIR="${EVAL_TYPE}/${INSTANCE_ID}"
+        rm -rf "$TARGET_DIR"
+        mkdir -p "$TARGET_DIR"
+        cp -r "$DATAPOINT_PATH"/* "$TARGET_DIR/"
+
+        # Stage and commit
+        git add "$TARGET_DIR"
+        if git diff --cached --quiet; then
+          echo "No changes to commit"
+        else
+          git commit -m "Add datapoint ${INSTANCE_ID} (eval_type=${EVAL_TYPE})"
+        fi
+
+        # Push (force for updates to existing branch)
+        if [ "$BRANCH_EXISTS" = "true" ]; then
+          git push --force-with-lease origin "$BRANCH_NAME"
+        else
+          git push -u origin "$BRANCH_NAME"
+        fi
+
+        # Build PR body with structured metadata block (use temp file to avoid escaping)
+        PR_BODY_FILE="${RUNNER_TEMP}/pr-body.md"
+        cat > "$PR_BODY_FILE" <<PR_BODY_EOF
+        ## Datapoint: ${INSTANCE_ID}
+
+        **Eval type:** ${EVAL_TYPE}
+        **Source PR:** ${SOURCE_PR_URL}
+        **Source commit:** \`${SOURCE_COMMIT}\`
+
+        <!-- metadata
+        instance_id: ${INSTANCE_ID}
+        eval_type: ${EVAL_TYPE}
+        source_pr: ${SOURCE_PR_URL}
+        source_commit: ${SOURCE_COMMIT}
+        generated_at: ${GENERATED_AT}
+        -->
+        PR_BODY_EOF
+
+        # Check for existing PR
+        EXISTING_PR=$(gh pr list --repo "$DATASET_REPO" --head "$BRANCH_NAME" --state open --json number -q '.[0].number' 2>/dev/null || echo "")
+
+        if [ -n "$EXISTING_PR" ]; then
+          echo "Updating existing PR #$EXISTING_PR"
+          gh pr edit "$EXISTING_PR" --repo "$DATASET_REPO" --body-file "$PR_BODY_FILE"
+          PR_URL=$(gh pr view "$EXISTING_PR" --repo "$DATASET_REPO" --json url -q '.url')
+          echo "pr_number=$EXISTING_PR" >> $GITHUB_OUTPUT
+          echo "pr_url=$PR_URL" >> $GITHUB_OUTPUT
+        else
+          echo "Creating new PR"
+          PR_URL=$(gh pr create --repo "$DATASET_REPO" \
+            --head "$BRANCH_NAME" \
+            --base "main" \
+            --title "Add datapoint: ${INSTANCE_ID}" \
+            --body-file "$PR_BODY_FILE")
+          PR_NUMBER=$(gh pr list --repo "$DATASET_REPO" --head "$BRANCH_NAME" --state open --json number -q '.[0].number')
+          echo "pr_number=$PR_NUMBER" >> $GITHUB_OUTPUT
+          echo "pr_url=$PR_URL" >> $GITHUB_OUTPUT
+        fi
+
+        echo "Datapoint PR ready: $PR_URL"

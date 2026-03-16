@@ -1,0 +1,162 @@
+name: 'Query Project Items'
+description: 'Queries GitHub Projects v2 items with their field values, supports filtering by status and eval type'
+author: 'JetBrains'
+
+inputs:
+  organization:
+    description: 'GitHub organization name'
+    required: true
+  project_number:
+    description: 'Project number within the organization'
+    required: true
+  status_filter:
+    description: 'Filter items by Status field value (e.g., "Done"). Empty means no filter.'
+    required: false
+    default: ''
+  eval_type_filter:
+    description: 'Filter items by Eval Type field value (e.g., "codegen"). Empty means no filter.'
+    required: false
+    default: ''
+  github_token:
+    description: 'GitHub token for API access'
+    required: true
+
+outputs:
+  items:
+    description: 'JSON array of project items with their field values'
+    value: ${{ steps.query.outputs.items }}
+  count:
+    description: 'Number of items returned'
+    value: ${{ steps.query.outputs.count }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Query project items
+      id: query
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github_token }}
+        ORG_NAME: ${{ inputs.organization }}
+        PROJECT_NUMBER: ${{ inputs.project_number }}
+        STATUS_FILTER: ${{ inputs.status_filter }}
+        EVAL_TYPE_FILTER: ${{ inputs.eval_type_filter }}
+      run: |
+        ITEMS_FILE="${RUNNER_TEMP}/project-items.json"
+        echo "[]" > "$ITEMS_FILE"
+
+        HAS_NEXT="true"
+        CURSOR=""
+
+        while [ "$HAS_NEXT" = "true" ]; do
+          if [ -z "$CURSOR" ]; then
+            CURSOR_ARG=""
+          else
+            CURSOR_ARG=", after: \"$CURSOR\""
+          fi
+
+          PAGE=$(gh api graphql -f query="
+            query(\$org: String!, \$number: Int!) {
+              organization(login: \$org) {
+                projectV2(number: \$number) {
+                  items(first: 100${CURSOR_ARG}) {
+                    pageInfo { hasNextPage endCursor }
+                    nodes {
+                      id
+                      content {
+                        ... on PullRequest {
+                          number
+                          title
+                          state
+                          url
+                          headRefOid
+                          repository { owner { login } name }
+                        }
+                        ... on Issue {
+                          number
+                          title
+                          state
+                          url
+                          repository { owner { login } name }
+                        }
+                      }
+                      fieldValues(first: 20) {
+                        nodes {
+                          ... on ProjectV2ItemFieldTextValue {
+                            text
+                            field { ... on ProjectV2Field { name } }
+                          }
+                          ... on ProjectV2ItemFieldNumberValue {
+                            number
+                            field { ... on ProjectV2Field { name } }
+                          }
+                          ... on ProjectV2ItemFieldSingleSelectValue {
+                            name
+                            field { ... on ProjectV2SingleSelectField { name } }
+                          }
+                          ... on ProjectV2ItemFieldDateValue {
+                            date
+                            field { ... on ProjectV2Field { name } }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }" -f org="$ORG_NAME" -F number="$PROJECT_NUMBER")
+
+          HAS_NEXT=$(echo "$PAGE" | jq -r '.data.organization.projectV2.items.pageInfo.hasNextPage')
+          CURSOR=$(echo "$PAGE" | jq -r '.data.organization.projectV2.items.pageInfo.endCursor')
+
+          # Transform items into a flat structure with field values as a dict
+          FLAT_ITEMS=$(echo "$PAGE" | jq '[
+            .data.organization.projectV2.items.nodes[] |
+            {
+              item_id: .id,
+              content_type: (if .content.headRefOid then "PullRequest" else "Issue" end),
+              number: .content.number,
+              title: .content.title,
+              state: .content.state,
+              url: .content.url,
+              head_sha: .content.headRefOid,
+              owner: .content.repository.owner.login,
+              repo: .content.repository.name,
+              fields: (
+                [.fieldValues.nodes[] | select(.field.name != null) |
+                  { key: .field.name, value: (.text // .name // (.number | tostring) // .date // null) }
+                ] | from_entries
+              )
+            }
+          ]')
+
+          # Append to accumulated items
+          jq -s '.[0] + .[1]' "$ITEMS_FILE" <(echo "$FLAT_ITEMS") > "${ITEMS_FILE}.tmp"
+          mv "${ITEMS_FILE}.tmp" "$ITEMS_FILE"
+        done
+
+        # Apply filters
+        FILTER_EXPR='.'
+        if [ -n "$STATUS_FILTER" ]; then
+          FILTER_EXPR="$FILTER_EXPR | map(select(.fields.Status == \"$STATUS_FILTER\"))"
+        fi
+        if [ -n "$EVAL_TYPE_FILTER" ]; then
+          FILTER_EXPR="$FILTER_EXPR | map(select(.fields[\"Eval Type\"] == \"$EVAL_TYPE_FILTER\"))"
+        fi
+
+        RESULT=$(jq "$FILTER_EXPR" "$ITEMS_FILE")
+        COUNT=$(echo "$RESULT" | jq 'length')
+
+        echo "Found $COUNT items (status_filter='$STATUS_FILTER', eval_type_filter='$EVAL_TYPE_FILTER')"
+
+        # Write to file for large outputs (avoids ARG_MAX issues)
+        RESULT_FILE="${RUNNER_TEMP}/query-result.json"
+        echo "$RESULT" > "$RESULT_FILE"
+
+        # For GITHUB_OUTPUT, use delimiter syntax for multiline values
+        {
+          echo "items<<QUERY_EOF"
+          cat "$RESULT_FILE"
+          echo "QUERY_EOF"
+        } >> $GITHUB_OUTPUT
+        echo "count=$COUNT" >> $GITHUB_OUTPUT

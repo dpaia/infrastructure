@@ -1,0 +1,74 @@
+name: 'Setup ee-dataset CLI'
+description: 'Installs Python, uv, and the ee-dataset CLI from the ee-bench-import repository'
+author: 'JetBrains'
+
+inputs:
+  python_version:
+    description: 'Python version to use'
+    required: false
+    default: '3.11'
+  ee_bench_import_ref:
+    description: 'Git ref (branch/tag/SHA) of the ee-bench-import repository to install from'
+    required: false
+    default: 'main'
+  ee_bench_import_repo:
+    description: 'ee-bench-import repository (owner/name)'
+    required: false
+    default: 'dpaia/ee-bench-import'
+  github_token:
+    description: 'GitHub token for cloning the ee-bench-import repository'
+    required: true
+
+outputs:
+  venv_path:
+    description: 'Path to the virtual environment containing ee-dataset'
+    value: ${{ steps.install.outputs.venv_path }}
+  ee_bench_import_sha:
+    description: 'The resolved commit SHA of the ee-bench-import checkout'
+    value: ${{ steps.checkout-ee-import.outputs.sha }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ inputs.python_version }}
+
+    - name: Install uv
+      shell: bash
+      run: |
+        curl -LsSf https://astral.sh/uv/install.sh | sh
+        echo "$HOME/.local/bin" >> $GITHUB_PATH
+
+    - name: Checkout ee-bench-import
+      id: checkout-ee-import
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github_token }}
+      run: |
+        EE_IMPORT_DIR="${RUNNER_TEMP}/ee-bench-import"
+        rm -rf "$EE_IMPORT_DIR"
+        git clone --depth 1 --branch "${{ inputs.ee_bench_import_ref }}" \
+          "https://x-access-token:${GH_TOKEN}@github.com/${{ inputs.ee_bench_import_repo }}.git" \
+          "$EE_IMPORT_DIR"
+        SHA=$(git -C "$EE_IMPORT_DIR" rev-parse HEAD)
+        echo "sha=$SHA" >> $GITHUB_OUTPUT
+        echo "dir=$EE_IMPORT_DIR" >> $GITHUB_OUTPUT
+        echo "Checked out ee-bench-import at $SHA"
+
+    - name: Install ee-dataset CLI
+      id: install
+      shell: bash
+      run: |
+        cd "${{ steps.checkout-ee-import.outputs.dir }}"
+        uv sync
+        VENV_PATH="$PWD/.venv"
+        echo "venv_path=$VENV_PATH" >> $GITHUB_OUTPUT
+        echo "$VENV_PATH/bin" >> $GITHUB_PATH
+
+    - name: Verify ee-dataset is available
+      shell: bash
+      run: |
+        ee-dataset --help > /dev/null 2>&1 || { echo "Error: ee-dataset CLI not found on PATH"; exit 1; }
+        echo "ee-dataset CLI installed successfully"

@@ -35,8 +35,6 @@ jobs:
 
       - name: Setup ee-dataset CLI
         uses: ./.github/actions/setup-ee-import
-        with:
-          github_token: ${{ secrets.PROJECT_TOKEN }}
 
       - name: Resolve export spec and generate datapoint
         id: generate

@@ -1,0 +1,163 @@
+name: Generate Datapoint (v2)
+run-name: "[${{ inputs.organization }}/${{ inputs.repository }}] Generate PR #${{ inputs.pr_number }} (key=${{ inputs.run_key }})"
+
+on:
+  workflow_dispatch:
+    inputs:
+      organization:
+        description: 'GitHub organization name'
+        required: true
+        type: string
+      repository:
+        description: 'Repository name'
+        required: true
+        type: string
+      pr_number:
+        description: 'Pull request number'
+        required: true
+        type: string
+      eval_type:
+        description: 'Evaluation type (e.g., codegen, debugging)'
+        required: true
+        type: string
+      run_key:
+        description: 'Unique run correlation key (UUID)'
+        required: false
+        type: string
+        default: 'manual'
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    outputs:
+      instance_id: ${{ steps.generate.outputs.instance_id }}
+      dataset_pr_number: ${{ steps.create-pr.outputs.pr_number }}
+      dataset_pr_url: ${{ steps.create-pr.outputs.pr_url }}
+    steps:
+      - name: Checkout infrastructure
+        uses: actions/checkout@v4
+
+      - name: Setup ee-dataset CLI
+        uses: ./.github/actions/setup-ee-import
+        with:
+          github_token: ${{ secrets.PROJECT_TOKEN }}
+
+      - name: Get source PR head SHA
+        id: source-pr
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
+        run: |
+          PR_DATA=$(gh api "repos/${{ inputs.organization }}/${{ inputs.repository }}/pulls/${{ inputs.pr_number }}" \
+            --jq '{sha: .head.sha, title: .title, url: .html_url}')
+          HEAD_SHA=$(echo "$PR_DATA" | jq -r '.sha')
+          PR_URL=$(echo "$PR_DATA" | jq -r '.url')
+          echo "head_sha=$HEAD_SHA" >> $GITHUB_OUTPUT
+          echo "pr_url=$PR_URL" >> $GITHUB_OUTPUT
+          echo "Source PR head SHA: $HEAD_SHA"
+
+      - name: Generate datapoint
+        id: generate
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
+          ORGANIZATION: ${{ inputs.organization }}
+          REPOSITORY: ${{ inputs.repository }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+          EVAL_TYPE: ${{ inputs.eval_type }}
+        run: |
+          OUTPUT_DIR="${RUNNER_TEMP}/datapoint-output"
+          mkdir -p "$OUTPUT_DIR"
+
+          EXPORT_SCRIPT=".github/scripts/export/${EVAL_TYPE}/export_unified.py"
+          if [ ! -f "$EXPORT_SCRIPT" ]; then
+            echo "Error: no export script for eval_type='${EVAL_TYPE}'" >&2
+            exit 1
+          fi
+
+          python3 "$EXPORT_SCRIPT" \
+            --set REPO="${ORGANIZATION}/${REPOSITORY}" \
+            --set PR_NUMBER="${PR_NUMBER}" \
+            --set VERSION="1.0" \
+            --set OUTPUT_DIR="$OUTPUT_DIR"
+
+          INSTANCE_DIR=$(find "$OUTPUT_DIR" -name "datapoint.json" -exec dirname {} \; | head -1)
+          if [ -z "$INSTANCE_DIR" ]; then
+            echo "Error: no datapoint.json in output" >&2
+            exit 1
+          fi
+
+          INSTANCE_ID=$(jq -r '.instance_id' "$INSTANCE_DIR/datapoint.json")
+          echo "instance_id=$INSTANCE_ID" >> $GITHUB_OUTPUT
+          echo "instance_dir=$INSTANCE_DIR" >> $GITHUB_OUTPUT
+
+      - name: Create datapoint PR
+        id: create-pr
+        uses: ./.github/actions/create-datapoint-pr
+        with:
+          instance_id: ${{ steps.generate.outputs.instance_id }}
+          eval_type: ${{ inputs.eval_type }}
+          source_pr_url: ${{ steps.source-pr.outputs.pr_url }}
+          source_commit: ${{ steps.source-pr.outputs.head_sha }}
+          datapoint_path: ${{ steps.generate.outputs.instance_dir }}
+          dataset_repo: dpaia/dataset
+          github_token: ${{ secrets.PROJECT_TOKEN }}
+
+      - name: Add to Dataset Metadata project and set status
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
+          DATASET_PR_NUMBER: ${{ steps.create-pr.outputs.pr_number }}
+        run: |
+          # Get the dataset PR node ID
+          PR_NODE_ID=$(gh api graphql -f query='
+            query($owner: String!, $name: String!, $number: Int!) {
+              repository(owner: $owner, name: $name) {
+                pullRequest(number: $number) { id }
+              }
+            }' -f owner="dpaia" -f name="dataset" -F number="$DATASET_PR_NUMBER" \
+            --jq '.data.repository.pullRequest.id')
+
+          # Get Dataset Metadata project ID (project number from config)
+          PROJECT_ID=$(gh api graphql -f query='
+            query($org: String!, $number: Int!) {
+              organization(login: $org) {
+                projectV2(number: $number) { id }
+              }
+            }' -f org="dpaia" -F number=21 --jq '.data.organization.projectV2.id')
+
+          # Add PR to project
+          ITEM_ID=$(gh api graphql -f query="
+            mutation(\$projectId: ID!, \$contentId: ID!) {
+              addProjectV2ItemById(input: {projectId: \$projectId, contentId: \$contentId}) {
+                item { id }
+              }
+            }" -f projectId="$PROJECT_ID" -f contentId="$PR_NODE_ID" \
+            --jq '.data.addProjectV2ItemById.item.id')
+
+          echo "Added dataset PR to Dataset Metadata project (item=$ITEM_ID)"
+
+      - name: Comment on source PR
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
+        run: |
+          COMMENT_BODY="Datapoint generated successfully.
+
+          **Instance:** \`${{ steps.generate.outputs.instance_id }}\`
+          **Dataset PR:** ${{ steps.create-pr.outputs.pr_url }}
+          **Run key:** \`${{ inputs.run_key }}\`"
+
+          gh pr comment "${{ inputs.pr_number }}" \
+            --repo "${{ inputs.organization }}/${{ inputs.repository }}" \
+            --body "$COMMENT_BODY"
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "# Generation Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Source PR:** ${{ inputs.organization }}/${{ inputs.repository }}#${{ inputs.pr_number }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Instance:** ${{ steps.generate.outputs.instance_id }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Dataset PR:** ${{ steps.create-pr.outputs.pr_url }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Run key:** ${{ inputs.run_key }}" >> $GITHUB_STEP_SUMMARY

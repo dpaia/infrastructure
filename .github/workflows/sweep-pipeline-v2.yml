@@ -1,0 +1,143 @@
+name: Sweep Pipeline (v2)
+run-name: "Pipeline sweep - detect and repair inconsistencies"
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 */6 * * *'  # Every 6 hours
+
+jobs:
+  sweep:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout infrastructure
+        uses: actions/checkout@v4
+
+      - name: Query eval project items
+        id: eval-items
+        uses: ./.github/actions/query-project-items
+        with:
+          organization: dpaia
+          project_number: '12'
+          github_token: ${{ secrets.PROJECT_TOKEN }}
+
+      - name: Query Dataset Metadata items
+        id: dataset-items
+        uses: ./.github/actions/query-project-items
+        with:
+          organization: dpaia
+          project_number: '21'
+          github_token: ${{ secrets.PROJECT_TOKEN }}
+
+      - name: Detect and repair inconsistencies
+        id: sweep
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
+          EVAL_ITEMS: ${{ steps.eval-items.outputs.items }}
+          DATASET_ITEMS: ${{ steps.dataset-items.outputs.items }}
+        run: |
+          set +e
+
+          EVAL_FILE="${RUNNER_TEMP}/eval-items.json"
+          DATASET_FILE="${RUNNER_TEMP}/dataset-items.json"
+          echo "$EVAL_ITEMS" > "$EVAL_FILE"
+          echo "$DATASET_ITEMS" > "$DATASET_FILE"
+
+          REPAIRS=0
+          ISSUES_FOUND=0
+
+          echo "=== Checking source PRs in Review without verification ==="
+          jq -c '.[] | select(.fields.Status == "Review") | select(.content_type == "PullRequest")' "$EVAL_FILE" | while IFS= read -r item; do
+            OWNER=$(echo "$item" | jq -r '.owner')
+            REPO=$(echo "$item" | jq -r '.repo')
+            NUMBER=$(echo "$item" | jq -r '.number')
+            HEAD_SHA=$(echo "$item" | jq -r '.head_sha')
+
+            # Check if there's a recent passing or in-progress check
+            CHECKS=$(gh api "repos/$OWNER/$REPO/commits/$HEAD_SHA/check-runs" \
+              --jq '[.check_runs[] | select(.name == "Datapoint Verification")] | length' 2>/dev/null || echo "0")
+
+            if [ "$CHECKS" = "0" ]; then
+              echo "INCONSISTENCY: $OWNER/$REPO#$NUMBER in Review but no verification check for SHA $HEAD_SHA"
+              ISSUES_FOUND=$((ISSUES_FOUND + 1))
+
+              # Dispatch repair
+              gh workflow run verify-source_v2.yml \
+                --repo dpaia/infrastructure \
+                -f organization="$OWNER" \
+                -f repository="$REPO" \
+                -f pr_number="$NUMBER" \
+                -f eval_type="codegen" \
+                -f run_key="sweep-$(date +%s)-$NUMBER"
+              REPAIRS=$((REPAIRS + 1))
+              echo "  -> Dispatched verification repair"
+            fi
+          done
+
+          echo ""
+          echo "=== Checking source PRs in Verified without dataset PR ==="
+          jq -c '.[] | select(.fields.Status == "Verified") | select(.content_type == "PullRequest")' "$EVAL_FILE" | while IFS= read -r item; do
+            OWNER=$(echo "$item" | jq -r '.owner')
+            REPO=$(echo "$item" | jq -r '.repo')
+            NUMBER=$(echo "$item" | jq -r '.number')
+
+            # Check if a dataset PR exists for this source
+            SOURCE_URL="https://github.com/$OWNER/$REPO/pull/$NUMBER"
+            DATASET_PR_EXISTS=$(jq --arg url "$SOURCE_URL" '[.[] | select(.fields["Source PR"] == $url)] | length' "$DATASET_FILE")
+
+            if [ "$DATASET_PR_EXISTS" = "0" ]; then
+              echo "INCONSISTENCY: $OWNER/$REPO#$NUMBER in Verified but no dataset PR found"
+              ISSUES_FOUND=$((ISSUES_FOUND + 1))
+
+              gh workflow run generate-datapoint_v2.yml \
+                --repo dpaia/infrastructure \
+                -f organization="$OWNER" \
+                -f repository="$REPO" \
+                -f pr_number="$NUMBER" \
+                -f eval_type="codegen" \
+                -f run_key="sweep-$(date +%s)-$NUMBER"
+              REPAIRS=$((REPAIRS + 1))
+              echo "  -> Dispatched generation repair"
+            fi
+          done
+
+          echo ""
+          echo "=== Checking merged dataset PRs not marked Done ==="
+          jq -c '.[] | select(.fields.Status != "Done") | select(.state == "MERGED")' "$DATASET_FILE" | while IFS= read -r item; do
+            ITEM_NUMBER=$(echo "$item" | jq -r '.number')
+            ITEM_TITLE=$(echo "$item" | jq -r '.title')
+            CURRENT_STATUS=$(echo "$item" | jq -r '.fields.Status')
+
+            echo "INCONSISTENCY: Dataset PR #$ITEM_NUMBER ('$ITEM_TITLE') is merged but status is '$CURRENT_STATUS'"
+            ISSUES_FOUND=$((ISSUES_FOUND + 1))
+
+            gh workflow run on-datapoint-merged_v2.yml \
+              --repo dpaia/infrastructure \
+              -f organization="dpaia" \
+              -f repository="dataset" \
+              -f pr_number="$ITEM_NUMBER" \
+              -f run_key="sweep-$(date +%s)-$ITEM_NUMBER"
+            REPAIRS=$((REPAIRS + 1))
+            echo "  -> Dispatched post-merge repair"
+          done
+
+          echo ""
+          echo "=== Sweep complete ==="
+          echo "Issues found: $ISSUES_FOUND"
+          echo "Repairs dispatched: $REPAIRS"
+
+          echo "issues_found=$ISSUES_FOUND" >> $GITHUB_OUTPUT
+          echo "repairs=$REPAIRS" >> $GITHUB_OUTPUT
+
+          if [ "$ISSUES_FOUND" -eq 0 ]; then
+            echo "All states consistent"
+          fi
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "# Pipeline Sweep Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Issues found:** ${{ steps.sweep.outputs.issues_found }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Repairs dispatched:** ${{ steps.sweep.outputs.repairs }}" >> $GITHUB_STEP_SUMMARY

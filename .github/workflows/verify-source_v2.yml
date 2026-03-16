@@ -1,0 +1,124 @@
+name: Verify Source PR (v2)
+run-name: "[${{ inputs.organization }}/${{ inputs.repository }}] Verify PR #${{ inputs.pr_number }} (key=${{ inputs.run_key }})"
+
+on:
+  workflow_dispatch:
+    inputs:
+      organization:
+        description: 'GitHub organization name'
+        required: true
+        type: string
+      repository:
+        description: 'Repository name'
+        required: true
+        type: string
+      pr_number:
+        description: 'Pull request number'
+        required: true
+        type: string
+      eval_type:
+        description: 'Evaluation type (e.g., codegen, debugging)'
+        required: true
+        type: string
+      run_key:
+        description: 'Unique run correlation key (UUID)'
+        required: false
+        type: string
+        default: 'manual'
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout infrastructure
+        uses: actions/checkout@v4
+
+      - name: Setup ee-dataset CLI
+        uses: ./.github/actions/setup-ee-import
+        with:
+          github_token: ${{ secrets.PROJECT_TOKEN }}
+
+      - name: Resolve export spec and generate datapoint
+        id: generate
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
+          ORGANIZATION: ${{ inputs.organization }}
+          REPOSITORY: ${{ inputs.repository }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+          EVAL_TYPE: ${{ inputs.eval_type }}
+        run: |
+          OUTPUT_DIR="${RUNNER_TEMP}/datapoint-output"
+          mkdir -p "$OUTPUT_DIR"
+
+          # Resolve export script based on eval_type
+          EXPORT_SCRIPT=".github/scripts/export/${EVAL_TYPE}/export_unified.py"
+          if [ ! -f "$EXPORT_SCRIPT" ]; then
+            echo "Error: no export script found for eval_type='${EVAL_TYPE}' at ${EXPORT_SCRIPT}" >&2
+            exit 1
+          fi
+
+          echo "Running export script: $EXPORT_SCRIPT"
+          python3 "$EXPORT_SCRIPT" \
+            --set REPO="${ORGANIZATION}/${REPOSITORY}" \
+            --set PR_NUMBER="${PR_NUMBER}" \
+            --set VERSION="1.0" \
+            --set OUTPUT_DIR="$OUTPUT_DIR"
+
+          # Find the generated instance directory
+          INSTANCE_DIR=$(find "$OUTPUT_DIR" -name "datapoint.json" -exec dirname {} \; | head -1)
+          if [ -z "$INSTANCE_DIR" ]; then
+            echo "Error: no datapoint.json found in output" >&2
+            exit 1
+          fi
+
+          INSTANCE_ID=$(jq -r '.instance_id' "$INSTANCE_DIR/datapoint.json")
+          echo "instance_id=$INSTANCE_ID" >> $GITHUB_OUTPUT
+          echo "instance_dir=$INSTANCE_DIR" >> $GITHUB_OUTPUT
+          echo "Generated datapoint for instance: $INSTANCE_ID"
+
+      - name: Run validation
+        id: validate
+        shell: bash
+        env:
+          INSTANCE_DIR: ${{ steps.generate.outputs.instance_dir }}
+        run: |
+          set +e
+          chmod +x .github/scripts/validate.sh
+
+          echo "Validating datapoint at: $INSTANCE_DIR"
+          bash .github/scripts/validate.sh "$INSTANCE_DIR" 2>&1 | tee "${RUNNER_TEMP}/validation-output.txt"
+          EXIT_CODE=$?
+
+          if [ $EXIT_CODE -eq 0 ]; then
+            echo "result=success" >> $GITHUB_OUTPUT
+            echo "message=Validation passed" >> $GITHUB_OUTPUT
+          else
+            echo "result=failure" >> $GITHUB_OUTPUT
+            # Extract last meaningful lines for failure message
+            FAIL_MSG=$(tail -20 "${RUNNER_TEMP}/validation-output.txt" | head -10)
+            echo "message<<MSG_EOF" >> $GITHUB_OUTPUT
+            echo "$FAIL_MSG" >> $GITHUB_OUTPUT
+            echo "MSG_EOF" >> $GITHUB_OUTPUT
+          fi
+          exit $EXIT_CODE
+
+      - name: Upload validation logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: "verification-${{ inputs.organization }}-${{ inputs.repository }}-${{ inputs.pr_number }}"
+          path: ${{ runner.temp }}/validation-output.txt
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "# Verification Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Source PR:** ${{ inputs.organization }}/${{ inputs.repository }}#${{ inputs.pr_number }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Eval type:** ${{ inputs.eval_type }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Instance:** ${{ steps.generate.outputs.instance_id }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Result:** ${{ steps.validate.outputs.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Run key:** ${{ inputs.run_key }}" >> $GITHUB_STEP_SUMMARY

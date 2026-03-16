@@ -1,0 +1,115 @@
+name: Validate Datapoint (v2)
+run-name: "[dataset] Validate PR #${{ inputs.pr_number }} (key=${{ inputs.run_key }})"
+
+on:
+  workflow_dispatch:
+    inputs:
+      organization:
+        description: 'GitHub organization (dataset repo owner)'
+        required: true
+        type: string
+        default: 'dpaia'
+      repository:
+        description: 'Dataset repository name'
+        required: true
+        type: string
+        default: 'dataset'
+      pr_number:
+        description: 'Dataset PR number to validate'
+        required: true
+        type: string
+      eval_type:
+        description: 'Evaluation type (e.g., codegen, debugging)'
+        required: true
+        type: string
+      run_key:
+        description: 'Unique run correlation key (UUID)'
+        required: false
+        type: string
+        default: 'manual'
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout infrastructure
+        uses: actions/checkout@v4
+
+      - name: Checkout dataset PR
+        uses: actions/checkout@v4
+        with:
+          repository: "${{ inputs.organization }}/${{ inputs.repository }}"
+          token: ${{ secrets.PROJECT_TOKEN }}
+          path: dataset-checkout
+          ref: "refs/pull/${{ inputs.pr_number }}/head"
+
+      - name: Detect changed instance directory
+        id: detect
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
+          DATASET_REPO: "${{ inputs.organization }}/${{ inputs.repository }}"
+          PR_NUMBER: ${{ inputs.pr_number }}
+        run: |
+          # Get list of changed files in the PR
+          CHANGED_FILES=$(gh pr diff "$PR_NUMBER" --repo "$DATASET_REPO" --name-only)
+
+          # Find instance directories (look for datapoint.json in changed paths)
+          INSTANCE_DIRS=$(echo "$CHANGED_FILES" | sed 's|/[^/]*$||' | sort -u | while read dir; do
+            if [ -f "dataset-checkout/$dir/datapoint.json" ]; then
+              echo "$dir"
+            fi
+          done)
+
+          if [ -z "$INSTANCE_DIRS" ]; then
+            echo "Error: no instance directory with datapoint.json found in PR changes" >&2
+            exit 1
+          fi
+
+          # Use the first (should be only) instance directory
+          INSTANCE_DIR=$(echo "$INSTANCE_DIRS" | head -1)
+          INSTANCE_ID=$(jq -r '.instance_id' "dataset-checkout/$INSTANCE_DIR/datapoint.json")
+
+          echo "instance_dir=dataset-checkout/$INSTANCE_DIR" >> $GITHUB_OUTPUT
+          echo "instance_id=$INSTANCE_ID" >> $GITHUB_OUTPUT
+          echo "Detected instance: $INSTANCE_ID at $INSTANCE_DIR"
+
+      - name: Run validation
+        id: validate
+        shell: bash
+        env:
+          INSTANCE_DIR: ${{ steps.detect.outputs.instance_dir }}
+        run: |
+          set +e
+          chmod +x .github/scripts/validate.sh
+
+          echo "Validating: $INSTANCE_DIR"
+          bash .github/scripts/validate.sh "$INSTANCE_DIR" 2>&1 | tee "${RUNNER_TEMP}/validation-output.txt"
+          EXIT_CODE=$?
+
+          if [ $EXIT_CODE -eq 0 ]; then
+            echo "result=success" >> $GITHUB_OUTPUT
+          else
+            echo "result=failure" >> $GITHUB_OUTPUT
+          fi
+          exit $EXIT_CODE
+
+      - name: Upload validation logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: "validation-${{ steps.detect.outputs.instance_id }}"
+          path: ${{ runner.temp }}/validation-output.txt
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "# Datapoint Validation Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Dataset PR:** ${{ inputs.organization }}/${{ inputs.repository }}#${{ inputs.pr_number }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Instance:** ${{ steps.detect.outputs.instance_id }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Eval type:** ${{ inputs.eval_type }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Result:** ${{ steps.validate.outputs.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Run key:** ${{ inputs.run_key }}" >> $GITHUB_STEP_SUMMARY

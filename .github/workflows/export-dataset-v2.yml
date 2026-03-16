@@ -1,0 +1,211 @@
+name: Export Dataset (v2)
+run-name: "Export ${{ inputs.eval_type }} (${{ inputs.format }}) -> ${{ inputs.output_name }}"
+
+on:
+  workflow_dispatch:
+    inputs:
+      eval_type:
+        description: 'Evaluation type to export (e.g., codegen)'
+        required: true
+        type: string
+      format:
+        description: 'Export format'
+        required: true
+        type: choice
+        options:
+          - jsonl
+          - folders
+        default: 'jsonl'
+      output_name:
+        description: 'Name for the output artifact'
+        required: true
+        type: string
+        default: 'dataset-export'
+      search_query:
+        description: 'Optional GitHub search query to filter Dataset Metadata items'
+        required: false
+        type: string
+        default: ''
+      organization:
+        description: 'GitHub organization'
+        required: false
+        type: string
+        default: 'dpaia'
+      dataset_repo:
+        description: 'Dataset repository name'
+        required: false
+        type: string
+        default: 'dataset'
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout infrastructure
+        uses: actions/checkout@v4
+
+      - name: Query Dataset Metadata items
+        id: query
+        uses: ./.github/actions/query-project-items
+        with:
+          organization: ${{ inputs.organization }}
+          project_number: '21'
+          status_filter: 'Done'
+          eval_type_filter: ${{ inputs.eval_type }}
+          github_token: ${{ secrets.PROJECT_TOKEN }}
+
+      - name: Checkout dataset repo
+        uses: actions/checkout@v4
+        with:
+          repository: "${{ inputs.organization }}/${{ inputs.dataset_repo }}"
+          token: ${{ secrets.PROJECT_TOKEN }}
+          path: dataset-checkout
+
+      - name: Get dataset repo commit
+        id: dataset-ref
+        shell: bash
+        run: |
+          DATASET_SHA=$(git -C dataset-checkout rev-parse HEAD)
+          echo "sha=$DATASET_SHA" >> $GITHUB_OUTPUT
+          echo "Dataset repo at: $DATASET_SHA"
+
+      - name: Export datapoints
+        id: export
+        shell: bash
+        env:
+          ITEMS_JSON: ${{ steps.query.outputs.items }}
+          FORMAT: ${{ inputs.format }}
+          EVAL_TYPE: ${{ inputs.eval_type }}
+          OUTPUT_NAME: ${{ inputs.output_name }}
+          SEARCH_QUERY: ${{ inputs.search_query }}
+        run: |
+          OUTPUT_DIR="${RUNNER_TEMP}/export-output/${OUTPUT_NAME}"
+          mkdir -p "$OUTPUT_DIR"
+
+          ITEMS_FILE="${RUNNER_TEMP}/items.json"
+          echo "$ITEMS_JSON" > "$ITEMS_FILE"
+          TOTAL_ITEMS=$(jq 'length' "$ITEMS_FILE")
+
+          echo "Processing $TOTAL_ITEMS Done items for eval_type=$EVAL_TYPE"
+
+          # Apply search_query filter if provided (filter by title match)
+          if [ -n "$SEARCH_QUERY" ]; then
+            jq --arg q "$SEARCH_QUERY" '[.[] | select(.title | test($q; "i"))]' "$ITEMS_FILE" > "${ITEMS_FILE}.filtered"
+            mv "${ITEMS_FILE}.filtered" "$ITEMS_FILE"
+            FILTERED_COUNT=$(jq 'length' "$ITEMS_FILE")
+            echo "After search filter: $FILTERED_COUNT items"
+          fi
+
+          INSTANCE_IDS=()
+          EXPORTED=0
+          SKIPPED=0
+
+          jq -c '.[]' "$ITEMS_FILE" | while IFS= read -r item; do
+            DATA_VALUE=$(echo "$item" | jq -r '.fields.Data // empty')
+            ITEM_TITLE=$(echo "$item" | jq -r '.title // "unknown"')
+
+            if [ -z "$DATA_VALUE" ]; then
+              echo "Warning: skipping item '$ITEM_TITLE' - no Data field"
+              SKIPPED=$((SKIPPED + 1))
+              continue
+            fi
+
+            # Extract instance_id from Data permalink or item metadata
+            # Data field format: https://github.com/dpaia/dataset/blob/main/<eval_type>/<instance_id>/datapoint.json
+            INSTANCE_ID=$(echo "$DATA_VALUE" | sed -n "s|.*/main/${EVAL_TYPE}/\([^/]*\)/.*|\1|p")
+            if [ -z "$INSTANCE_ID" ]; then
+              echo "Warning: skipping item '$ITEM_TITLE' - cannot parse instance_id from Data='$DATA_VALUE'"
+              SKIPPED=$((SKIPPED + 1))
+              continue
+            fi
+
+            INSTANCE_SRC="dataset-checkout/${EVAL_TYPE}/${INSTANCE_ID}"
+            if [ ! -d "$INSTANCE_SRC" ]; then
+              echo "Warning: skipping '$INSTANCE_ID' - directory not found in dataset repo"
+              SKIPPED=$((SKIPPED + 1))
+              continue
+            fi
+
+            if [ "$FORMAT" = "jsonl" ]; then
+              # Read datapoint.json and output as single JSONL line
+              if [ -f "$INSTANCE_SRC/datapoint.json" ]; then
+                jq -c '.' "$INSTANCE_SRC/datapoint.json" >> "$OUTPUT_DIR/${OUTPUT_NAME}.jsonl"
+                echo "$INSTANCE_ID" >> "${RUNNER_TEMP}/exported-ids.txt"
+              fi
+            elif [ "$FORMAT" = "folders" ]; then
+              cp -r "$INSTANCE_SRC" "$OUTPUT_DIR/$INSTANCE_ID"
+              echo "$INSTANCE_ID" >> "${RUNNER_TEMP}/exported-ids.txt"
+            fi
+          done
+
+          # Count exported
+          EXPORTED_COUNT=0
+          if [ -f "${RUNNER_TEMP}/exported-ids.txt" ]; then
+            EXPORTED_COUNT=$(wc -l < "${RUNNER_TEMP}/exported-ids.txt" | tr -d ' ')
+          fi
+
+          echo "Exported $EXPORTED_COUNT datapoints, skipped $SKIPPED"
+          echo "count=$EXPORTED_COUNT" >> $GITHUB_OUTPUT
+
+      - name: Generate manifest
+        shell: bash
+        env:
+          OUTPUT_NAME: ${{ inputs.output_name }}
+          EVAL_TYPE: ${{ inputs.eval_type }}
+          FORMAT: ${{ inputs.format }}
+          SEARCH_QUERY: ${{ inputs.search_query }}
+          DATASET_SHA: ${{ steps.dataset-ref.outputs.sha }}
+          EXPORTED_COUNT: ${{ steps.export.outputs.count }}
+        run: |
+          OUTPUT_DIR="${RUNNER_TEMP}/export-output/${OUTPUT_NAME}"
+          EXPORTED_IDS_FILE="${RUNNER_TEMP}/exported-ids.txt"
+
+          # Build instance_ids array
+          if [ -f "$EXPORTED_IDS_FILE" ]; then
+            INSTANCE_IDS_JSON=$(jq -R -s 'split("\n") | map(select(. != ""))' "$EXPORTED_IDS_FILE")
+          else
+            INSTANCE_IDS_JSON="[]"
+          fi
+
+          jq -n \
+            --arg eval_type "$EVAL_TYPE" \
+            --arg format "$FORMAT" \
+            --arg search_query "$SEARCH_QUERY" \
+            --arg dataset_repo_ref "main" \
+            --arg dataset_repo_commit "$DATASET_SHA" \
+            --arg exported_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --argjson datapoint_count "${EXPORTED_COUNT:-0}" \
+            --argjson instance_ids "$INSTANCE_IDS_JSON" \
+            '{
+              eval_type: $eval_type,
+              format: $format,
+              search_query: $search_query,
+              dataset_repo_ref: $dataset_repo_ref,
+              dataset_repo_commit: $dataset_repo_commit,
+              exported_at: $exported_at,
+              datapoint_count: $datapoint_count,
+              instance_ids: $instance_ids
+            }' > "$OUTPUT_DIR/manifest.json"
+
+          echo "Manifest written to $OUTPUT_DIR/manifest.json"
+          jq '.' "$OUTPUT_DIR/manifest.json"
+
+      - name: Upload export artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.output_name }}
+          path: "${{ runner.temp }}/export-output/${{ inputs.output_name }}"
+          retention-days: 30
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "# Export Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Eval type:** ${{ inputs.eval_type }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Format:** ${{ inputs.format }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Datapoints exported:** ${{ steps.export.outputs.count }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Dataset commit:** ${{ steps.dataset-ref.outputs.sha }}" >> $GITHUB_STEP_SUMMARY
+          if [ -n "${{ inputs.search_query }}" ]; then
+            echo "- **Search filter:** ${{ inputs.search_query }}" >> $GITHUB_STEP_SUMMARY
+          fi

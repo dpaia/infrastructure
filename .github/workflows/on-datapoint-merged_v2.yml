@@ -1,0 +1,244 @@
+name: On Datapoint Merged (v2)
+run-name: "[dataset] Post-merge PR #${{ inputs.pr_number }} (key=${{ inputs.run_key }})"
+
+on:
+  workflow_dispatch:
+    inputs:
+      organization:
+        description: 'GitHub organization (dataset repo owner)'
+        required: true
+        type: string
+        default: 'dpaia'
+      repository:
+        description: 'Dataset repository name'
+        required: true
+        type: string
+        default: 'dataset'
+      pr_number:
+        description: 'Merged dataset PR number'
+        required: true
+        type: string
+      run_key:
+        description: 'Unique run correlation key (UUID)'
+        required: false
+        type: string
+        default: 'manual'
+
+jobs:
+  post-merge:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout infrastructure
+        uses: actions/checkout@v4
+
+      - name: Read merged PR metadata
+        id: metadata
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
+          DATASET_REPO: "${{ inputs.organization }}/${{ inputs.repository }}"
+          PR_NUMBER: ${{ inputs.pr_number }}
+        run: |
+          PR_BODY=$(gh pr view "$PR_NUMBER" --repo "$DATASET_REPO" --json body -q '.body')
+
+          # Parse structured metadata from HTML comment
+          INSTANCE_ID=$(echo "$PR_BODY" | grep -oP 'instance_id:\s*\K\S+' || echo "")
+          EVAL_TYPE=$(echo "$PR_BODY" | grep -oP 'eval_type:\s*\K\S+' || echo "")
+          SOURCE_PR=$(echo "$PR_BODY" | grep -oP 'source_pr:\s*\K\S+' || echo "")
+          SOURCE_COMMIT=$(echo "$PR_BODY" | grep -oP 'source_commit:\s*\K\S+' || echo "")
+
+          if [ -z "$INSTANCE_ID" ] || [ -z "$EVAL_TYPE" ]; then
+            echo "Error: could not parse metadata from PR body" >&2
+            echo "PR body:" >&2
+            echo "$PR_BODY" >&2
+            exit 1
+          fi
+
+          echo "instance_id=$INSTANCE_ID" >> $GITHUB_OUTPUT
+          echo "eval_type=$EVAL_TYPE" >> $GITHUB_OUTPUT
+          echo "source_pr=$SOURCE_PR" >> $GITHUB_OUTPUT
+          echo "source_commit=$SOURCE_COMMIT" >> $GITHUB_OUTPUT
+
+          # Build permalink to datapoint on main
+          DATA_PERMALINK="https://github.com/${DATASET_REPO}/blob/main/${EVAL_TYPE}/${INSTANCE_ID}/datapoint.json"
+          echo "data_permalink=$DATA_PERMALINK" >> $GITHUB_OUTPUT
+
+      - name: Update Dataset Metadata project to Done
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
+          DATASET_REPO: "${{ inputs.organization }}/${{ inputs.repository }}"
+          PR_NUMBER: ${{ inputs.pr_number }}
+          DATA_PERMALINK: ${{ steps.metadata.outputs.data_permalink }}
+        run: |
+          # Get dataset PR node ID
+          PR_NODE_ID=$(gh api graphql -f query='
+            query($owner: String!, $name: String!, $number: Int!) {
+              repository(owner: $owner, name: $name) {
+                pullRequest(number: $number) { id }
+              }
+            }' -f owner="${{ inputs.organization }}" -f name="${{ inputs.repository }}" -F number="$PR_NUMBER" \
+            --jq '.data.repository.pullRequest.id')
+
+          # Get Dataset Metadata project
+          PROJECT_ID=$(gh api graphql -f query='
+            query($org: String!, $number: Int!) {
+              organization(login: $org) {
+                projectV2(number: $number) { id }
+              }
+            }' -f org="dpaia" -F number=21 --jq '.data.organization.projectV2.id')
+
+          # Find project item for this PR
+          ITEM_ID=$(gh api graphql -f query='
+            query($projectId: ID!) {
+              node(id: $projectId) {
+                ... on ProjectV2 {
+                  items(first: 100) {
+                    nodes {
+                      id
+                      content { ... on PullRequest { id } }
+                    }
+                  }
+                }
+              }
+            }' -f projectId="$PROJECT_ID" \
+            --jq ".data.node.items.nodes[] | select(.content.id == \"$PR_NODE_ID\") | .id")
+
+          if [ -z "$ITEM_ID" ] || [ "$ITEM_ID" = "null" ]; then
+            echo "Warning: dataset PR not found in Dataset Metadata project, skipping status update"
+            exit 0
+          fi
+
+          # Set Status to Done using set-project-status action pattern (inline)
+          # First get field + option IDs
+          FIELDS_JSON=$(gh api graphql -f query='
+            query($project: ID!) {
+              node(id: $project) {
+                ... on ProjectV2 {
+                  fields(first: 100) {
+                    nodes {
+                      ... on ProjectV2SingleSelectField { id name options { id name } }
+                      ... on ProjectV2Field { id name }
+                    }
+                  }
+                }
+              }
+            }' -f project="$PROJECT_ID")
+
+          STATUS_FIELD_ID=$(echo "$FIELDS_JSON" | jq -r '.data.node.fields.nodes[] | select(.name == "Status") | .id')
+          DONE_OPTION_ID=$(echo "$FIELDS_JSON" | jq -r '.data.node.fields.nodes[] | select(.name == "Status") | .options[] | select(.name == "Done") | .id')
+
+          gh api graphql -f query='
+            mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!, $optionId: String!) {
+              updateProjectV2ItemFieldValue(
+                input: { projectId: $projectId, itemId: $itemId, fieldId: $fieldId, value: { singleSelectOptionId: $optionId } }
+              ) { projectV2Item { id } }
+            }' -f projectId="$PROJECT_ID" -f itemId="$ITEM_ID" -f fieldId="$STATUS_FIELD_ID" -f optionId="$DONE_OPTION_ID"
+
+          echo "Dataset Metadata status set to Done"
+
+          # Update Data field with permalink
+          DATA_FIELD_ID=$(echo "$FIELDS_JSON" | jq -r '.data.node.fields.nodes[] | select(.name == "Data") | .id')
+          if [ -n "$DATA_FIELD_ID" ] && [ "$DATA_FIELD_ID" != "null" ]; then
+            gh api graphql -f query='
+              mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!, $value: String!) {
+                updateProjectV2ItemFieldValue(
+                  input: { projectId: $projectId, itemId: $itemId, fieldId: $fieldId, value: { text: $value } }
+                ) { projectV2Item { id } }
+              }' -f projectId="$PROJECT_ID" -f itemId="$ITEM_ID" -f fieldId="$DATA_FIELD_ID" -f value="$DATA_PERMALINK"
+            echo "Data field updated with permalink"
+          fi
+
+      - name: Update source eval project to Done
+        if: steps.metadata.outputs.source_pr != ''
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
+          SOURCE_PR: ${{ steps.metadata.outputs.source_pr }}
+          EVAL_TYPE: ${{ steps.metadata.outputs.eval_type }}
+        run: |
+          # Extract owner/repo/number from source PR URL
+          PR_PARTS=$(echo "$SOURCE_PR" | sed -n 's|.*/\([^/]*\)/\([^/]*\)/pull/\([0-9]*\)|\1 \2 \3|p')
+          if [ -z "$PR_PARTS" ]; then
+            echo "Warning: could not parse source PR URL, skipping eval project update"
+            exit 0
+          fi
+          read -r SRC_OWNER SRC_REPO SRC_NUMBER <<< "$PR_PARTS"
+
+          # Get source PR node ID
+          SRC_PR_NODE_ID=$(gh api graphql -f query='
+            query($owner: String!, $name: String!, $number: Int!) {
+              repository(owner: $owner, name: $name) {
+                pullRequest(number: $number) { id }
+              }
+            }' -f owner="$SRC_OWNER" -f name="$SRC_REPO" -F number="$SRC_NUMBER" \
+            --jq '.data.repository.pullRequest.id')
+
+          # Determine eval project number from eval_type
+          # TODO: make this configurable
+          case "$EVAL_TYPE" in
+            codegen) PROJECT_NUM=12 ;;
+            debugging) PROJECT_NUM=13 ;;
+            *) echo "Unknown eval_type for project mapping: $EVAL_TYPE"; exit 0 ;;
+          esac
+
+          PROJECT_ID=$(gh api graphql -f query='
+            query($org: String!, $number: Int!) {
+              organization(login: $org) {
+                projectV2(number: $number) { id }
+              }
+            }' -f org="dpaia" -F number="$PROJECT_NUM" --jq '.data.organization.projectV2.id')
+
+          # Find item in eval project
+          ITEM_ID=$(gh api graphql -f query='
+            query($projectId: ID!) {
+              node(id: $projectId) {
+                ... on ProjectV2 {
+                  items(first: 100) {
+                    nodes {
+                      id
+                      content { ... on PullRequest { id } }
+                    }
+                  }
+                }
+              }
+            }' -f projectId="$PROJECT_ID" \
+            --jq ".data.node.items.nodes[] | select(.content.id == \"$SRC_PR_NODE_ID\") | .id")
+
+          if [ -z "$ITEM_ID" ] || [ "$ITEM_ID" = "null" ]; then
+            echo "Warning: source PR not found in eval project, skipping"
+            exit 0
+          fi
+
+          # Set to Done
+          FIELDS_JSON=$(gh api graphql -f query='
+            query($project: ID!) {
+              node(id: $project) {
+                ... on ProjectV2 {
+                  fields(first: 100) {
+                    nodes {
+                      ... on ProjectV2SingleSelectField { id name options { id name } }
+                    }
+                  }
+                }
+              }
+            }' -f project="$PROJECT_ID")
+
+          STATUS_FID=$(echo "$FIELDS_JSON" | jq -r '.data.node.fields.nodes[] | select(.name == "Status") | .id')
+          DONE_OID=$(echo "$FIELDS_JSON" | jq -r '.data.node.fields.nodes[] | select(.name == "Status") | .options[] | select(.name == "Done") | .id')
+
+          gh api graphql -f query='
+            mutation($p: ID!, $i: ID!, $f: ID!, $o: String!) {
+              updateProjectV2ItemFieldValue(input: { projectId: $p, itemId: $i, fieldId: $f, value: { singleSelectOptionId: $o } }) { projectV2Item { id } }
+            }' -f p="$PROJECT_ID" -f i="$ITEM_ID" -f f="$STATUS_FID" -f o="$DONE_OID"
+
+          echo "Source PR eval project status set to Done"
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "# Post-Merge Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Instance:** ${{ steps.metadata.outputs.instance_id }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Source PR:** ${{ steps.metadata.outputs.source_pr }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Data permalink:** ${{ steps.metadata.outputs.data_permalink }}" >> $GITHUB_STEP_SUMMARY

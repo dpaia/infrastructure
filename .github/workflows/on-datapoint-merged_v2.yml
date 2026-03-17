@@ -68,7 +68,7 @@ jobs:
         uses: ./.github/actions/query-project-items
         with:
           organization: dpaia
-          project_number: '21'
+          project_number: '3'
           github_token: ${{ secrets.PROJECT_TOKEN }}
 
       - name: Find dataset PR item in project
@@ -97,7 +97,7 @@ jobs:
         uses: ./.github/actions/update-project-field
         with:
           organization: dpaia
-          project_number: '21'
+          project_number: '3'
           item_id: ${{ steps.find-item.outputs.item_id }}
           field_name: 'Data'
           value: ${{ steps.metadata.outputs.data_permalink }}
@@ -109,7 +109,7 @@ jobs:
         uses: ./.github/actions/set-project-status
         with:
           organization: dpaia
-          project_number: '21'
+          project_number: '3'
           item_id: ${{ steps.find-item.outputs.item_id }}
           value: 'Done'
           github_token: ${{ secrets.PROJECT_TOKEN }}

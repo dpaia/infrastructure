@@ -215,8 +215,8 @@ for item in github.provide(filters=filters, limit=LIMIT):
     )
 
     # FAIL_TO_PASS: prefer item (local_data override) over env_data, check both cases
-    fail_to_pass = item.get("FAIL_TO_PASS") or item.get("fail_to_pass") or env_data.get("FAIL_TO_PASS", [])
-    pass_to_pass = item.get("PASS_TO_PASS") or item.get("pass_to_pass") or env_data.get("PASS_TO_PASS", [])
+    fail_to_pass = item.get("FAIL_TO_PASS") or item.get("fail_to_pass") or env_data.get("FAIL_TO_PASS") or env_data.get("fail_to_pass") or []
+    pass_to_pass = item.get("PASS_TO_PASS") or item.get("pass_to_pass") or env_data.get("PASS_TO_PASS") or env_data.get("pass_to_pass") or []
 
     # Enrich: add module prefixes to test names if needed
     test_data = module_test.provide(

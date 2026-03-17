@@ -23,6 +23,16 @@ on:
         required: false
         type: string
         default: 'manual'
+      eval_project_map:
+        description: 'JSON map of eval_type to project number'
+        required: false
+        type: string
+        default: '{"codegen":"12"}'
+      dataset_project_number:
+        description: 'Dataset Metadata project number'
+        required: false
+        type: string
+        default: '3'
 
 jobs:
   post-merge:
@@ -63,6 +73,15 @@ jobs:
           DATA_PERMALINK="https://github.com/${DATASET_REPO}/blob/main/${EVAL_TYPE}/${INSTANCE_ID}.json"
           echo "data_permalink=$DATA_PERMALINK" >> $GITHUB_OUTPUT
 
+      - name: Resolve eval-type project number
+        id: eval-project
+        shell: bash
+        run: |
+          EVAL_MAP='${{ inputs.eval_project_map }}'
+          EVAL_TYPE='${{ steps.metadata.outputs.eval_type }}'
+          PROJECT_NUM=$(echo "$EVAL_MAP" | jq -r --arg et "$EVAL_TYPE" '.[$et] // empty')
+          echo "project_number=$PROJECT_NUM" >> $GITHUB_OUTPUT
+
       - name: Get source PR node ID
         id: source-node
         if: steps.metadata.outputs.source_pr != ''
@@ -92,8 +111,8 @@ jobs:
         if: steps.source-node.outputs.node_id != ''
         uses: ./.github/actions/get-project-id
         with:
-          organization: dpaia
-          project_number: '3'
+          organization: ${{ inputs.organization }}
+          project_number: ${{ inputs.dataset_project_number }}
           github_token: ${{ secrets.PROJECT_TOKEN }}
 
       - name: Find source PR in Dataset Metadata project
@@ -109,8 +128,8 @@ jobs:
         if: steps.find-item.outputs.item_id != ''
         uses: ./.github/actions/update-project-field
         with:
-          organization: dpaia
-          project_number: '3'
+          organization: ${{ inputs.organization }}
+          project_number: ${{ inputs.dataset_project_number }}
           item_id: ${{ steps.find-item.outputs.item_id }}
           field_name: 'Data'
           value: ${{ steps.metadata.outputs.data_permalink }}
@@ -121,37 +140,37 @@ jobs:
         if: steps.find-item.outputs.item_id != ''
         uses: ./.github/actions/set-project-status
         with:
-          organization: dpaia
-          project_number: '3'
+          organization: ${{ inputs.organization }}
+          project_number: ${{ inputs.dataset_project_number }}
           item_id: ${{ steps.find-item.outputs.item_id }}
           value: 'Done'
           github_token: ${{ secrets.PROJECT_TOKEN }}
 
-      - name: Get Code Generation project ID
-        id: codegen-project-id
-        if: steps.source-node.outputs.node_id != ''
+      - name: Get Eval Type project ID
+        id: eval-project-id
+        if: steps.source-node.outputs.node_id != '' && steps.eval-project.outputs.project_number != ''
         uses: ./.github/actions/get-project-id
         with:
-          organization: dpaia
-          project_number: '13'
+          organization: ${{ inputs.organization }}
+          project_number: ${{ steps.eval-project.outputs.project_number }}
           github_token: ${{ secrets.PROJECT_TOKEN }}
 
-      - name: Find source PR in Code Generation project
-        id: find-codegen-item
-        if: steps.source-node.outputs.node_id != ''
+      - name: Find source PR in Eval Type project
+        id: find-eval-item
+        if: steps.source-node.outputs.node_id != '' && steps.eval-project.outputs.project_number != ''
         uses: ./.github/actions/add-issue-to-project
         with:
-          project_id: ${{ steps.codegen-project-id.outputs.project_id }}
+          project_id: ${{ steps.eval-project-id.outputs.project_id }}
           issue_node_id: ${{ steps.source-node.outputs.node_id }}
           github_token: ${{ secrets.PROJECT_TOKEN }}
 
-      - name: Set Code Generation status to Done
-        if: steps.find-codegen-item.outputs.item_id != ''
+      - name: Set Eval Type project status to Done
+        if: steps.find-eval-item.outputs.item_id != ''
         uses: ./.github/actions/set-project-status
         with:
-          organization: dpaia
-          project_number: '13'
-          item_id: ${{ steps.find-codegen-item.outputs.item_id }}
+          organization: ${{ inputs.organization }}
+          project_number: ${{ steps.eval-project.outputs.project_number }}
+          item_id: ${{ steps.find-eval-item.outputs.item_id }}
           value: 'Done'
           github_token: ${{ secrets.PROJECT_TOKEN }}
 

@@ -25,6 +25,21 @@ on:
         required: false
         type: string
         default: 'manual'
+      dataset_repo:
+        description: 'Dataset repository (owner/name)'
+        required: false
+        type: string
+        default: 'dpaia/dataset'
+      export_script:
+        description: 'Export script subdirectory name'
+        required: false
+        type: string
+        default: ''
+      dataset_project_number:
+        description: 'Dataset Metadata project number'
+        required: false
+        type: string
+        default: '3'
 
 jobs:
   generate:
@@ -64,13 +79,14 @@ jobs:
           REPOSITORY: ${{ inputs.repository }}
           PR_NUMBER: ${{ inputs.pr_number }}
           EVAL_TYPE: ${{ inputs.eval_type }}
+          EXPORT_SCRIPT_DIR: ${{ inputs.export_script || inputs.eval_type }}
         run: |
           OUTPUT_DIR="${RUNNER_TEMP}/datapoint-output"
           mkdir -p "$OUTPUT_DIR"
 
-          EXPORT_SCRIPT=".github/scripts/export/${EVAL_TYPE}/export_unified.py"
+          EXPORT_SCRIPT=".github/scripts/export/${EXPORT_SCRIPT_DIR}/export_unified.py"
           if [ ! -f "$EXPORT_SCRIPT" ]; then
-            echo "Error: no export script for eval_type='${EVAL_TYPE}'" >&2
+            echo "Error: no export script for export_script='${EXPORT_SCRIPT_DIR}'" >&2
             exit 1
           fi
 
@@ -109,7 +125,7 @@ jobs:
           source_commit: ${{ steps.source-pr.outputs.head_sha }}
           datapoint_path: ${{ steps.generate.outputs.instance_dir }}
           flat_json_path: ${{ steps.generate.outputs.flat_json }}
-          dataset_repo: dpaia/dataset
+          dataset_repo: ${{ inputs.dataset_repo }}
           github_token: ${{ secrets.PROJECT_TOKEN }}
 
       - name: Get source PR node ID
@@ -131,8 +147,8 @@ jobs:
         id: project-id
         uses: ./.github/actions/get-project-id
         with:
-          organization: dpaia
-          project_number: '3'
+          organization: ${{ inputs.organization }}
+          project_number: ${{ inputs.dataset_project_number }}
           github_token: ${{ secrets.PROJECT_TOKEN }}
 
       - name: Add source PR to project
@@ -146,8 +162,8 @@ jobs:
       - name: Set project status to In progress
         uses: ./.github/actions/set-project-status
         with:
-          organization: dpaia
-          project_number: '3'
+          organization: ${{ inputs.organization }}
+          project_number: ${{ inputs.dataset_project_number }}
           item_id: ${{ steps.add-to-project.outputs.item_id }}
           value: 'In Progress'
           github_token: ${{ secrets.PROJECT_TOKEN }}
@@ -187,8 +203,8 @@ jobs:
       - name: Set Version field
         uses: ./.github/actions/update-project-field
         with:
-          organization: dpaia
-          project_number: '3'
+          organization: ${{ inputs.organization }}
+          project_number: ${{ inputs.dataset_project_number }}
           item_id: ${{ steps.add-to-project.outputs.item_id }}
           field_name: 'Version'
           value: ${{ steps.version.outputs.value }}
@@ -198,8 +214,8 @@ jobs:
       - name: Set Commit field
         uses: ./.github/actions/update-project-field
         with:
-          organization: dpaia
-          project_number: '3'
+          organization: ${{ inputs.organization }}
+          project_number: ${{ inputs.dataset_project_number }}
           item_id: ${{ steps.add-to-project.outputs.item_id }}
           field_name: 'Commit'
           value: ${{ steps.source-pr.outputs.head_sha }}

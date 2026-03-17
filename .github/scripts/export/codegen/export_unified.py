@@ -104,42 +104,6 @@ def strip_test_field_lines(text: str) -> str:
     return _TEST_FIELD_LINE_RE.sub("", text).strip()
 
 
-def _non_empty(val) -> bool:
-    """Check if a value is meaningfully non-empty (not None, not '[]', not 'null', not '')."""
-    if val is None:
-        return False
-    if isinstance(val, str):
-        stripped = val.strip()
-        return stripped not in ("", "[]", "null")
-    if isinstance(val, list):
-        return len(val) > 0
-    return bool(val)
-
-
-def resolve_test_field(field_name: str, item: dict, env_data: dict):
-    """Resolve a test field (e.g. FAIL_TO_PASS) from item or env_data.
-
-    Checks both uppercase and lowercase variants across item, env_data,
-    and the expected/ee_bench_config.expected sections from metadata.json.
-    Skips values that look empty (None, '[]', 'null', '').
-    """
-    lower_name = field_name.lower()
-    upper_name = field_name.upper()
-    expected = env_data.get("expected", {}) or {}
-    config_expected = (env_data.get("ee_bench_config", {}) or {}).get("expected", {}) or {}
-    candidates = [
-        item.get(upper_name),
-        item.get(lower_name),
-        env_data.get(upper_name),
-        env_data.get(lower_name),
-        expected.get(upper_name),
-        expected.get(lower_name),
-        config_expected.get(upper_name),
-        config_expected.get(lower_name),
-    ]
-    return next((v for v in candidates if _non_empty(v)), [])
-
-
 def write_instance_dir(record: dict, output_base: str = "") -> None:
     """Write per-instance directory with unpacked artifacts and a datapoint.json."""
     iid = record["instance_id"]
@@ -250,17 +214,11 @@ for item in github.provide(filters=filters, limit=LIMIT):
         or {}
     )
 
-    fail_to_pass = resolve_test_field("FAIL_TO_PASS", item, env_data)
-    pass_to_pass = resolve_test_field("PASS_TO_PASS", item, env_data)
-
     # Enrich: add module prefixes to test names if needed
     test_data = module_test.provide(
         item=item,
         module_map=build_data.get("module_map", {}),
-        FAIL_TO_PASS=fail_to_pass,
-        PASS_TO_PASS=pass_to_pass,
     )
-    logger.info("  test_data: %s", {k: v for k, v in test_data.items() if 'FAIL' in k or 'PASS' in k})
 
     # Generate: structure into unified nested record
     record = codegen.provide(

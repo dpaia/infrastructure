@@ -90,6 +90,15 @@ jobs:
           echo "instance_id=$INSTANCE_ID" >> $GITHUB_OUTPUT
           echo "instance_dir=$INSTANCE_DIR" >> $GITHUB_OUTPUT
 
+          # Locate flat JSON (all files inlined)
+          FLAT_JSON="$OUTPUT_DIR/${INSTANCE_ID}.json"
+          if [ -f "$FLAT_JSON" ]; then
+            echo "flat_json=$FLAT_JSON" >> $GITHUB_OUTPUT
+            echo "Flat JSON: $FLAT_JSON"
+          else
+            echo "Warning: flat JSON not found at $FLAT_JSON"
+          fi
+
       - name: Create datapoint PR
         id: create-pr
         uses: ./.github/actions/create-datapoint-pr
@@ -99,6 +108,7 @@ jobs:
           source_pr_url: ${{ steps.source-pr.outputs.pr_url }}
           source_commit: ${{ steps.source-pr.outputs.head_sha }}
           datapoint_path: ${{ steps.generate.outputs.instance_dir }}
+          flat_json_path: ${{ steps.generate.outputs.flat_json }}
           dataset_repo: dpaia/dataset
           github_token: ${{ secrets.PROJECT_TOKEN }}
 

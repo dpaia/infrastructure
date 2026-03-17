@@ -243,27 +243,12 @@ for item in github.provide(filters=filters, limit=LIMIT):
 _output_root = OUTPUT_DIR or "datasets"
 os.makedirs(_output_root, exist_ok=True)
 
-# 1. Self-contained JSONL
-output_path = os.path.join(_output_root, "ee-bench-unified.jsonl")
-if APPEND:
-    existing_ids = set()
-    if os.path.exists(output_path):
-        with open(output_path) as f:
-            for line in f:
-                line = line.strip()
-                if line:
-                    try:
-                        existing_ids.add(json.loads(line)["instance_id"])
-                    except (json.JSONDecodeError, KeyError):
-                        pass
-    with open(output_path, "a") as f:
-        for record in records:
-            if record["instance_id"] not in existing_ids:
-                f.write(json.dumps(record) + "\n")
-else:
-    with open(output_path, "w") as f:
-        for record in records:
-            f.write(json.dumps(record) + "\n")
+# 1. Self-contained flat JSON per instance (all files inlined)
+for record in records:
+    flat_path = os.path.join(_output_root, f"{record['instance_id']}.json")
+    with open(flat_path, "w") as f:
+        json.dump(record, f, indent=2)
+    logger.info("Wrote flat JSON: %s", flat_path)
 
 # 2. Per-instance directories with unpacked artifacts
 _instance_dir_root = OUTPUT_DIR or ""

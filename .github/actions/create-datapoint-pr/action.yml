@@ -18,6 +18,10 @@ inputs:
   datapoint_path:
     description: 'Local path to the generated datapoint directory (must contain datapoint.json and subdirectories)'
     required: true
+  flat_json_path:
+    description: 'Local path to the flat JSON file (all files inlined). Copied as <eval_type>/<instance_id>.json'
+    required: false
+    default: ''
   dataset_repo:
     description: 'Dataset repository (owner/name)'
     required: false
@@ -50,6 +54,7 @@ runs:
         SOURCE_PR_URL: ${{ inputs.source_pr_url }}
         SOURCE_COMMIT: ${{ inputs.source_commit }}
         DATAPOINT_PATH: ${{ inputs.datapoint_path }}
+        FLAT_JSON_PATH: ${{ inputs.flat_json_path }}
         DATASET_REPO: ${{ inputs.dataset_repo }}
       run: |
         set -euo pipefail
@@ -89,14 +94,26 @@ runs:
           git checkout -b "$BRANCH_NAME"
         fi
 
-        # Copy datapoint files into the target directory
+        # Copy datapoint files into the target directory (structured folder)
         TARGET_DIR="${EVAL_TYPE}/${INSTANCE_ID}"
         rm -rf "$TARGET_DIR"
         mkdir -p "$TARGET_DIR"
         cp -r "$DATAPOINT_PATH"/* "$TARGET_DIR/"
 
+        # Copy flat JSON (all files inlined) as sibling file
+        FLAT_JSON_TARGET="${EVAL_TYPE}/${INSTANCE_ID}.json"
+        if [ -n "$FLAT_JSON_PATH" ] && [ -f "$FLAT_JSON_PATH" ]; then
+          cp "$FLAT_JSON_PATH" "$FLAT_JSON_TARGET"
+          echo "Copied flat JSON to $FLAT_JSON_TARGET"
+        else
+          echo "No flat JSON provided or not found, skipping"
+        fi
+
         # Stage and commit
         git add "$TARGET_DIR"
+        if [ -f "$FLAT_JSON_TARGET" ]; then
+          git add "$FLAT_JSON_TARGET"
+        fi
         if git diff --cached --quiet; then
           echo "No changes to commit"
         else

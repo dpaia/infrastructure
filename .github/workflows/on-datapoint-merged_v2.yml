@@ -71,20 +71,16 @@ jobs:
           project_number: '21'
           github_token: ${{ secrets.PROJECT_TOKEN }}
 
-      - name: Find dataset PR item and update to Done
+      - name: Find dataset PR item in project
         id: find-item
         shell: bash
         env:
-          GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
           ITEMS_JSON: ${{ steps.dataset-items.outputs.items }}
-          DATASET_REPO: "${{ inputs.organization }}/${{ inputs.repository }}"
           PR_NUMBER: ${{ inputs.pr_number }}
-          DATA_PERMALINK: ${{ steps.metadata.outputs.data_permalink }}
         run: |
           ITEMS_FILE="${RUNNER_TEMP}/dataset-items.json"
           echo "$ITEMS_JSON" > "$ITEMS_FILE"
 
-          # Find item by PR number and repo
           ITEM_ID=$(jq -r --arg num "$PR_NUMBER" --arg repo "${{ inputs.repository }}" \
             '.[] | select((.number | tostring) == $num and .repo == $repo) | .item_id' \
             "$ITEMS_FILE" | head -1)
@@ -96,37 +92,17 @@ jobs:
 
           echo "item_id=$ITEM_ID" >> $GITHUB_OUTPUT
 
-          # Update Data field with permalink
-          PROJECT_ID=$(gh api graphql -f query='
-            query($org: String!, $number: Int!) {
-              organization(login: $org) {
-                projectV2(number: $number) { id }
-              }
-            }' -f org="dpaia" -F number=21 --jq '.data.organization.projectV2.id')
-
-          FIELDS_JSON=$(gh api graphql -f query='
-            query($project: ID!) {
-              node(id: $project) {
-                ... on ProjectV2 {
-                  fields(first: 100) {
-                    nodes {
-                      ... on ProjectV2Field { id name }
-                    }
-                  }
-                }
-              }
-            }' -f project="$PROJECT_ID")
-
-          DATA_FIELD_ID=$(echo "$FIELDS_JSON" | jq -r '.data.node.fields.nodes[] | select(.name == "Data") | .id')
-          if [ -n "$DATA_FIELD_ID" ] && [ "$DATA_FIELD_ID" != "null" ]; then
-            gh api graphql -f query='
-              mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!, $value: String!) {
-                updateProjectV2ItemFieldValue(
-                  input: { projectId: $projectId, itemId: $itemId, fieldId: $fieldId, value: { text: $value } }
-                ) { projectV2Item { id } }
-              }' -f projectId="$PROJECT_ID" -f itemId="$ITEM_ID" -f fieldId="$DATA_FIELD_ID" -f value="$DATA_PERMALINK"
-            echo "Data field updated with permalink"
-          fi
+      - name: Update Data field with permalink
+        if: steps.find-item.outputs.item_id != ''
+        uses: ./.github/actions/update-project-field
+        with:
+          organization: dpaia
+          project_number: '21'
+          item_id: ${{ steps.find-item.outputs.item_id }}
+          field_name: 'Data'
+          value: ${{ steps.metadata.outputs.data_permalink }}
+          value_type: text
+          github_token: ${{ secrets.PROJECT_TOKEN }}
 
       - name: Set Dataset Metadata status to Done
         if: steps.find-item.outputs.item_id != ''

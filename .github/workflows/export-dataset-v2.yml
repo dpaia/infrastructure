@@ -5,27 +5,28 @@ on:
   workflow_dispatch:
     inputs:
       eval_type:
-        description: 'Evaluation type to export (e.g., codegen)'
+        description: 'Eval type directory in dpaia/dataset (codegen, debugging, or "all")'
         required: true
         type: string
-      format:
-        description: 'Export format'
-        required: true
-        type: choice
-        options:
-          - jsonl
-          - folders
-        default: 'jsonl'
-      output_name:
-        description: 'Name for the output artifact'
-        required: true
-        type: string
-        default: 'dataset-export'
+        default: 'codegen'
       search_query:
-        description: 'Optional regex pattern to filter items by title (case-insensitive). This is a title regex, not GitHub search syntax.'
+        description: 'GitHub search query to filter merged PRs in dpaia/dataset (empty = all merged). Uses GitHub search syntax.'
         required: false
         type: string
         default: ''
+      format:
+        description: 'Output format'
+        required: true
+        type: choice
+        options:
+          - folders
+          - jsonl
+        default: 'folders'
+      output_name:
+        description: 'Output artifact name'
+        required: false
+        type: string
+        default: 'dataset'
       organization:
         description: 'GitHub organization'
         required: false
@@ -44,16 +45,6 @@ jobs:
       - name: Checkout infrastructure
         uses: actions/checkout@v4
 
-      - name: Query Dataset Metadata items
-        id: query
-        uses: ./.github/actions/query-project-items
-        with:
-          organization: ${{ inputs.organization }}
-          project_number: '21'
-          status_filter: 'Done'
-          eval_type_filter: ${{ inputs.eval_type }}
-          github_token: ${{ secrets.PROJECT_TOKEN }}
-
       - name: Checkout dataset repo
         uses: actions/checkout@v4
         with:
@@ -69,75 +60,108 @@ jobs:
           echo "sha=$DATASET_SHA" >> $GITHUB_OUTPUT
           echo "Dataset repo at: $DATASET_SHA"
 
+      - name: Resolve instance list
+        id: resolve
+        shell: bash
+        env:
+          EVAL_TYPE: ${{ inputs.eval_type }}
+          SEARCH_QUERY: ${{ inputs.search_query }}
+          ORG: ${{ inputs.organization }}
+          DATASET_REPO: ${{ inputs.dataset_repo }}
+          GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
+        run: |
+          IDS_FILE="${RUNNER_TEMP}/instance-ids.txt"
+
+          if [[ -n "$SEARCH_QUERY" ]]; then
+            echo "Searching merged PRs with query: $SEARCH_QUERY"
+            # Intentionally unquoted $SEARCH_QUERY for word splitting of multi-word queries
+            gh search prs --repo "$ORG/$DATASET_REPO" --state closed --merged \
+              $SEARCH_QUERY --limit 1000 --json body -q '.[].body' \
+              | grep -oP '(?<=instance_id: )\S+' \
+              | sort -u > "$IDS_FILE"
+
+            RAW_COUNT=$(wc -l < "$IDS_FILE")
+            echo "Found $RAW_COUNT unique instance IDs from PR search"
+
+            # Filter by eval_type directory existence if not "all"
+            if [[ "$EVAL_TYPE" != "all" ]]; then
+              FILTERED_FILE="${RUNNER_TEMP}/instance-ids-filtered.txt"
+              while IFS= read -r id; do
+                if [[ -d "dataset-checkout/${EVAL_TYPE}/${id}" ]]; then
+                  echo "$id" >> "$FILTERED_FILE"
+                fi
+              done < "$IDS_FILE"
+              mv "${FILTERED_FILE:-/dev/null}" "$IDS_FILE" 2>/dev/null || true
+              FILTERED_COUNT=$(wc -l < "$IDS_FILE" 2>/dev/null || echo 0)
+              echo "After eval_type=$EVAL_TYPE filter: $FILTERED_COUNT instance IDs"
+            fi
+          else
+            echo "Collecting all instances from filesystem"
+            if [[ "$EVAL_TYPE" == "all" ]]; then
+              find dataset-checkout -name "datapoint.json" -exec dirname {} \; \
+                | xargs -I{} basename {} \
+                | sort -u > "$IDS_FILE"
+            else
+              find "dataset-checkout/${EVAL_TYPE}" -name "datapoint.json" -exec dirname {} \; \
+                | xargs -I{} basename {} \
+                | sort -u > "$IDS_FILE"
+            fi
+            FS_COUNT=$(wc -l < "$IDS_FILE" 2>/dev/null || echo 0)
+            echo "Found $FS_COUNT instance IDs from filesystem"
+          fi
+
+          TOTAL=$(wc -l < "$IDS_FILE" 2>/dev/null || echo 0)
+          echo "count=$TOTAL" >> $GITHUB_OUTPUT
+          echo "ids_file=$IDS_FILE" >> $GITHUB_OUTPUT
+          echo "Total instance IDs to export: $TOTAL"
+
       - name: Export datapoints
         id: export
         shell: bash
         env:
-          ITEMS_JSON: ${{ steps.query.outputs.items }}
           FORMAT: ${{ inputs.format }}
           EVAL_TYPE: ${{ inputs.eval_type }}
           OUTPUT_NAME: ${{ inputs.output_name }}
-          SEARCH_QUERY: ${{ inputs.search_query }}
+          IDS_FILE: ${{ steps.resolve.outputs.ids_file }}
         run: |
           OUTPUT_DIR="${RUNNER_TEMP}/export-output/${OUTPUT_NAME}"
           mkdir -p "$OUTPUT_DIR"
 
-          ITEMS_FILE="${RUNNER_TEMP}/items.json"
-          echo "$ITEMS_JSON" > "$ITEMS_FILE"
-          TOTAL_ITEMS=$(jq 'length' "$ITEMS_FILE")
-
-          echo "Processing $TOTAL_ITEMS Done items for eval_type=$EVAL_TYPE"
-
-          # Apply search_query filter if provided (filter by title match)
-          if [ -n "$SEARCH_QUERY" ]; then
-            jq --arg q "$SEARCH_QUERY" '[.[] | select(.title | test($q; "i"))]' "$ITEMS_FILE" > "${ITEMS_FILE}.filtered"
-            mv "${ITEMS_FILE}.filtered" "$ITEMS_FILE"
-            FILTERED_COUNT=$(jq 'length' "$ITEMS_FILE")
-            echo "After search filter: $FILTERED_COUNT items"
-          fi
-
           EXPORTED=0
           SKIPPED=0
 
-          while IFS= read -r item; do
-            DATA_VALUE=$(echo "$item" | jq -r '.fields.Data // empty')
-            ITEM_TITLE=$(echo "$item" | jq -r '.title // "unknown"')
+          while IFS= read -r INSTANCE_ID; do
+            [[ -z "$INSTANCE_ID" ]] && continue
 
-            if [ -z "$DATA_VALUE" ]; then
-              echo "Warning: skipping item '$ITEM_TITLE' - no Data field"
-              SKIPPED=$((SKIPPED + 1))
-              continue
+            # Locate the instance directory
+            if [[ "$EVAL_TYPE" == "all" ]]; then
+              # Search across all eval_type directories
+              INSTANCE_SRC=$(find dataset-checkout -type d -name "$INSTANCE_ID" | head -1)
+            else
+              INSTANCE_SRC="dataset-checkout/${EVAL_TYPE}/${INSTANCE_ID}"
             fi
 
-            # Extract instance_id from Data permalink or item metadata
-            # Data field format: https://github.com/dpaia/dataset/blob/main/<eval_type>/<instance_id>/datapoint.json
-            INSTANCE_ID=$(echo "$DATA_VALUE" | sed -n "s|.*/main/${EVAL_TYPE}/\([^/]*\)/.*|\1|p")
-            if [ -z "$INSTANCE_ID" ]; then
-              echo "Warning: skipping item '$ITEM_TITLE' - cannot parse instance_id from Data='$DATA_VALUE'"
-              SKIPPED=$((SKIPPED + 1))
-              continue
-            fi
-
-            INSTANCE_SRC="dataset-checkout/${EVAL_TYPE}/${INSTANCE_ID}"
-            if [ ! -d "$INSTANCE_SRC" ]; then
+            if [[ -z "$INSTANCE_SRC" ]] || [[ ! -d "$INSTANCE_SRC" ]]; then
               echo "Warning: skipping '$INSTANCE_ID' - directory not found in dataset repo"
               SKIPPED=$((SKIPPED + 1))
               continue
             fi
 
-            if [ "$FORMAT" = "jsonl" ]; then
-              # Read datapoint.json and output as single JSONL line
-              if [ -f "$INSTANCE_SRC/datapoint.json" ]; then
+            if [[ "$FORMAT" == "jsonl" ]]; then
+              if [[ -f "$INSTANCE_SRC/datapoint.json" ]]; then
                 jq -c '.' "$INSTANCE_SRC/datapoint.json" >> "$OUTPUT_DIR/${OUTPUT_NAME}.jsonl"
                 echo "$INSTANCE_ID" >> "${RUNNER_TEMP}/exported-ids.txt"
                 EXPORTED=$((EXPORTED + 1))
+              else
+                echo "Warning: skipping '$INSTANCE_ID' - no datapoint.json"
+                SKIPPED=$((SKIPPED + 1))
               fi
-            elif [ "$FORMAT" = "folders" ]; then
+            elif [[ "$FORMAT" == "folders" ]]; then
               cp -r "$INSTANCE_SRC" "$OUTPUT_DIR/$INSTANCE_ID"
               echo "$INSTANCE_ID" >> "${RUNNER_TEMP}/exported-ids.txt"
               EXPORTED=$((EXPORTED + 1))
             fi
-          done < <(jq -c '.[]' "$ITEMS_FILE")
+          done < "$IDS_FILE"
 
           echo "Exported $EXPORTED datapoints, skipped $SKIPPED"
           echo "count=$EXPORTED" >> $GITHUB_OUTPUT

@@ -101,14 +101,13 @@ jobs:
           dataset_repo: dpaia/dataset
           github_token: ${{ secrets.PROJECT_TOKEN }}
 
-      - name: Add to Dataset Metadata project
-        id: add-to-project
+      - name: Get dataset PR node ID
+        id: pr-node
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
           DATASET_PR_NUMBER: ${{ steps.create-pr.outputs.pr_number }}
         run: |
-          # Get the dataset PR node ID
           PR_NODE_ID=$(gh api graphql -f query='
             query($owner: String!, $name: String!, $number: Int!) {
               repository(owner: $owner, name: $name) {
@@ -116,26 +115,23 @@ jobs:
               }
             }' -f owner="dpaia" -f name="dataset" -F number="$DATASET_PR_NUMBER" \
             --jq '.data.repository.pullRequest.id')
+          echo "node_id=$PR_NODE_ID" >> $GITHUB_OUTPUT
 
-          # Get Dataset Metadata project ID (project number from config)
-          PROJECT_ID=$(gh api graphql -f query='
-            query($org: String!, $number: Int!) {
-              organization(login: $org) {
-                projectV2(number: $number) { id }
-              }
-            }' -f org="dpaia" -F number=21 --jq '.data.organization.projectV2.id')
+      - name: Get Dataset Metadata project ID
+        id: project-id
+        uses: ./.github/actions/get-project-id
+        with:
+          organization: dpaia
+          project_number: '21'
+          github_token: ${{ secrets.PROJECT_TOKEN }}
 
-          # Add PR to project
-          ITEM_ID=$(gh api graphql -f query="
-            mutation(\$projectId: ID!, \$contentId: ID!) {
-              addProjectV2ItemById(input: {projectId: \$projectId, contentId: \$contentId}) {
-                item { id }
-              }
-            }" -f projectId="$PROJECT_ID" -f contentId="$PR_NODE_ID" \
-            --jq '.data.addProjectV2ItemById.item.id')
-
-          echo "item_id=$ITEM_ID" >> $GITHUB_OUTPUT
-          echo "Added dataset PR to Dataset Metadata project (item=$ITEM_ID)"
+      - name: Add dataset PR to project
+        id: add-to-project
+        uses: ./.github/actions/add-issue-to-project
+        with:
+          project_id: ${{ steps.project-id.outputs.project_id }}
+          issue_node_id: ${{ steps.pr-node.outputs.node_id }}
+          github_token: ${{ secrets.PROJECT_TOKEN }}
 
       - name: Set project status to In progress
         uses: ./.github/actions/set-project-status

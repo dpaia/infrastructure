@@ -104,6 +104,34 @@ def strip_test_field_lines(text: str) -> str:
     return _TEST_FIELD_LINE_RE.sub("", text).strip()
 
 
+def _non_empty(val) -> bool:
+    """Check if a value is meaningfully non-empty (not None, not '[]', not 'null', not '')."""
+    if val is None:
+        return False
+    if isinstance(val, str):
+        stripped = val.strip()
+        return stripped not in ("", "[]", "null")
+    if isinstance(val, list):
+        return len(val) > 0
+    return bool(val)
+
+
+def resolve_test_field(field_name: str, item: dict, env_data: dict):
+    """Resolve a test field (e.g. FAIL_TO_PASS) from item or env_data.
+
+    Checks both uppercase and lowercase variants across both sources,
+    skipping values that look empty (None, '[]', 'null', '').
+    """
+    lower_name = field_name.lower()
+    candidates = [
+        item.get(field_name),
+        item.get(lower_name),
+        env_data.get(field_name),
+        env_data.get(lower_name),
+    ]
+    return next((v for v in candidates if _non_empty(v)), [])
+
+
 def write_instance_dir(record: dict, output_base: str = "") -> None:
     """Write per-instance directory with unpacked artifacts and a datapoint.json."""
     iid = record["instance_id"]
@@ -214,29 +242,8 @@ for item in github.provide(filters=filters, limit=LIMIT):
         or {}
     )
 
-    # FAIL_TO_PASS: check all sources, skip empty strings like "[]"
-    def _non_empty(val):
-        """True if val is a non-trivial value (not None, not empty, not '[]')."""
-        if val is None:
-            return False
-        if isinstance(val, str):
-            stripped = val.strip()
-            return stripped not in ("", "[]", "null")
-        if isinstance(val, list):
-            return len(val) > 0
-        return bool(val)
-
-    _ftp_candidates = [
-        item.get("FAIL_TO_PASS"), item.get("fail_to_pass"),
-        env_data.get("FAIL_TO_PASS"), env_data.get("fail_to_pass"),
-    ]
-    fail_to_pass = next((v for v in _ftp_candidates if _non_empty(v)), [])
-
-    _ptp_candidates = [
-        item.get("PASS_TO_PASS"), item.get("pass_to_pass"),
-        env_data.get("PASS_TO_PASS"), env_data.get("pass_to_pass"),
-    ]
-    pass_to_pass = next((v for v in _ptp_candidates if _non_empty(v)), [])
+    fail_to_pass = resolve_test_field("FAIL_TO_PASS", item, env_data)
+    pass_to_pass = resolve_test_field("PASS_TO_PASS", item, env_data)
 
     # Enrich: add module prefixes to test names if needed
     test_data = module_test.provide(

@@ -123,7 +123,7 @@ jobs:
         uses: ./.github/actions/get-project-id
         with:
           organization: dpaia
-          project_number: '21'
+          project_number: '3'
           github_token: ${{ secrets.PROJECT_TOKEN }}
 
       - name: Add dataset PR to project
@@ -138,7 +138,7 @@ jobs:
         uses: ./.github/actions/set-project-status
         with:
           organization: dpaia
-          project_number: '21'
+          project_number: '3'
           item_id: ${{ steps.add-to-project.outputs.item_id }}
           value: 'In progress'
           github_token: ${{ secrets.PROJECT_TOKEN }}

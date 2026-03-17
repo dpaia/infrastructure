@@ -59,6 +59,7 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.PROJECT_TOKEN }}
           ORGANIZATION: ${{ inputs.organization }}
           REPOSITORY: ${{ inputs.repository }}
           PR_NUMBER: ${{ inputs.pr_number }}

@@ -214,13 +214,29 @@ for item in github.provide(filters=filters, limit=LIMIT):
         or {}
     )
 
-    # FAIL_TO_PASS: prefer item (local_data override) over env_data, check both cases
-    fail_to_pass = item.get("FAIL_TO_PASS") or item.get("fail_to_pass") or env_data.get("FAIL_TO_PASS") or env_data.get("fail_to_pass") or []
-    pass_to_pass = item.get("PASS_TO_PASS") or item.get("pass_to_pass") or env_data.get("PASS_TO_PASS") or env_data.get("pass_to_pass") or []
-    logger.info("  FAIL_TO_PASS resolved: %s (type=%s)", fail_to_pass, type(fail_to_pass).__name__)
-    logger.info("  env_data keys: %s", [k for k in env_data.keys() if 'fail' in k.lower() or 'pass' in k.lower()])
-    logger.info("  env_data.get('fail_to_pass'): %s", env_data.get("fail_to_pass"))
-    logger.info("  env_data.get('FAIL_TO_PASS'): %s", env_data.get("FAIL_TO_PASS"))
+    # FAIL_TO_PASS: check all sources, skip empty strings like "[]"
+    def _non_empty(val):
+        """True if val is a non-trivial value (not None, not empty, not '[]')."""
+        if val is None:
+            return False
+        if isinstance(val, str):
+            stripped = val.strip()
+            return stripped not in ("", "[]", "null")
+        if isinstance(val, list):
+            return len(val) > 0
+        return bool(val)
+
+    _ftp_candidates = [
+        item.get("FAIL_TO_PASS"), item.get("fail_to_pass"),
+        env_data.get("FAIL_TO_PASS"), env_data.get("fail_to_pass"),
+    ]
+    fail_to_pass = next((v for v in _ftp_candidates if _non_empty(v)), [])
+
+    _ptp_candidates = [
+        item.get("PASS_TO_PASS"), item.get("pass_to_pass"),
+        env_data.get("PASS_TO_PASS"), env_data.get("pass_to_pass"),
+    ]
+    pass_to_pass = next((v for v in _ptp_candidates if _non_empty(v)), [])
 
     # Enrich: add module prefixes to test names if needed
     test_data = module_test.provide(

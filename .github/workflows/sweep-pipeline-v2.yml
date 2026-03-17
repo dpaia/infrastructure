@@ -11,7 +11,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout infrastructure
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Query eval project items (codegen)
         id: eval-items-codegen

@@ -31,7 +31,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout infrastructure
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Setup ee-dataset CLI
         uses: ./.github/actions/setup-ee-import
@@ -104,7 +104,7 @@ jobs:
 
       - name: Upload validation logs
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: "verification-${{ inputs.organization }}-${{ inputs.repository }}-${{ inputs.pr_number }}-${{ inputs.run_key }}"
           path: ${{ runner.temp }}/validation-output.txt

@@ -35,7 +35,7 @@ jobs:
       dataset_pr_url: ${{ steps.create-pr.outputs.pr_url }}
     steps:
       - name: Checkout infrastructure
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Setup ee-dataset CLI
         uses: ./.github/actions/setup-ee-import

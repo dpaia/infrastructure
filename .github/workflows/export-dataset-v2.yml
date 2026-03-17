@@ -43,10 +43,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout infrastructure
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Checkout dataset repo
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           repository: "${{ inputs.organization }}/${{ inputs.dataset_repo }}"
           token: ${{ secrets.PROJECT_TOKEN }}
@@ -210,7 +210,7 @@ jobs:
           jq '.' "$OUTPUT_DIR/manifest.json"
 
       - name: Upload export artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: ${{ inputs.output_name }}
           path: "${{ runner.temp }}/export-output/${{ inputs.output_name }}"

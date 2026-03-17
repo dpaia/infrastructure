@@ -33,10 +33,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout infrastructure
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Checkout dataset PR
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           repository: "${{ inputs.organization }}/${{ inputs.repository }}"
           token: ${{ secrets.PROJECT_TOKEN }}
@@ -96,7 +96,7 @@ jobs:
 
       - name: Upload validation logs
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: "validation-${{ steps.detect.outputs.instance_id }}"
           path: ${{ runner.temp }}/validation-output.txt

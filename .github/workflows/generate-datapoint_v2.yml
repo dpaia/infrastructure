@@ -140,7 +140,7 @@ jobs:
           organization: dpaia
           project_number: '3'
           item_id: ${{ steps.add-to-project.outputs.item_id }}
-          value: 'In progress'
+          value: 'In Progress'
           github_token: ${{ secrets.PROJECT_TOKEN }}
 
       - name: Comment on source PR

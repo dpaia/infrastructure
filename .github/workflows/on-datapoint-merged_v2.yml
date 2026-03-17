@@ -127,6 +127,34 @@ jobs:
           value: 'Done'
           github_token: ${{ secrets.PROJECT_TOKEN }}
 
+      - name: Get Code Generation project ID
+        id: codegen-project-id
+        if: steps.source-node.outputs.node_id != ''
+        uses: ./.github/actions/get-project-id
+        with:
+          organization: dpaia
+          project_number: '13'
+          github_token: ${{ secrets.PROJECT_TOKEN }}
+
+      - name: Find source PR in Code Generation project
+        id: find-codegen-item
+        if: steps.source-node.outputs.node_id != ''
+        uses: ./.github/actions/add-issue-to-project
+        with:
+          project_id: ${{ steps.codegen-project-id.outputs.project_id }}
+          issue_node_id: ${{ steps.source-node.outputs.node_id }}
+          github_token: ${{ secrets.PROJECT_TOKEN }}
+
+      - name: Set Code Generation status to Done
+        if: steps.find-codegen-item.outputs.item_id != ''
+        uses: ./.github/actions/set-project-status
+        with:
+          organization: dpaia
+          project_number: '13'
+          item_id: ${{ steps.find-codegen-item.outputs.item_id }}
+          value: 'Done'
+          github_token: ${{ secrets.PROJECT_TOKEN }}
+
       - name: Summary
         if: always()
         run: |

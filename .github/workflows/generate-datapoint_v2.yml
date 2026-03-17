@@ -112,19 +112,18 @@ jobs:
           dataset_repo: dpaia/dataset
           github_token: ${{ secrets.PROJECT_TOKEN }}
 
-      - name: Get dataset PR node ID
+      - name: Get source PR node ID
         id: pr-node
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
-          DATASET_PR_NUMBER: ${{ steps.create-pr.outputs.pr_number }}
         run: |
           PR_NODE_ID=$(gh api graphql -f query='
             query($owner: String!, $name: String!, $number: Int!) {
               repository(owner: $owner, name: $name) {
                 pullRequest(number: $number) { id }
               }
-            }' -f owner="dpaia" -f name="dataset" -F number="$DATASET_PR_NUMBER" \
+            }' -f owner="${{ inputs.organization }}" -f name="${{ inputs.repository }}" -F number="${{ inputs.pr_number }}" \
             --jq '.data.repository.pullRequest.id')
           echo "node_id=$PR_NODE_ID" >> $GITHUB_OUTPUT
 
@@ -136,7 +135,7 @@ jobs:
           project_number: '3'
           github_token: ${{ secrets.PROJECT_TOKEN }}
 
-      - name: Add dataset PR to project
+      - name: Add source PR to project
         id: add-to-project
         uses: ./.github/actions/add-issue-to-project
         with:

@@ -63,34 +63,47 @@ jobs:
           DATA_PERMALINK="https://github.com/${DATASET_REPO}/blob/main/${EVAL_TYPE}/${INSTANCE_ID}/datapoint.json"
           echo "data_permalink=$DATA_PERMALINK" >> $GITHUB_OUTPUT
 
-      - name: Query Dataset Metadata project items
-        id: dataset-items
-        uses: ./.github/actions/query-project-items
+      - name: Get source PR node ID
+        id: source-node
+        if: steps.metadata.outputs.source_pr != ''
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
+          SOURCE_PR: ${{ steps.metadata.outputs.source_pr }}
+        run: |
+          # Extract owner/repo/number from source PR URL
+          PR_PARTS=$(echo "$SOURCE_PR" | sed -n 's|.*/\([^/]*\)/\([^/]*\)/pull/\([0-9]*\)|\1 \2 \3|p')
+          if [ -z "$PR_PARTS" ]; then
+            echo "Warning: could not parse source PR URL"
+            exit 0
+          fi
+          read -r SRC_OWNER SRC_REPO SRC_NUMBER <<< "$PR_PARTS"
+          PR_NODE_ID=$(gh api graphql -f query='
+            query($owner: String!, $name: String!, $number: Int!) {
+              repository(owner: $owner, name: $name) {
+                pullRequest(number: $number) { id }
+              }
+            }' -f owner="$SRC_OWNER" -f name="$SRC_REPO" -F number="$SRC_NUMBER" \
+            --jq '.data.repository.pullRequest.id')
+          echo "node_id=$PR_NODE_ID" >> $GITHUB_OUTPUT
+
+      - name: Get Dataset Metadata project ID
+        id: project-id
+        if: steps.source-node.outputs.node_id != ''
+        uses: ./.github/actions/get-project-id
         with:
           organization: dpaia
           project_number: '3'
           github_token: ${{ secrets.PROJECT_TOKEN }}
 
-      - name: Find dataset PR item in project
+      - name: Find source PR in Dataset Metadata project
         id: find-item
-        shell: bash
-        env:
-          ITEMS_JSON: ${{ steps.dataset-items.outputs.items }}
-          PR_NUMBER: ${{ inputs.pr_number }}
-        run: |
-          ITEMS_FILE="${RUNNER_TEMP}/dataset-items.json"
-          echo "$ITEMS_JSON" > "$ITEMS_FILE"
-
-          ITEM_ID=$(jq -r --arg num "$PR_NUMBER" --arg repo "${{ inputs.repository }}" \
-            '.[] | select((.number | tostring) == $num and .repo == $repo) | .item_id' \
-            "$ITEMS_FILE" | head -1)
-
-          if [ -z "$ITEM_ID" ] || [ "$ITEM_ID" = "null" ]; then
-            echo "Warning: dataset PR not found in Dataset Metadata project, skipping status update"
-            exit 0
-          fi
-
-          echo "item_id=$ITEM_ID" >> $GITHUB_OUTPUT
+        if: steps.source-node.outputs.node_id != ''
+        uses: ./.github/actions/add-issue-to-project
+        with:
+          project_id: ${{ steps.project-id.outputs.project_id }}
+          issue_node_id: ${{ steps.source-node.outputs.node_id }}
+          github_token: ${{ secrets.PROJECT_TOKEN }}
 
       - name: Update Data field with permalink
         if: steps.find-item.outputs.item_id != ''
@@ -111,70 +124,6 @@ jobs:
           organization: dpaia
           project_number: '3'
           item_id: ${{ steps.find-item.outputs.item_id }}
-          value: 'Done'
-          github_token: ${{ secrets.PROJECT_TOKEN }}
-
-      - name: Resolve eval project for source PR
-        id: resolve-eval
-        if: steps.metadata.outputs.source_pr != ''
-        shell: bash
-        env:
-          SOURCE_PR: ${{ steps.metadata.outputs.source_pr }}
-          EVAL_TYPE: ${{ steps.metadata.outputs.eval_type }}
-        run: |
-          # Extract owner/repo/number from source PR URL
-          PR_PARTS=$(echo "$SOURCE_PR" | sed -n 's|.*/\([^/]*\)/\([^/]*\)/pull/\([0-9]*\)|\1 \2 \3|p')
-          if [ -z "$PR_PARTS" ]; then
-            echo "Warning: could not parse source PR URL, skipping eval project update"
-            exit 0
-          fi
-          read -r SRC_OWNER SRC_REPO SRC_NUMBER <<< "$PR_PARTS"
-
-          # Determine eval project number from eval_type
-          case "$EVAL_TYPE" in
-            codegen) PROJECT_NUM=12 ;;
-            debugging) PROJECT_NUM=13 ;;
-            *) echo "Unknown eval_type for project mapping: $EVAL_TYPE"; exit 0 ;;
-          esac
-
-          echo "project_number=$PROJECT_NUM" >> $GITHUB_OUTPUT
-          echo "src_repo=$SRC_REPO" >> $GITHUB_OUTPUT
-          echo "src_number=$SRC_NUMBER" >> $GITHUB_OUTPUT
-
-      - name: Query eval project items
-        id: eval-items
-        if: steps.resolve-eval.outputs.project_number != ''
-        uses: ./.github/actions/query-project-items
-        with:
-          organization: dpaia
-          project_number: ${{ steps.resolve-eval.outputs.project_number }}
-          github_token: ${{ secrets.PROJECT_TOKEN }}
-
-      - name: Find source PR in eval project
-        id: find-eval-item
-        if: steps.eval-items.outputs.count != '0'
-        shell: bash
-        env:
-          ITEMS_JSON: ${{ steps.eval-items.outputs.items }}
-          SRC_REPO: ${{ steps.resolve-eval.outputs.src_repo }}
-          SRC_NUMBER: ${{ steps.resolve-eval.outputs.src_number }}
-        run: |
-          ITEM_ID=$(echo "$ITEMS_JSON" | jq -r --arg num "$SRC_NUMBER" --arg repo "$SRC_REPO" \
-            '.[] | select((.number | tostring) == $num and .repo == $repo) | .item_id' | head -1)
-
-          if [ -z "$ITEM_ID" ] || [ "$ITEM_ID" = "null" ]; then
-            echo "Warning: source PR not found in eval project, skipping"
-            exit 0
-          fi
-          echo "item_id=$ITEM_ID" >> $GITHUB_OUTPUT
-
-      - name: Set source eval project status to Done
-        if: steps.find-eval-item.outputs.item_id != ''
-        uses: ./.github/actions/set-project-status
-        with:
-          organization: dpaia
-          project_number: ${{ steps.resolve-eval.outputs.project_number }}
-          item_id: ${{ steps.find-eval-item.outputs.item_id }}
           value: 'Done'
           github_token: ${{ secrets.PROJECT_TOKEN }}
 

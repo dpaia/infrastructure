@@ -89,16 +89,49 @@ jobs:
           bash .github/scripts/validate.sh "$INSTANCE_DIR" 2>&1 | tee "${RUNNER_TEMP}/validation-output.txt"
           EXIT_CODE=$?
 
+          # Extract JSON result from validation output (appears after "JSON output:" line)
+          RESULT_JSON_FILE="${RUNNER_TEMP}/validation-result.json"
+          sed -n '/^JSON output:$/,$ { /^JSON output:$/d; p }' "${RUNNER_TEMP}/validation-output.txt" > "$RESULT_JSON_FILE"
+
+          # Validate extracted JSON
+          if jq empty "$RESULT_JSON_FILE" 2>/dev/null; then
+            echo "result_json=$RESULT_JSON_FILE" >> $GITHUB_OUTPUT
+
+            # Extract summary fields
+            STATUS=$(jq -r '.status' "$RESULT_JSON_FILE")
+            DURATION=$(jq -r '.duration_seconds' "$RESULT_JSON_FILE")
+
+            # Extract test summary if present
+            TEST_SUMMARY=$(jq -r '.criteria[] | select(.criterion == "tests") | .summary | "Total: \(.total), Passed: \(.passed), Failed: \(.failed), Skipped: \(.skipped)"' "$RESULT_JSON_FILE" 2>/dev/null || echo "")
+            FAIL_TO_PASS=$(jq -r '.criteria[] | select(.criterion == "fail_to_pass") | .summary | "Expected: \(.expected), Matched: \(.matched)"' "$RESULT_JSON_FILE" 2>/dev/null || echo "")
+
+            echo "status=$STATUS" >> $GITHUB_OUTPUT
+            echo "duration=$DURATION" >> $GITHUB_OUTPUT
+            echo "test_summary=$TEST_SUMMARY" >> $GITHUB_OUTPUT
+            echo "fail_to_pass=$FAIL_TO_PASS" >> $GITHUB_OUTPUT
+
+            # For failures, extract which criteria failed
+            if [ "$STATUS" != "success" ]; then
+              FAILED_CRITERIA=$(jq -r '[.criteria[] | select(.status != "pass")] | map("\(.criterion): \(.status)") | join(", ")' "$RESULT_JSON_FILE" 2>/dev/null || echo "unknown")
+              echo "failed_criteria=$FAILED_CRITERIA" >> $GITHUB_OUTPUT
+
+              # Extract failed test names if test criterion failed
+              FAILED_TESTS=$(jq -r '.criteria[] | select(.criterion == "tests") | .failed_tests // [] | .[0:20] | map("- \(.name): \(.status)") | join("\n")' "$RESULT_JSON_FILE" 2>/dev/null || echo "")
+              if [ -n "$FAILED_TESTS" ]; then
+                echo "failed_tests<<FTESTS_EOF" >> $GITHUB_OUTPUT
+                echo "$FAILED_TESTS" >> $GITHUB_OUTPUT
+                echo "FTESTS_EOF" >> $GITHUB_OUTPUT
+              fi
+            fi
+          else
+            echo "Warning: could not extract valid JSON from validation output"
+            echo "status=unknown" >> $GITHUB_OUTPUT
+          fi
+
           if [ $EXIT_CODE -eq 0 ]; then
             echo "result=success" >> $GITHUB_OUTPUT
-            echo "message=Validation passed" >> $GITHUB_OUTPUT
           else
             echo "result=failure" >> $GITHUB_OUTPUT
-            # Extract last meaningful lines for failure message
-            FAIL_MSG=$(tail -20 "${RUNNER_TEMP}/validation-output.txt" | head -10)
-            echo "message<<MSG_EOF" >> $GITHUB_OUTPUT
-            echo "$FAIL_MSG" >> $GITHUB_OUTPUT
-            echo "MSG_EOF" >> $GITHUB_OUTPUT
           fi
           exit $EXIT_CODE
 
@@ -106,10 +139,19 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v5
         with:
-          name: "verification-${{ inputs.organization }}-${{ inputs.repository }}-${{ inputs.pr_number }}-${{ inputs.run_key }}"
+          name: "verification-logs-${{ inputs.run_key }}"
           path: ${{ runner.temp }}/validation-output.txt
           if-no-files-found: warn
           retention-days: 7
+
+      - name: Upload validation result JSON
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: "verification-result-${{ inputs.run_key }}"
+          path: ${{ runner.temp }}/validation-result.json
+          if-no-files-found: warn
+          retention-days: 30
 
       - name: Comment on source PR
         if: always()
@@ -117,7 +159,13 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
           RESULT: ${{ steps.validate.outputs.result }}
+          STATUS: ${{ steps.validate.outputs.status }}
           INSTANCE_ID: ${{ steps.generate.outputs.instance_id }}
+          TEST_SUMMARY: ${{ steps.validate.outputs.test_summary }}
+          FAIL_TO_PASS: ${{ steps.validate.outputs.fail_to_pass }}
+          FAILED_CRITERIA: ${{ steps.validate.outputs.failed_criteria }}
+          FAILED_TESTS: ${{ steps.validate.outputs.failed_tests }}
+          DURATION: ${{ steps.validate.outputs.duration }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           if [ "$RESULT" = "success" ]; then
@@ -132,6 +180,37 @@ jobs:
 
           **Instance:** \`${INSTANCE_ID}\`
           **Run key:** \`${{ inputs.run_key }}\`
+          **Duration:** ${DURATION}s"
+
+          if [ -n "$TEST_SUMMARY" ]; then
+            COMMENT_BODY="${COMMENT_BODY}
+          **Tests:** ${TEST_SUMMARY}"
+          fi
+
+          if [ -n "$FAIL_TO_PASS" ]; then
+            COMMENT_BODY="${COMMENT_BODY}
+          **FAIL_TO_PASS:** ${FAIL_TO_PASS}"
+          fi
+
+          if [ "$RESULT" != "success" ] && [ -n "$FAILED_CRITERIA" ]; then
+            COMMENT_BODY="${COMMENT_BODY}
+
+          **Failed criteria:** ${FAILED_CRITERIA}"
+          fi
+
+          if [ -n "$FAILED_TESTS" ]; then
+            COMMENT_BODY="${COMMENT_BODY}
+
+          <details><summary>Failed tests (up to 20)</summary>
+
+          \`\`\`
+          ${FAILED_TESTS}
+          \`\`\`
+          </details>"
+          fi
+
+          COMMENT_BODY="${COMMENT_BODY}
+
           **Details:** [Workflow run](${RUN_URL})"
 
           gh pr comment "${{ inputs.pr_number }}" \
@@ -147,4 +226,10 @@ jobs:
           echo "- **Eval type:** ${{ inputs.eval_type }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Instance:** ${{ steps.generate.outputs.instance_id }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Result:** ${{ steps.validate.outputs.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Status:** ${{ steps.validate.outputs.status }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Duration:** ${{ steps.validate.outputs.duration }}s" >> $GITHUB_STEP_SUMMARY
+          echo "- **Tests:** ${{ steps.validate.outputs.test_summary }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Run key:** ${{ inputs.run_key }}" >> $GITHUB_STEP_SUMMARY
+          if [ -n "${{ steps.validate.outputs.failed_criteria }}" ]; then
+            echo "- **Failed criteria:** ${{ steps.validate.outputs.failed_criteria }}" >> $GITHUB_STEP_SUMMARY
+          fi

@@ -217,6 +217,10 @@ for item in github.provide(filters=filters, limit=LIMIT):
     # FAIL_TO_PASS: prefer item (local_data override) over env_data, check both cases
     fail_to_pass = item.get("FAIL_TO_PASS") or item.get("fail_to_pass") or env_data.get("FAIL_TO_PASS") or env_data.get("fail_to_pass") or []
     pass_to_pass = item.get("PASS_TO_PASS") or item.get("pass_to_pass") or env_data.get("PASS_TO_PASS") or env_data.get("pass_to_pass") or []
+    logger.info("  FAIL_TO_PASS resolved: %s (type=%s)", fail_to_pass, type(fail_to_pass).__name__)
+    logger.info("  env_data keys: %s", [k for k in env_data.keys() if 'fail' in k.lower() or 'pass' in k.lower()])
+    logger.info("  env_data.get('fail_to_pass'): %s", env_data.get("fail_to_pass"))
+    logger.info("  env_data.get('FAIL_TO_PASS'): %s", env_data.get("FAIL_TO_PASS"))
 
     # Enrich: add module prefixes to test names if needed
     test_data = module_test.provide(
@@ -225,6 +229,7 @@ for item in github.provide(filters=filters, limit=LIMIT):
         FAIL_TO_PASS=fail_to_pass,
         PASS_TO_PASS=pass_to_pass,
     )
+    logger.info("  test_data: %s", {k: v for k, v in test_data.items() if 'FAIL' in k or 'PASS' in k})
 
     # Generate: structure into unified nested record
     record = codegen.provide(

@@ -123,7 +123,6 @@ jobs:
           COMMENT_BODY="${ICON} ${MSG}
 
           **Instance:** \`${INSTANCE_ID}\`
-          **Run key:** \`${{ inputs.run_key }}\`
           **Details:** [Workflow run](${RUN_URL})"
 
           gh pr comment "${{ inputs.pr_number }}" \

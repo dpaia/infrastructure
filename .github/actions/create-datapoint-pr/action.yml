@@ -82,8 +82,8 @@ runs:
         if git ls-remote --heads origin "$BRANCH_NAME" | grep -q "$BRANCH_NAME"; then
           BRANCH_EXISTS="true"
           echo "Branch '$BRANCH_NAME' exists, will update"
-          git fetch origin "$BRANCH_NAME"
-          git checkout -b "$BRANCH_NAME" "origin/$BRANCH_NAME"
+          git fetch origin "$BRANCH_NAME:$BRANCH_NAME"
+          git checkout "$BRANCH_NAME"
         else
           echo "Creating new branch '$BRANCH_NAME'"
           git checkout -b "$BRANCH_NAME"

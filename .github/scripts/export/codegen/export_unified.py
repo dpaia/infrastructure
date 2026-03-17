@@ -191,6 +191,21 @@ for item in github.provide(filters=filters, limit=LIMIT):
         head_commit=item["head_commit"],
     )
 
+    # Validate that critical environment artifacts were resolved
+    env_files = env_data.get("environment_files", {})
+    eval_files = env_data.get("eval", {})
+    missing = []
+    if not env_files:
+        missing.append(".ee-bench directory (no environment files found)")
+    elif "Dockerfile" not in env_files:
+        missing.append("Dockerfile in .ee-bench/codegen/")
+    if "run.sh" not in eval_files:
+        missing.append("run.sh in .ee-bench/codegen/eval/")
+    if missing:
+        raise RuntimeError(
+            f"Cannot generate datapoint for {preliminary_id}: missing {', '.join(missing)}"
+        )
+
     # Use instance_id from metadata.json (via env_data) if available,
     # falling back to the PR-derived value.
     instance_id = env_data.get("instance_id") or derive_instance_id(item)

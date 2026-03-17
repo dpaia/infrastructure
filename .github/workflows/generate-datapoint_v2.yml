@@ -190,8 +190,7 @@ jobs:
           COMMENT_BODY="Datapoint generated successfully.
 
           **Instance:** \`${{ steps.generate.outputs.instance_id }}\`
-          **Dataset PR:** ${{ steps.create-pr.outputs.pr_url }}
-          **Run key:** \`${{ inputs.run_key }}\`"
+          **Dataset PR:** ${{ steps.create-pr.outputs.pr_url }}"
 
           gh pr comment "${{ inputs.pr_number }}" \
             --repo "${{ inputs.organization }}/${{ inputs.repository }}" \

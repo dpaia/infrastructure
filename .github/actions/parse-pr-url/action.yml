@@ -1,0 +1,37 @@
+name: 'Parse PR URL'
+description: 'Extracts owner, repository, and number from a GitHub PR URL'
+
+inputs:
+  pr_url:
+    description: 'GitHub PR URL (e.g., https://github.com/owner/repo/pull/123)'
+    required: true
+
+outputs:
+  owner:
+    description: 'Repository owner'
+    value: ${{ steps.parse.outputs.owner }}
+  repo:
+    description: 'Repository name'
+    value: ${{ steps.parse.outputs.repo }}
+  number:
+    description: 'PR number'
+    value: ${{ steps.parse.outputs.number }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Parse PR URL
+      id: parse
+      shell: bash
+      env:
+        PR_URL: ${{ inputs.pr_url }}
+      run: |
+        PR_PARTS=$(echo "$PR_URL" | sed -n 's|.*/\([^/]*\)/\([^/]*\)/pull/\([0-9]*\)|\1 \2 \3|p')
+        if [ -z "$PR_PARTS" ]; then
+          echo "Error: could not parse PR URL: $PR_URL" >&2
+          exit 1
+        fi
+        read -r OWNER REPO NUMBER <<< "$PR_PARTS"
+        echo "owner=$OWNER" >> $GITHUB_OUTPUT
+        echo "repo=$REPO" >> $GITHUB_OUTPUT
+        echo "number=$NUMBER" >> $GITHUB_OUTPUT

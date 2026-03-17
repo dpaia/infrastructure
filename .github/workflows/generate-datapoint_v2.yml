@@ -71,54 +71,14 @@ jobs:
 
       - name: Generate datapoint
         id: generate
-        shell: bash
-        env:
-          GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
-          GITHUB_TOKEN: ${{ secrets.PROJECT_TOKEN }}
-          ORGANIZATION: ${{ inputs.organization }}
-          REPOSITORY: ${{ inputs.repository }}
-          PR_NUMBER: ${{ inputs.pr_number }}
-          EVAL_TYPE: ${{ inputs.eval_type }}
-          EXPORT_SCRIPT_PATH: ${{ inputs.export_script }}
-        run: |
-          OUTPUT_DIR="${RUNNER_TEMP}/datapoint-output"
-          mkdir -p "$OUTPUT_DIR"
-
-          # Use provided path or fall back to convention: export/<eval_type>/export_unified
-          if [ -n "$EXPORT_SCRIPT_PATH" ]; then
-            EXPORT_SCRIPT=".github/scripts/${EXPORT_SCRIPT_PATH}.py"
-          else
-            EXPORT_SCRIPT=".github/scripts/export/${EVAL_TYPE}/export_unified.py"
-          fi
-          if [ ! -f "$EXPORT_SCRIPT" ]; then
-            echo "Error: export script not found at '${EXPORT_SCRIPT}'" >&2
-            exit 1
-          fi
-
-          python3 "$EXPORT_SCRIPT" \
-            --set REPO="${ORGANIZATION}/${REPOSITORY}" \
-            --set PR_NUMBER="${PR_NUMBER}" \
-            --set VERSION="1.0" \
-            --set OUTPUT_DIR="$OUTPUT_DIR"
-
-          INSTANCE_DIR=$(find "$OUTPUT_DIR" -name "datapoint.json" -exec dirname {} \; | head -1)
-          if [ -z "$INSTANCE_DIR" ]; then
-            echo "Error: no datapoint.json in output" >&2
-            exit 1
-          fi
-
-          INSTANCE_ID=$(jq -r '.instance_id' "$INSTANCE_DIR/datapoint.json")
-          echo "instance_id=$INSTANCE_ID" >> $GITHUB_OUTPUT
-          echo "instance_dir=$INSTANCE_DIR" >> $GITHUB_OUTPUT
-
-          # Locate flat JSON (all files inlined)
-          FLAT_JSON="$OUTPUT_DIR/${INSTANCE_ID}.json"
-          if [ -f "$FLAT_JSON" ]; then
-            echo "flat_json=$FLAT_JSON" >> $GITHUB_OUTPUT
-            echo "Flat JSON: $FLAT_JSON"
-          else
-            echo "Warning: flat JSON not found at $FLAT_JSON"
-          fi
+        uses: ./.github/actions/run-export-script
+        with:
+          organization: ${{ inputs.organization }}
+          repository: ${{ inputs.repository }}
+          pr_number: ${{ inputs.pr_number }}
+          eval_type: ${{ inputs.eval_type }}
+          export_script: ${{ inputs.export_script }}
+          github_token: ${{ secrets.PROJECT_TOKEN }}
 
       - name: Create datapoint PR
         id: create-pr
@@ -126,6 +86,7 @@ jobs:
         with:
           instance_id: ${{ steps.generate.outputs.instance_id }}
           eval_type: ${{ inputs.eval_type }}
+          source_repo_name: ${{ inputs.repository }}
           source_pr_url: ${{ steps.source-pr.outputs.pr_url }}
           source_commit: ${{ steps.source-pr.outputs.head_sha }}
           datapoint_path: ${{ steps.generate.outputs.instance_dir }}
@@ -135,18 +96,12 @@ jobs:
 
       - name: Get source PR node ID
         id: pr-node
-        shell: bash
-        env:
-          GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
-        run: |
-          PR_NODE_ID=$(gh api graphql -f query='
-            query($owner: String!, $name: String!, $number: Int!) {
-              repository(owner: $owner, name: $name) {
-                pullRequest(number: $number) { id }
-              }
-            }' -f owner="${{ inputs.organization }}" -f name="${{ inputs.repository }}" -F number="${{ inputs.pr_number }}" \
-            --jq '.data.repository.pullRequest.id')
-          echo "node_id=$PR_NODE_ID" >> $GITHUB_OUTPUT
+        uses: ./.github/actions/get-pr-node-id
+        with:
+          organization: ${{ inputs.organization }}
+          repository: ${{ inputs.repository }}
+          pr_number: ${{ inputs.pr_number }}
+          github_token: ${{ secrets.PROJECT_TOKEN }}
 
       - name: Get Dataset Metadata project ID
         id: project-id

@@ -36,111 +36,28 @@ jobs:
       - name: Setup ee-dataset CLI
         uses: ./.github/actions/setup-ee-import
 
-      - name: Resolve export spec and generate datapoint
+      - name: Generate datapoint
         id: generate
-        shell: bash
-        env:
-          GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
-          GITHUB_TOKEN: ${{ secrets.PROJECT_TOKEN }}
-          ORGANIZATION: ${{ inputs.organization }}
-          REPOSITORY: ${{ inputs.repository }}
-          PR_NUMBER: ${{ inputs.pr_number }}
-          EVAL_TYPE: ${{ inputs.eval_type }}
-        run: |
-          OUTPUT_DIR="${RUNNER_TEMP}/datapoint-output"
-          mkdir -p "$OUTPUT_DIR"
-
-          # Resolve export script based on eval_type
-          EXPORT_SCRIPT=".github/scripts/export/${EVAL_TYPE}/export_unified.py"
-          if [ ! -f "$EXPORT_SCRIPT" ]; then
-            echo "Error: no export script found for eval_type='${EVAL_TYPE}' at ${EXPORT_SCRIPT}" >&2
-            exit 1
-          fi
-
-          echo "Running export script: $EXPORT_SCRIPT"
-          python3 "$EXPORT_SCRIPT" \
-            --set REPO="${ORGANIZATION}/${REPOSITORY}" \
-            --set PR_NUMBER="${PR_NUMBER}" \
-            --set VERSION="1.0" \
-            --set OUTPUT_DIR="$OUTPUT_DIR"
-
-          # Find the generated instance directory
-          INSTANCE_DIR=$(find "$OUTPUT_DIR" -name "datapoint.json" -exec dirname {} \; | head -1)
-          if [ -z "$INSTANCE_DIR" ]; then
-            echo "Error: no datapoint.json found in output" >&2
-            exit 1
-          fi
-
-          INSTANCE_ID=$(jq -r '.instance_id' "$INSTANCE_DIR/datapoint.json")
-          echo "instance_id=$INSTANCE_ID" >> $GITHUB_OUTPUT
-          echo "instance_dir=$INSTANCE_DIR" >> $GITHUB_OUTPUT
-          echo "Generated datapoint for instance: $INSTANCE_ID"
+        uses: ./.github/actions/run-export-script
+        with:
+          organization: ${{ inputs.organization }}
+          repository: ${{ inputs.repository }}
+          pr_number: ${{ inputs.pr_number }}
+          eval_type: ${{ inputs.eval_type }}
+          github_token: ${{ secrets.PROJECT_TOKEN }}
 
       - name: Run validation
         id: validate
-        shell: bash
-        env:
-          INSTANCE_DIR: ${{ steps.generate.outputs.instance_dir }}
-        run: |
-          set +e
-          chmod +x .github/scripts/validate.sh
-
-          echo "Validating datapoint at: $INSTANCE_DIR"
-          bash .github/scripts/validate.sh "$INSTANCE_DIR" 2>&1 | tee "${RUNNER_TEMP}/validation-output.txt"
-          EXIT_CODE=$?
-
-          # Extract JSON result from validation output (appears after "JSON output:" line)
-          RESULT_JSON_FILE="${RUNNER_TEMP}/validation-result.json"
-          sed -n '/^JSON output:$/,$ { /^JSON output:$/d; p }' "${RUNNER_TEMP}/validation-output.txt" > "$RESULT_JSON_FILE"
-
-          # Validate extracted JSON
-          if jq empty "$RESULT_JSON_FILE" 2>/dev/null; then
-            echo "result_json=$RESULT_JSON_FILE" >> $GITHUB_OUTPUT
-
-            # Extract summary fields
-            STATUS=$(jq -r '.status' "$RESULT_JSON_FILE")
-            DURATION=$(jq -r '.duration_seconds' "$RESULT_JSON_FILE")
-
-            # Extract test summary if present
-            TEST_SUMMARY=$(jq -r '.criteria[] | select(.criterion == "tests") | .summary | "Total: \(.total), Passed: \(.passed), Failed: \(.failed), Skipped: \(.skipped)"' "$RESULT_JSON_FILE" 2>/dev/null || echo "")
-            FAIL_TO_PASS=$(jq -r '.criteria[] | select(.criterion == "fail_to_pass") | .summary | "Expected: \(.expected), Matched: \(.matched)"' "$RESULT_JSON_FILE" 2>/dev/null || echo "")
-
-            echo "status=$STATUS" >> $GITHUB_OUTPUT
-            echo "duration=$DURATION" >> $GITHUB_OUTPUT
-            echo "test_summary=$TEST_SUMMARY" >> $GITHUB_OUTPUT
-            echo "fail_to_pass=$FAIL_TO_PASS" >> $GITHUB_OUTPUT
-
-            # For failures, extract which criteria failed
-            if [ "$STATUS" != "success" ]; then
-              FAILED_CRITERIA=$(jq -r '[.criteria[] | select(.status != "pass")] | map("\(.criterion): \(.status)") | join(", ")' "$RESULT_JSON_FILE" 2>/dev/null || echo "unknown")
-              echo "failed_criteria=$FAILED_CRITERIA" >> $GITHUB_OUTPUT
-
-              # Extract failed test names if test criterion failed
-              FAILED_TESTS=$(jq -r '.criteria[] | select(.criterion == "tests") | .failed_tests // [] | .[0:20] | map("- \(.name): \(.status)") | join("\n")' "$RESULT_JSON_FILE" 2>/dev/null || echo "")
-              if [ -n "$FAILED_TESTS" ]; then
-                echo "failed_tests<<FTESTS_EOF" >> $GITHUB_OUTPUT
-                echo "$FAILED_TESTS" >> $GITHUB_OUTPUT
-                echo "FTESTS_EOF" >> $GITHUB_OUTPUT
-              fi
-            fi
-          else
-            echo "Warning: could not extract valid JSON from validation output"
-            echo "status=unknown" >> $GITHUB_OUTPUT
-          fi
-
-          if [ $EXIT_CODE -eq 0 ]; then
-            echo "result=success" >> $GITHUB_OUTPUT
-          else
-            echo "result=failure" >> $GITHUB_OUTPUT
-          fi
-          exit $EXIT_CODE
+        uses: ./.github/actions/run-validation
+        with:
+          instance_dir: ${{ steps.generate.outputs.instance_dir }}
 
       - name: Upload validation logs
         if: always()
         uses: actions/upload-artifact@v5
         with:
           name: "verification-logs-${{ inputs.run_key }}"
-          path: ${{ runner.temp }}/validation-output.txt
+          path: ${{ steps.validate.outputs.log_path }}
           if-no-files-found: warn
           retention-days: 7
 
@@ -149,7 +66,7 @@ jobs:
         uses: actions/upload-artifact@v5
         with:
           name: "verification-result-${{ inputs.run_key }}"
-          path: ${{ runner.temp }}/validation-result.json
+          path: ${{ steps.validate.outputs.result_json_path }}
           if-no-files-found: warn
           retention-days: 30
 

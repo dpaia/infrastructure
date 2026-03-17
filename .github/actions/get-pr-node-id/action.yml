@@ -1,0 +1,42 @@
+name: 'Get PR Node ID'
+description: 'Gets the GraphQL node ID for a GitHub pull request'
+
+inputs:
+  organization:
+    description: 'Repository owner'
+    required: true
+  repository:
+    description: 'Repository name'
+    required: true
+  pr_number:
+    description: 'Pull request number'
+    required: true
+  github_token:
+    description: 'GitHub token for API access'
+    required: true
+
+outputs:
+  node_id:
+    description: 'The GraphQL node ID of the pull request'
+    value: ${{ steps.get-node-id.outputs.node_id }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Get PR node ID
+      id: get-node-id
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github_token }}
+        OWNER: ${{ inputs.organization }}
+        REPO: ${{ inputs.repository }}
+        NUMBER: ${{ inputs.pr_number }}
+      run: |
+        PR_NODE_ID=$(gh api graphql -f query='
+          query($owner: String!, $name: String!, $number: Int!) {
+            repository(owner: $owner, name: $name) {
+              pullRequest(number: $number) { id }
+            }
+          }' -f owner="$OWNER" -f name="$REPO" -F number="$NUMBER" \
+          --jq '.data.repository.pullRequest.id')
+        echo "node_id=$PR_NODE_ID" >> $GITHUB_OUTPUT

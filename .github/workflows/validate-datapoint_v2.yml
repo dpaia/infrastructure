@@ -76,30 +76,16 @@ jobs:
 
       - name: Run validation
         id: validate
-        shell: bash
-        env:
-          INSTANCE_DIR: ${{ steps.detect.outputs.instance_dir }}
-        run: |
-          set +e
-          chmod +x .github/scripts/validate.sh
-
-          echo "Validating: $INSTANCE_DIR"
-          bash .github/scripts/validate.sh "$INSTANCE_DIR" 2>&1 | tee "${RUNNER_TEMP}/validation-output.txt"
-          EXIT_CODE=$?
-
-          if [ $EXIT_CODE -eq 0 ]; then
-            echo "result=success" >> $GITHUB_OUTPUT
-          else
-            echo "result=failure" >> $GITHUB_OUTPUT
-          fi
-          exit $EXIT_CODE
+        uses: ./.github/actions/run-validation
+        with:
+          instance_dir: ${{ steps.detect.outputs.instance_dir }}
 
       - name: Upload validation logs
         if: always()
         uses: actions/upload-artifact@v5
         with:
           name: "validation-${{ steps.detect.outputs.instance_id }}"
-          path: ${{ runner.temp }}/validation-output.txt
+          path: ${{ steps.validate.outputs.log_path }}
           if-no-files-found: warn
           retention-days: 7
 

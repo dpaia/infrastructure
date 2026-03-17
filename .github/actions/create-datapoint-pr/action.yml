@@ -18,8 +18,11 @@ inputs:
   datapoint_path:
     description: 'Local path to the generated datapoint directory (must contain datapoint.json and subdirectories)'
     required: true
+  source_repo_name:
+    description: 'Source repository name, used as subdirectory under eval_type (e.g., spectre.console)'
+    required: true
   flat_json_path:
-    description: 'Local path to the flat JSON file (all files inlined). Copied as <eval_type>/<instance_id>.json'
+    description: 'Local path to the flat JSON file (all files inlined). Copied as <eval_type>/<repo>/<instance_id>.json'
     required: false
     default: ''
   dataset_repo:
@@ -51,6 +54,7 @@ runs:
         GH_TOKEN: ${{ inputs.github_token }}
         INSTANCE_ID: ${{ inputs.instance_id }}
         EVAL_TYPE: ${{ inputs.eval_type }}
+        SOURCE_REPO_NAME: ${{ inputs.source_repo_name }}
         SOURCE_PR_URL: ${{ inputs.source_pr_url }}
         SOURCE_COMMIT: ${{ inputs.source_commit }}
         DATAPOINT_PATH: ${{ inputs.datapoint_path }}
@@ -95,13 +99,13 @@ runs:
         fi
 
         # Copy datapoint files into the target directory (structured folder)
-        TARGET_DIR="${EVAL_TYPE}/${INSTANCE_ID}"
+        TARGET_DIR="${EVAL_TYPE}/${SOURCE_REPO_NAME}/${INSTANCE_ID}"
         rm -rf "$TARGET_DIR"
         mkdir -p "$TARGET_DIR"
         cp -r "$DATAPOINT_PATH"/* "$TARGET_DIR/"
 
         # Copy flat JSON (all files inlined) as sibling file
-        FLAT_JSON_TARGET="${EVAL_TYPE}/${INSTANCE_ID}.json"
+        FLAT_JSON_TARGET="${EVAL_TYPE}/${SOURCE_REPO_NAME}/${INSTANCE_ID}.json"
         if [ -n "$FLAT_JSON_PATH" ] && [ -f "$FLAT_JSON_PATH" ]; then
           cp "$FLAT_JSON_PATH" "$FLAT_JSON_TARGET"
           echo "Copied flat JSON to $FLAT_JSON_TARGET"
@@ -173,6 +177,7 @@ runs:
           echo "<!-- metadata"
           echo "instance_id: ${INSTANCE_ID}"
           echo "eval_type: ${EVAL_TYPE}"
+          echo "source_repo: ${SOURCE_REPO_NAME}"
           echo "source_pr: ${SOURCE_PR_URL}"
           echo "source_commit: ${SOURCE_COMMIT}"
           echo "generated_at: ${GENERATED_AT}"

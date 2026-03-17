@@ -54,6 +54,7 @@ jobs:
           # Parse structured metadata from HTML comment
           INSTANCE_ID=$(echo "$PR_BODY" | grep -oP 'instance_id:\s*\K\S+' || echo "")
           EVAL_TYPE=$(echo "$PR_BODY" | grep -oP 'eval_type:\s*\K\S+' || echo "")
+          SOURCE_REPO=$(echo "$PR_BODY" | grep -oP 'source_repo:\s*\K\S+' || echo "")
           SOURCE_PR=$(echo "$PR_BODY" | grep -oP 'source_pr:\s*\K\S+' || echo "")
           SOURCE_COMMIT=$(echo "$PR_BODY" | grep -oP 'source_commit:\s*\K\S+' || echo "")
 
@@ -66,11 +67,17 @@ jobs:
 
           echo "instance_id=$INSTANCE_ID" >> $GITHUB_OUTPUT
           echo "eval_type=$EVAL_TYPE" >> $GITHUB_OUTPUT
+          echo "source_repo=$SOURCE_REPO" >> $GITHUB_OUTPUT
           echo "source_pr=$SOURCE_PR" >> $GITHUB_OUTPUT
           echo "source_commit=$SOURCE_COMMIT" >> $GITHUB_OUTPUT
 
           # Build permalink to datapoint on main
-          DATA_PERMALINK="https://github.com/${DATASET_REPO}/blob/main/${EVAL_TYPE}/${INSTANCE_ID}.json"
+          if [ -n "$SOURCE_REPO" ]; then
+            DATA_PERMALINK="https://github.com/${DATASET_REPO}/blob/main/${EVAL_TYPE}/${SOURCE_REPO}/${INSTANCE_ID}.json"
+          else
+            # Fallback for legacy datapoints without source_repo metadata
+            DATA_PERMALINK="https://github.com/${DATASET_REPO}/blob/main/${EVAL_TYPE}/${INSTANCE_ID}.json"
+          fi
           echo "data_permalink=$DATA_PERMALINK" >> $GITHUB_OUTPUT
 
       - name: Resolve eval-type project number
@@ -82,29 +89,22 @@ jobs:
           PROJECT_NUM=$(echo "$EVAL_MAP" | jq -r --arg et "$EVAL_TYPE" '.[$et] // empty')
           echo "project_number=$PROJECT_NUM" >> $GITHUB_OUTPUT
 
+      - name: Parse source PR URL
+        id: source-pr
+        if: steps.metadata.outputs.source_pr != ''
+        uses: ./.github/actions/parse-pr-url
+        with:
+          pr_url: ${{ steps.metadata.outputs.source_pr }}
+
       - name: Get source PR node ID
         id: source-node
-        if: steps.metadata.outputs.source_pr != ''
-        shell: bash
-        env:
-          GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
-          SOURCE_PR: ${{ steps.metadata.outputs.source_pr }}
-        run: |
-          # Extract owner/repo/number from source PR URL
-          PR_PARTS=$(echo "$SOURCE_PR" | sed -n 's|.*/\([^/]*\)/\([^/]*\)/pull/\([0-9]*\)|\1 \2 \3|p')
-          if [ -z "$PR_PARTS" ]; then
-            echo "Warning: could not parse source PR URL"
-            exit 0
-          fi
-          read -r SRC_OWNER SRC_REPO SRC_NUMBER <<< "$PR_PARTS"
-          PR_NODE_ID=$(gh api graphql -f query='
-            query($owner: String!, $name: String!, $number: Int!) {
-              repository(owner: $owner, name: $name) {
-                pullRequest(number: $number) { id }
-              }
-            }' -f owner="$SRC_OWNER" -f name="$SRC_REPO" -F number="$SRC_NUMBER" \
-            --jq '.data.repository.pullRequest.id')
-          echo "node_id=$PR_NODE_ID" >> $GITHUB_OUTPUT
+        if: steps.source-pr.outputs.number != ''
+        uses: ./.github/actions/get-pr-node-id
+        with:
+          organization: ${{ steps.source-pr.outputs.owner }}
+          repository: ${{ steps.source-pr.outputs.repo }}
+          pr_number: ${{ steps.source-pr.outputs.number }}
+          github_token: ${{ secrets.PROJECT_TOKEN }}
 
       - name: Get Dataset Metadata project ID
         id: project-id
@@ -173,6 +173,16 @@ jobs:
           item_id: ${{ steps.find-eval-item.outputs.item_id }}
           value: 'Done'
           github_token: ${{ secrets.PROJECT_TOKEN }}
+
+      - name: Close source PR
+        if: steps.source-pr.outputs.number != ''
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
+        run: |
+          gh pr close "${{ steps.source-pr.outputs.number }}" \
+            --repo "${{ steps.source-pr.outputs.owner }}/${{ steps.source-pr.outputs.repo }}" \
+            --comment "Datapoint pipeline complete. Closing source PR (not merging)."
 
       - name: Summary
         if: always()

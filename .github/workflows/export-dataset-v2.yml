@@ -133,12 +133,11 @@ jobs:
           while IFS= read -r INSTANCE_ID; do
             [[ -z "$INSTANCE_ID" ]] && continue
 
-            # Locate the instance directory
+            # Locate the instance directory (search under eval_type/<repo>/<instance_id>)
             if [[ "$EVAL_TYPE" == "all" ]]; then
-              # Search across all eval_type directories
               INSTANCE_SRC=$(find dataset-checkout -type d -name "$INSTANCE_ID" | head -1)
             else
-              INSTANCE_SRC="dataset-checkout/${EVAL_TYPE}/${INSTANCE_ID}"
+              INSTANCE_SRC=$(find "dataset-checkout/${EVAL_TYPE}" -type d -name "$INSTANCE_ID" | head -1)
             fi
 
             if [[ -z "$INSTANCE_SRC" ]] || [[ ! -d "$INSTANCE_SRC" ]]; then

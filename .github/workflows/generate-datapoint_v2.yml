@@ -31,7 +31,7 @@ on:
         type: string
         default: 'dpaia/dataset'
       export_script:
-        description: 'Export script subdirectory name'
+        description: 'Export script path relative to .github/scripts/, without .py extension'
         required: false
         type: string
         default: ''
@@ -79,14 +79,19 @@ jobs:
           REPOSITORY: ${{ inputs.repository }}
           PR_NUMBER: ${{ inputs.pr_number }}
           EVAL_TYPE: ${{ inputs.eval_type }}
-          EXPORT_SCRIPT_DIR: ${{ inputs.export_script || inputs.eval_type }}
+          EXPORT_SCRIPT_PATH: ${{ inputs.export_script }}
         run: |
           OUTPUT_DIR="${RUNNER_TEMP}/datapoint-output"
           mkdir -p "$OUTPUT_DIR"
 
-          EXPORT_SCRIPT=".github/scripts/export/${EXPORT_SCRIPT_DIR}/export_unified.py"
+          # Use provided path or fall back to convention: export/<eval_type>/export_unified
+          if [ -n "$EXPORT_SCRIPT_PATH" ]; then
+            EXPORT_SCRIPT=".github/scripts/${EXPORT_SCRIPT_PATH}.py"
+          else
+            EXPORT_SCRIPT=".github/scripts/export/${EVAL_TYPE}/export_unified.py"
+          fi
           if [ ! -f "$EXPORT_SCRIPT" ]; then
-            echo "Error: no export script for export_script='${EXPORT_SCRIPT_DIR}'" >&2
+            echo "Error: export script not found at '${EXPORT_SCRIPT}'" >&2
             exit 1
           fi
 

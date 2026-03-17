@@ -152,6 +152,60 @@ jobs:
           value: 'In Progress'
           github_token: ${{ secrets.PROJECT_TOKEN }}
 
+      - name: Read current Version and increment
+        id: version
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
+          ITEM_ID: ${{ steps.add-to-project.outputs.item_id }}
+          PROJECT_ID: ${{ steps.project-id.outputs.project_id }}
+        run: |
+          CURRENT=$(gh api graphql -f query='
+            query($itemId: ID!) {
+              node(id: $itemId) {
+                ... on ProjectV2Item {
+                  fieldValues(first: 20) {
+                    nodes {
+                      ... on ProjectV2ItemFieldNumberValue {
+                        field { ... on ProjectV2FieldCommon { name } }
+                        number
+                      }
+                    }
+                  }
+                }
+              }
+            }' -f itemId="$ITEM_ID" \
+            --jq '.data.node.fieldValues.nodes[] | select(.field.name == "Version") | .number // empty')
+          if [ -z "$CURRENT" ]; then
+            NEXT=1
+          else
+            NEXT=$(echo "$CURRENT + 1" | bc)
+          fi
+          echo "value=$NEXT" >> $GITHUB_OUTPUT
+          echo "Version: $CURRENT -> $NEXT"
+
+      - name: Set Version field
+        uses: ./.github/actions/update-project-field
+        with:
+          organization: dpaia
+          project_number: '3'
+          item_id: ${{ steps.add-to-project.outputs.item_id }}
+          field_name: 'Version'
+          value: ${{ steps.version.outputs.value }}
+          value_type: number
+          github_token: ${{ secrets.PROJECT_TOKEN }}
+
+      - name: Set Commit field
+        uses: ./.github/actions/update-project-field
+        with:
+          organization: dpaia
+          project_number: '3'
+          item_id: ${{ steps.add-to-project.outputs.item_id }}
+          field_name: 'Commit'
+          value: ${{ steps.source-pr.outputs.head_sha }}
+          value_type: text
+          github_token: ${{ secrets.PROJECT_TOKEN }}
+
       - name: Comment on source PR
         shell: bash
         env:

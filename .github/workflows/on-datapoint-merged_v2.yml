@@ -60,7 +60,7 @@ jobs:
           echo "source_commit=$SOURCE_COMMIT" >> $GITHUB_OUTPUT
 
           # Build permalink to datapoint on main
-          DATA_PERMALINK="https://github.com/${DATASET_REPO}/blob/main/${EVAL_TYPE}/${INSTANCE_ID}/datapoint.json"
+          DATA_PERMALINK="https://github.com/${DATASET_REPO}/blob/main/${EVAL_TYPE}/${INSTANCE_ID}.json"
           echo "data_permalink=$DATA_PERMALINK" >> $GITHUB_OUTPUT
 
       - name: Get source PR node ID

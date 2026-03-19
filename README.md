@@ -57,6 +57,14 @@ Source PR in dpaia/* repo
 └─────────────────────────────────────────┘
 ```
 
+## Documentation
+
+| Guide | Audience | Description |
+|-------|----------|-------------|
+| [Contribution Guide](guides/contribution-guide.md) | Developers | How to create source PRs with `.ee-bench/` configuration |
+| [Code Review Guide](guides/code-review-guide.md) | Review team | How to validate datapoints and manage the project board |
+| [Evaluation Guide](guides/evaluation-guide.md) | Evaluation team | How to export datasets and run validation |
+
 ## Dataset Repository Layout
 
 Datapoints in `dpaia/dataset` are organized as `<eval_type>/<repo>/<instance_id>`:

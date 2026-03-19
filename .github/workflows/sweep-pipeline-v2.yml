@@ -87,7 +87,7 @@ jobs:
               REPAIRS=$((REPAIRS + 1))
               echo "  -> Dispatched verification repair (eval_type=$EVAL_TYPE)"
             fi
-          done < <(jq -c '.[] | select(.fields.Status == "Review") | select(.content_type == "PullRequest")' "$EVAL_FILE")
+          done < <(jq -c '.[] | select(.fields.Status == "Review") | select(.content_type == "PullRequest") | select(.fields.Verification == null or .fields.Verification == "Pending")' "$EVAL_FILE")
 
           echo ""
           echo "=== Checking source PRs in Verified without dataset PR ==="
@@ -115,7 +115,7 @@ jobs:
               REPAIRS=$((REPAIRS + 1))
               echo "  -> Dispatched generation repair (eval_type=$EVAL_TYPE)"
             fi
-          done < <(jq -c '.[] | select(.fields.Status == "Verified") | select(.content_type == "PullRequest")' "$EVAL_FILE")
+          done < <(jq -c '.[] | select(.fields.Status == "Verified") | select(.content_type == "PullRequest") | select(.fields.Verification == "Passed")' "$EVAL_FILE")
 
           echo ""
           echo "=== Checking merged dataset PRs not marked Done ==="

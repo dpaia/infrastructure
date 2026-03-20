@@ -10,10 +10,10 @@ on:
         type: boolean
         default: false
       eval_projects:
-        description: 'JSON map of eval_type -> project_number (e.g. {"codegen":"12","debugging":"13"})'
+        description: 'JSON map of eval_type -> project_number (e.g. {"codegen":"13"})'
         required: false
         type: string
-        default: '{"codegen":"12","debugging":"13"}'
+        default: '{"codegen":"13"}'
       dataset_project_number:
         description: 'Dataset Metadata project number'
         required: false

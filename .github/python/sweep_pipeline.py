@@ -18,9 +18,11 @@ Environment:
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 import time
+from datetime import datetime, timezone
 
 
 # ---------------------------------------------------------------------------
@@ -29,6 +31,12 @@ import time
 
 INFRA_REPO = os.environ.get("INFRA_REPO", "dpaia/infrastructure")
 DRY_RUN = os.environ.get("DRY_RUN", "false").lower() == "true"
+
+# Stale check threshold: checks in_progress longer than this are considered stuck
+STALE_CHECK_HOURS = 2
+
+# Known pipeline check names
+PIPELINE_CHECK_NAMES = {"Datapoint Verification", "Datapoint Generation", "Datapoint Validation"}
 
 
 def gh(*args: str, check: bool = True) -> str:
@@ -43,6 +51,75 @@ def gh(*args: str, check: bool = True) -> str:
         return ""
     return result.stdout.strip()
 
+
+# ---------------------------------------------------------------------------
+# Rate-limited API helper
+# ---------------------------------------------------------------------------
+
+API_CALL_DELAY = 0.1  # 100ms between calls to avoid secondary rate limits
+_last_api_call = 0.0
+
+
+def gh_rate_limited(*args: str, check: bool = True) -> str:
+    """Run gh CLI with rate limit awareness and retry."""
+    global _last_api_call
+    elapsed = time.time() - _last_api_call
+    if elapsed < API_CALL_DELAY:
+        time.sleep(API_CALL_DELAY - elapsed)
+
+    for attempt in range(3):
+        _last_api_call = time.time()
+        result = subprocess.run(
+            ["gh", "api", "--include", *args],
+            capture_output=True, text=True,
+            timeout=60,
+        )
+        # --include prepends HTTP headers to stdout; split them off
+        stdout = result.stdout or ""
+        headers_text = ""
+        body = stdout
+        if "\r\n\r\n" in stdout:
+            headers_text, body = stdout.split("\r\n\r\n", 1)
+        elif "\n\n" in stdout:
+            headers_text, body = stdout.split("\n\n", 1)
+
+        if result.returncode == 0:
+            return body.strip()
+
+        stderr_lower = (result.stderr or "").lower()
+        if "rate limit" in stderr_lower or "abuse" in stderr_lower or "secondary" in stderr_lower:
+            # Try to parse X-RateLimit-Reset or Retry-After from response headers
+            wait = _parse_rate_limit_wait(headers_text, default=60 * (attempt + 1))
+            print(f"  Rate limited, waiting {wait}s (attempt {attempt + 1}/3)")
+            time.sleep(wait)
+            continue
+
+        if check:
+            print(f"  gh api {' '.join(args[:2])}... failed: {result.stderr.strip()}", file=sys.stderr)
+        return ""
+    return ""
+
+
+def _parse_rate_limit_wait(headers_text: str, default: int) -> int:
+    """Parse wait time from rate limit response headers."""
+    # Try Retry-After header first (used for secondary rate limits)
+    retry_match = re.search(r"(?i)retry-after:\s*(\d+)", headers_text)
+    if retry_match:
+        return int(retry_match.group(1))
+
+    # Try X-RateLimit-Reset (unix timestamp)
+    reset_match = re.search(r"(?i)x-ratelimit-reset:\s*(\d+)", headers_text)
+    if reset_match:
+        reset_time = int(reset_match.group(1))
+        wait = max(1, reset_time - int(time.time()))
+        return min(wait, 300)  # Cap at 5 minutes
+
+    return default
+
+
+# ---------------------------------------------------------------------------
+# Workflow dispatch
+# ---------------------------------------------------------------------------
 
 def dispatch(workflow: str, inputs: dict[str, str]) -> bool:
     """Dispatch a workflow via gh CLI. Returns True on success."""
@@ -75,17 +152,26 @@ def run_key() -> str:
 # Check helpers
 # ---------------------------------------------------------------------------
 
-def get_check_count(owner: str, repo: str, sha: str, check_name: str) -> int:
-    """Count check runs matching check_name on a commit SHA."""
-    out = gh(
-        "api", f"repos/{owner}/{repo}/commits/{sha}/check-runs",
-        "--jq", f'[.check_runs[] | select(.name == "{check_name}")] | length',
+def get_check_runs(owner: str, repo: str, sha: str) -> list[dict]:
+    """Get all check runs for a commit SHA with pagination."""
+    out = gh_rate_limited(
+        "--paginate", "--slurp",
+        f"repos/{owner}/{repo}/commits/{sha}/check-runs",
+        "--jq", '[.[].check_runs[]] | unique_by(.id)',
         check=False,
     )
+    if not out.strip():
+        return []
     try:
-        return int(out)
-    except (ValueError, TypeError):
-        return 0
+        return json.loads(out)
+    except json.JSONDecodeError:
+        return []
+
+
+def get_check_count(owner: str, repo: str, sha: str, check_name: str) -> int:
+    """Count check runs matching check_name on a commit SHA."""
+    checks = get_check_runs(owner, repo, sha)
+    return sum(1 for cr in checks if cr.get("name") == check_name)
 
 
 def build_source_url(owner: str, repo: str, number: int) -> str:
@@ -286,6 +372,98 @@ def check_merged_not_done(dataset_items: list[dict], result: SweepResult):
             result.repaired("Dispatched post-merge repair")
 
 
+def check_stale_checks(eval_items: list[dict], dataset_items: list[dict], result: SweepResult):
+    """Detect and repair check runs stuck in_progress for longer than STALE_CHECK_HOURS."""
+    print("\n=== Checking for stale in_progress check runs ===")
+
+    now = datetime.now(timezone.utc)
+
+    # Collect PRs to check — only statuses where workflows are expected
+    ACTIVE_STATUSES = {"Review", "Verified", "Validating"}
+    prs_to_check: list[tuple[str, str, str, int]] = []  # (owner, repo, sha, number)
+
+    for item in eval_items:
+        status = item["fields"].get("Status")
+        if status not in ACTIVE_STATUSES:
+            continue
+        if item.get("content_type") != "PullRequest":
+            continue
+        head_sha = item.get("head_sha")
+        if head_sha:
+            prs_to_check.append((item["owner"], item["repo"], head_sha, item["number"]))
+
+    for item in dataset_items:
+        if item.get("state") not in ("OPEN", "open"):
+            continue
+        head_sha = item.get("head_sha")
+        if head_sha:
+            owner = item.get("owner", "dpaia")
+            repo = item.get("repo", "dataset")
+            prs_to_check.append((owner, repo, head_sha, item["number"]))
+
+    # Deduplicate by SHA to avoid redundant API calls
+    seen_shas: set[str] = set()
+    stale_count = 0
+
+    for owner, repo, sha, number in prs_to_check:
+        key = f"{owner}/{repo}@{sha}"
+        if key in seen_shas:
+            continue
+        seen_shas.add(key)
+
+        checks = get_check_runs(owner, repo, sha)
+        for cr in checks:
+            if cr.get("status") != "in_progress":
+                continue
+            if cr.get("name") not in PIPELINE_CHECK_NAMES:
+                continue
+
+            started_at_str = cr.get("started_at")
+            if not started_at_str:
+                continue
+
+            try:
+                started_at = datetime.fromisoformat(started_at_str.replace("Z", "+00:00"))
+            except (ValueError, TypeError):
+                continue
+
+            age_hours = (now - started_at).total_seconds() / 3600
+            if age_hours < STALE_CHECK_HOURS:
+                continue
+
+            check_id = cr["id"]
+            check_name = cr["name"]
+            result.issue(
+                f"{owner}/{repo}#{number} check '{check_name}' (ID {check_id}) "
+                f"stuck in_progress for {age_hours:.1f}h (started {started_at_str})"
+            )
+
+            if DRY_RUN:
+                print(f"  [DRY RUN] would PATCH check {check_id} to timed_out")
+                result.repaired(f"Would mark check {check_id} as timed_out")
+                stale_count += 1
+                continue
+
+            # PATCH the check to completed/timed_out
+            patch_out = gh_rate_limited(
+                "-X", "PATCH",
+                f"repos/{owner}/{repo}/check-runs/{check_id}",
+                "-f", "status=completed",
+                "-f", "conclusion=timed_out",
+                "-f", f"completed_at={now.isoformat()}",
+                "-f", "output[title]=Timed out",
+                "-f", "output[summary]=Check was stuck in_progress and was cleaned up by sweep pipeline.",
+                check=False,
+            )
+            if patch_out or patch_out == "":
+                result.repaired(f"Marked check {check_id} ({check_name}) as timed_out")
+                stale_count += 1
+            else:
+                print(f"  Failed to patch check {check_id}", file=sys.stderr)
+
+    print(f"  Scanned {len(seen_shas)} unique SHAs, found {stale_count} stale checks")
+
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -312,6 +490,7 @@ def main():
     check_stale_verification(eval_items, result)
     check_verified_inconsistencies(eval_items, dataset_items, result)
     check_merged_not_done(dataset_items, result)
+    check_stale_checks(eval_items, dataset_items, result)
 
     print(f"\n=== Sweep complete ===")
     print(f"Issues found: {len(result.issues)}")

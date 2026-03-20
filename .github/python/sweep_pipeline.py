@@ -253,6 +253,10 @@ def check_closed_prs_in_active_status(eval_items: list[dict], result: SweepResul
 
         result.issue(f"{owner}/{repo}#{number} in '{status}' but PR state is '{pr_state}'")
 
+        if pr_state in ("MERGED", "merged"):
+            # Can't reopen merged PRs — needs manual investigation
+            continue
+
         if DRY_RUN:
             print(f"  [DRY RUN] would reopen {owner}/{repo}#{number}")
             result.repaired(f"Would reopen PR #{number}")
@@ -311,11 +315,25 @@ def check_verified_inconsistencies(eval_items: list[dict], dataset_items: list[d
             # Don't auto-repair — this needs manual investigation
             continue
 
-        # 2. Source PR should be open
+        # 2. Source PR should be open — reopen if closed
         if pr_state and pr_state not in ("OPEN", "open"):
             result.issue(f"{owner}/{repo}#{number} in Verified but PR state is '{pr_state}'")
-            # Don't auto-repair — closed PRs in Verified need manual review
-            continue
+            if pr_state not in ("MERGED", "merged"):
+                if DRY_RUN:
+                    print(f"  [DRY RUN] would reopen {owner}/{repo}#{number}")
+                    result.repaired(f"Would reopen PR #{number}")
+                else:
+                    out = gh_rate_limited(
+                        "-X", "PATCH",
+                        f"repos/{owner}/{repo}/pulls/{number}",
+                        "-f", "state=open",
+                        check=False,
+                    )
+                    if out is not None:
+                        result.repaired(f"Reopened {owner}/{repo}#{number}")
+                    else:
+                        print(f"  Failed to reopen {owner}/{repo}#{number}", file=sys.stderr)
+            # Continue to check dataset PR existence even after reopening
 
         # 3. Check for dataset PR existence
         dataset_prs = dataset_by_source.get(source_url, [])

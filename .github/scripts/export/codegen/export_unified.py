@@ -62,11 +62,13 @@ GITHUB_TOKEN = os.environ["GITHUB_TOKEN"]
 # --- Providers ---
 github = GitHubPullRequestsProvider(token=GITHUB_TOKEN)
 
+# Keyed <details type="metadata" key="..."> blocks are parsed automatically.
+# The sections dict is only needed for backward compat with old ## header PRs.
 sections = SectionProvider(sections={
     "problem_statement": "## Problem Statement",
-    "requirements": "## Requirements",
     "hints_text": "## Hints",
-    "interface": "## Interface"
+    "interface": "## Interface",
+    "requirements": "## Requirements",
 })
 
 patch_splitter = PatchSplitterProvider()

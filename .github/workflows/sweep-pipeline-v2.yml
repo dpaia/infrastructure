@@ -90,6 +90,58 @@ jobs:
           done < <(jq -c '.[] | select(.fields.Status == "Review") | select(.content_type == "PullRequest") | select(.fields.Verification == null or .fields.Verification == "Pending")' "$EVAL_FILE")
 
           echo ""
+          echo "=== Checking stale Verification on items moved from Verified/Done ==="
+          # Resolve project IDs and Verification field IDs once per eval project
+          CODEGEN_PROJECT_ID=$(gh api graphql -f query='
+            query($org:String!, $number:Int!) {
+              organization(login: $org) { projectV2(number: $number) { id } }
+            }' -f org="dpaia" -F number=12 --jq '.data.organization.projectV2.id')
+
+          DEBUGGING_PROJECT_ID=$(gh api graphql -f query='
+            query($org:String!, $number:Int!) {
+              organization(login: $org) { projectV2(number: $number) { id } }
+            }' -f org="dpaia" -F number=13 --jq '.data.organization.projectV2.id')
+
+          CODEGEN_VERIF_FIELD_ID=$(gh api graphql -f query='
+            query($project:ID!) {
+              node(id: $project) { ... on ProjectV2 { fields(first:100) { nodes { ... on ProjectV2FieldCommon { id name } } } } }
+            }' -f project="$CODEGEN_PROJECT_ID" --jq '.data.node.fields.nodes[] | select(.name == "Verification") | .id')
+
+          DEBUGGING_VERIF_FIELD_ID=$(gh api graphql -f query='
+            query($project:ID!) {
+              node(id: $project) { ... on ProjectV2 { fields(first:100) { nodes { ... on ProjectV2FieldCommon { id name } } } } }
+            }' -f project="$DEBUGGING_PROJECT_ID" --jq '.data.node.fields.nodes[] | select(.name == "Verification") | .id')
+
+          while IFS= read -r item; do
+            OWNER=$(echo "$item" | jq -r '.owner')
+            REPO=$(echo "$item" | jq -r '.repo')
+            NUMBER=$(echo "$item" | jq -r '.number')
+            STATUS=$(echo "$item" | jq -r '.fields.Status')
+            ITEM_ID=$(echo "$item" | jq -r '.item_id')
+            EVAL_TYPE=$(echo "$item" | jq -r '.eval_type')
+
+            echo "INCONSISTENCY: $OWNER/$REPO#$NUMBER has Status='$STATUS' but Verification='Passed' (stale)"
+            ISSUES_FOUND=$((ISSUES_FOUND + 1))
+
+            if [ "$EVAL_TYPE" = "codegen" ]; then
+              PROJECT_ID="$CODEGEN_PROJECT_ID"
+              FIELD_ID="$CODEGEN_VERIF_FIELD_ID"
+            else
+              PROJECT_ID="$DEBUGGING_PROJECT_ID"
+              FIELD_ID="$DEBUGGING_VERIF_FIELD_ID"
+            fi
+
+            gh api graphql -f query='
+              mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!) {
+                clearProjectV2ItemFieldValue(input: {
+                  projectId: $projectId, itemId: $itemId, fieldId: $fieldId
+                }) { projectV2Item { id } }
+              }' -f projectId="$PROJECT_ID" -f itemId="$ITEM_ID" -f fieldId="$FIELD_ID"
+            REPAIRS=$((REPAIRS + 1))
+            echo "  -> Cleared stale Verification field (eval_type=$EVAL_TYPE)"
+          done < <(jq -c '.[] | select(.fields.Status != "Verified" and .fields.Status != "Done") | select(.fields.Verification == "Passed")' "$EVAL_FILE")
+
+          echo ""
           echo "=== Checking source PRs in Verified without dataset PR ==="
           while IFS= read -r item; do
             OWNER=$(echo "$item" | jq -r '.owner')

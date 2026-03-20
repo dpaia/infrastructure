@@ -1,0 +1,60 @@
+name: 'Clear Project Field'
+description: 'Clears a GitHub Projects (v2) field value on an item'
+author: 'JetBrains'
+
+inputs:
+  organization:
+    description: 'GitHub organization name'
+    required: true
+  project_number:
+    description: 'Project number within the organization'
+    required: true
+  item_id:
+    description: 'Project item node ID'
+    required: true
+  field_name:
+    description: 'Name of the project field to clear'
+    required: true
+  github_token:
+    description: 'GitHub token for API access'
+    required: true
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Get project ID
+      id: get-project-id
+      uses: ./.github/actions/get-project-id
+      with:
+        organization: ${{ inputs.organization }}
+        project_number: ${{ inputs.project_number }}
+        github_token: ${{ inputs.github_token }}
+
+    - name: Get field ID
+      id: get-field-id
+      uses: ./.github/actions/get-project-field-id
+      with:
+        project_id: ${{ steps.get-project-id.outputs.project_id }}
+        field_name: ${{ inputs.field_name }}
+        github_token: ${{ inputs.github_token }}
+
+    - name: Clear field value
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github_token }}
+        PROJECT_ID: ${{ steps.get-project-id.outputs.project_id }}
+        ITEM_ID: ${{ inputs.item_id }}
+        FIELD_ID: ${{ steps.get-field-id.outputs.field_id }}
+      run: |
+        echo "Clearing field '$FIELD_ID' on item '$ITEM_ID' in project '$PROJECT_ID'..."
+        gh api graphql -f query='
+          mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!) {
+            clearProjectV2ItemFieldValue(input: {
+              projectId: $projectId,
+              itemId: $itemId,
+              fieldId: $fieldId
+            }) {
+              projectV2Item { id }
+            }
+          }' -f projectId="$PROJECT_ID" -f itemId="$ITEM_ID" -f fieldId="$FIELD_ID"
+        echo "✅ Cleared field on item '$ITEM_ID'"

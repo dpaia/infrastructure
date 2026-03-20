@@ -31,7 +31,7 @@ jobs:
   sweep:
     runs-on: ubuntu-latest
     env:
-      EVAL_PROJECTS: ${{ inputs.eval_projects || '{"codegen":"12","debugging":"13"}' }}
+      EVAL_PROJECTS: ${{ inputs.eval_projects || '{"codegen":"13"}' }}
       DATASET_PROJECT: ${{ inputs.dataset_project_number || '3' }}
       ORG: ${{ inputs.organization || 'dpaia' }}
     steps:
@@ -156,7 +156,7 @@ jobs:
           DATASET_ITEMS: ${{ steps.query-dataset.outputs.items }}
         run: |
           DATASET_FILE="${RUNNER_TEMP}/dataset-items.json"
-          echo "$DATASET_ITEMS" > "$DATASET_FILE"
+          printenv DATASET_ITEMS > "$DATASET_FILE"
           echo "dataset_file=$DATASET_FILE" >> $GITHUB_OUTPUT
 
       - name: Detect and repair inconsistencies

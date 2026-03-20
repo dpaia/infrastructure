@@ -149,16 +149,6 @@ jobs:
           project_number: ${{ env.DATASET_PROJECT }}
           github_token: ${{ secrets.PROJECT_TOKEN }}
 
-      - name: Write dataset items to file
-        id: dataset-file
-        shell: bash
-        env:
-          DATASET_ITEMS: ${{ steps.query-dataset.outputs.items }}
-        run: |
-          DATASET_FILE="${RUNNER_TEMP}/dataset-items.json"
-          printenv DATASET_ITEMS > "$DATASET_FILE"
-          echo "dataset_file=$DATASET_FILE" >> $GITHUB_OUTPUT
-
       - name: Detect and repair inconsistencies
         id: sweep
         env:
@@ -166,9 +156,10 @@ jobs:
           INFRA_REPO: "${{ env.ORG }}/infrastructure"
           DRY_RUN: ${{ inputs.dry_run || 'false' }}
         run: |
+          # query-project-items action writes result to $RUNNER_TEMP/query-result.json
           python3 .github/python/sweep_pipeline.py \
             --eval-items "${{ steps.query-eval.outputs.eval_file }}" \
-            --dataset-items "${{ steps.dataset-file.outputs.dataset_file }}" \
+            --dataset-items "${RUNNER_TEMP}/query-result.json" \
             --output "${RUNNER_TEMP}/sweep-result.json"
 
       - name: Upload sweep result

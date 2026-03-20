@@ -18,7 +18,7 @@ on:
         description: 'Dataset Metadata project number'
         required: false
         type: string
-        default: '21'
+        default: '3'
       organization:
         description: 'GitHub organization'
         required: false
@@ -32,7 +32,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       EVAL_PROJECTS: ${{ inputs.eval_projects || '{"codegen":"12","debugging":"13"}' }}
-      DATASET_PROJECT: ${{ inputs.dataset_project_number || '21' }}
+      DATASET_PROJECT: ${{ inputs.dataset_project_number || '3' }}
       ORG: ${{ inputs.organization || 'dpaia' }}
     steps:
       - name: Checkout infrastructure

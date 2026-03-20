@@ -33,7 +33,7 @@ INFRA_REPO = os.environ.get("INFRA_REPO", "dpaia/infrastructure")
 DRY_RUN = os.environ.get("DRY_RUN", "false").lower() == "true"
 
 # Stale check threshold: checks in_progress longer than this are considered stuck
-STALE_CHECK_HOURS = 2
+STALE_CHECK_HOURS = 1
 
 # Known pipeline check names
 PIPELINE_CHECK_NAMES = {"Datapoint Verification", "Datapoint Generation", "Datapoint Validation"}
@@ -233,33 +233,41 @@ def check_review_without_verification(eval_items: list[dict], result: SweepResul
                 result.repaired(f"Dispatched verification (eval_type={eval_type})")
 
 
-def check_stale_verification(eval_items: list[dict], result: SweepResult):
-    """Items with Verification=Passed but Status not in Verified/Done."""
-    print("\n=== Checking stale Verification on items outside Verified/Done ===")
+def check_closed_prs_in_active_status(eval_items: list[dict], result: SweepResult):
+    """PRs in active pipeline statuses that are closed — reopen them."""
+    ACTIVE_STATUSES = {"In Progress", "Review", "Verified"}
+    print("\n=== Checking for closed PRs in active pipeline statuses ===")
     for item in eval_items:
-        if item["fields"].get("Verification") != "Passed":
-            continue
         status = item["fields"].get("Status")
-        if status in ("Verified", "Done"):
+        if status not in ACTIVE_STATUSES:
+            continue
+        if item.get("content_type") != "PullRequest":
+            continue
+        pr_state = item.get("state")
+        if not pr_state or pr_state in ("OPEN", "open"):
             continue
 
         owner = item["owner"]
         repo = item["repo"]
         number = item["number"]
-        eval_type = item["eval_type"]
-        project_number = item["project_number"]
 
-        result.issue(f"{owner}/{repo}#{number} has Status='{status}' but Verification='Passed' (stale)")
-        ok = dispatch("sync-project-fields_v2.yml", {
-            "organization": owner,
-            "repository": repo,
-            "pr_number": str(number),
-            "operation": "clear-verification",
-            "eval_project_number": str(project_number),
-            "run_key": run_key(),
-        })
-        if ok:
-            result.repaired(f"Dispatched clear-verification (eval_type={eval_type})")
+        result.issue(f"{owner}/{repo}#{number} in '{status}' but PR state is '{pr_state}'")
+
+        if DRY_RUN:
+            print(f"  [DRY RUN] would reopen {owner}/{repo}#{number}")
+            result.repaired(f"Would reopen PR #{number}")
+            continue
+
+        out = gh_rate_limited(
+            "-X", "PATCH",
+            f"repos/{owner}/{repo}/pulls/{number}",
+            "-f", "state=open",
+            check=False,
+        )
+        if out is not None:
+            result.repaired(f"Reopened {owner}/{repo}#{number}")
+        else:
+            print(f"  Failed to reopen {owner}/{repo}#{number}", file=sys.stderr)
 
 
 def check_verified_inconsistencies(eval_items: list[dict], dataset_items: list[dict], result: SweepResult):
@@ -487,7 +495,7 @@ def main():
     result = SweepResult()
 
     check_review_without_verification(eval_items, result)
-    check_stale_verification(eval_items, result)
+    check_closed_prs_in_active_status(eval_items, result)
     check_verified_inconsistencies(eval_items, dataset_items, result)
     check_merged_not_done(dataset_items, result)
     check_stale_checks(eval_items, dataset_items, result)

@@ -195,18 +195,41 @@ dpaia/dataset/
 ### Sweep Pipeline
 
 **File:** `.github/workflows/sweep-pipeline-v2.yml`
+**Script:** `.github/python/sweep_pipeline.py`
 
-**Purpose:** Detects and repairs inconsistencies in the pipeline state.
+**Purpose:** Detects and repairs inconsistencies in the pipeline state. Acts as a safety net for dropped events, bot restarts, failed workflows, and manual board edits that leave the pipeline in an inconsistent state.
 
 **Trigger:**
 - **Scheduled:** Every 6 hours (`0 */6 * * *`)
+- **On bot startup:** The issue-validator-bot dispatches a sweep on every deploy/restart to catch state lost from in-memory persistence
 - **Manual:** `workflow_dispatch`
 
-**What it does:**
-1. Queries all eval type projects and the Dataset Metadata project
-2. Finds source PRs in "Review" without a verification check → dispatches `verify-source_v2.yml`
-3. Finds source PRs in "Verified" without a dataset PR → dispatches `generate-datapoint_v2.yml`
-4. Finds merged dataset PRs not marked "Done" → dispatches `on-datapoint-merged_v2.yml`
+**How it works:**
+1. Queries all eval type projects and the Dataset Metadata project via GraphQL (with pagination)
+2. Runs each consistency check against the queried items
+3. For each inconsistency found, either repairs it directly (API call) or dispatches the appropriate workflow
+4. Produces a JSON summary artifact with all issues found and repairs made
+
+**Consistency checks:**
+
+| Check | Inconsistent State | How Detected | Repair |
+|-------|--------------------|--------------|--------|
+| **Missing verification** | Source PR in "Review" with no "Datapoint Verification" check run on HEAD | Query check runs for the PR's head SHA | Dispatch `verify-source_v2.yml` |
+| **Closed PR in active status** | Source PR is closed but project status is "In Progress", "Review", or "Verified" | Compare PR state from GraphQL against project Status field | Reopen the PR via REST API (skip if merged — can't reopen) |
+| **Verified without Verification=Passed** | Source PR in "Verified" but Verification field is not "Passed" | Field value mismatch | Report only — needs manual investigation (possible guard bypass) |
+| **Verified with closed source PR** | Source PR in "Verified" but PR is closed/merged | PR state check | Reopen if closed (not merged); report if merged |
+| **Verified without dataset PR** | Source PR in "Verified" but no dataset PR exists in the Dataset Metadata project | Cross-reference eval items against dataset items by source PR URL | Dispatch `generate-datapoint_v2.yml` |
+| **Verified with all dataset PRs closed** | Source PR in "Verified" but all linked dataset PRs are closed (not merged) | Dataset PR state check — indicates failed generation | Dispatch `generate-datapoint_v2.yml` (re-generation) |
+| **Merged dataset PR not Done** | Dataset PR is merged but project status is not "Done" | Compare PR state against Status field | Dispatch `on-datapoint-merged_v2.yml` |
+| **Stale check runs** | Pipeline check run ("Datapoint Verification", "Datapoint Generation", or "Datapoint Validation") stuck `in_progress` for over 1 hour | Query check runs on active PRs, compare `started_at` to current time | PATCH check to `completed` with conclusion `timed_out` |
+
+**API considerations:**
+- Status filtering limits check-runs queries to PRs in active statuses only (~10-30 API calls instead of scanning all items)
+- SHA deduplication avoids redundant queries when multiple project items reference the same commit
+- Rate-limited API helper (`gh_rate_limited`) adds 100ms inter-call delay and retries on rate limit responses, reading the actual wait period from `Retry-After` or `X-RateLimit-Reset` headers
+- Paginated check-runs queries via `gh api --paginate --slurp`
+
+**Inputs:** `dry_run` (detect only, no repairs), `eval_projects` (JSON map of eval_type to project_number), `dataset_project_number`, `organization`
 
 ---
 

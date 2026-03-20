@@ -15,6 +15,8 @@ Currently the only supported evaluation type is **codegen** (code generation). T
 4. If verification passes, the reviewer moves the PR to "Verified"
 5. The bot generates a dataset PR, validates it, auto-merges it, and closes your source PR
 
+For a complete example, see [dpaia/spectre.console#2](https://github.com/dpaia/spectre.console/pull/2) — a C# datapoint where a bug fix (gold patch) and new tests (test patch) are automatically separated from the PR diff.
+
 ## Prerequisites
 
 - **Repository**: Must be under the `dpaia` GitHub organization
@@ -59,23 +61,30 @@ The metadata file defines the datapoint's identity and expected test outcomes.
 
 ### Fields
 
-Any fields that are required for the evaluation.
+All fields in `metadata.json` are **optional**. They are populated in the resulting datapoint and become available as **template variables** in `run.sh`, `Dockerfile`, and other `.ee-bench/` files (see [Template Variables in .ee-bench Files](#template-variables-in-ee-bench-files)). You can add any custom fields your templates need (e.g., `python_version`, `dotnet_sdk`, `node_version`).
 
-### Common Optional Fields
+### Common Fields
 
-| Field                           | Type     | Description                                                           |
-|---------------------------------|----------|-----------------------------------------------------------------------|
-| `version`                       | string   | Schema version (default: `"1.0"`)                                     |
-| `benchmark_type`                | string   | Evaluation type (default: `"codegen"`)                                |
-| `language`                      | string   | Programming language (e.g., `"java"`, `"csharp"`, `"python"`)         |
-| `jvm_version`                   | string   | JVM version if applicable (e.g., `"21"`, `"24"`)                      |
-| `test_framework`                | string   | Test framework identifier (e.g., `"net6.0"`, `"junit5"`)              |
-| `environment.project_root`      | string   | Working directory inside the container (default: `/repo`)             |
-| `environment.docker.run_params` | string   | Extra `docker run` flags (e.g., `"--network=host"`, `"--privileged"`) |
-| `expected.fail_to_pass`         | string[] | List of tests which should be fixed                                   |
-| `environment.files`             | object   | Map of filename to content, added to the Docker build context         |
-| `eval.timeout_seconds`          | number   | Maximum evaluation time in seconds                                    |
-| `eval.files`                    | object   | Map of filename to content, added to the eval directory               |
+| Field                           | Type     | Description                                                                                                                                               |
+|---------------------------------|----------|-----------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `version`                       | string   | Schema version (default: `"1.0"`)                                                                                                                         |
+| `benchmark_type`                | string   | Evaluation type (default: `"codegen"`)                                                                                                                    |
+| `language`                      | string   | Programming language (e.g., `"java"`, `"csharp"`, `"python"`)                                                                                             |
+| `environment.project_root`      | string   | Working directory inside the container (default: `/repo`)                                                                                                 |
+| `environment.docker.run_params` | string   | Extra `docker run` flags (e.g., `"--network=host"`, `"--privileged"`)                                                                                     |
+| `expected.fail_to_pass`         | string[] | Tests expected to fail before the fix and pass after — used to verify the gold patch fixes the intended issue. Available as template variable in `run.sh` |
+| `expected.pass_to_pass`         | string[] | Tests expected to pass both before and after — ensures the fix doesn't break existing functionality. Available as template variable in `run.sh`           |
+| `patch.test_patterns`           | string[] | Glob patterns or file paths classified as test files (overrides built-in heuristics). See [How Patches Are Split](#how-patches-are-split)                 |
+| `patch.source_patterns`         | string[] | Glob patterns or file paths classified as source files (highest priority override). See [How Patches Are Split](#how-patches-are-split)                   |
+| `environment.files`             | object   | Map of filename to content, added to the Docker build context                                                                                             |
+| `eval.files`                    | object   | Map of filename to content, added to the eval directory                                                                                                   |
+
+### Example optional fields
+
+| Field                           | Type     | Description                                                                                                                                               |
+|---------------------------------|----------|-----------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `jvm_version`                   | string   | JVM version — useful for JVM-based repositories (Java, Kotlin, Scala). Example: `"21"`, `"24"`                                                            |
+| `test_framework`                | string   | Test framework identifier (e.g., `"net6.0"`, `"junit5"`)                                                                                                  |
 
 ### Example
 
@@ -128,12 +137,11 @@ All top-level scalar fields (strings, numbers, booleans, lists) from `metadata.j
 ```json
 {
   "language": "csharp",
-  "jvm_version": "21",
   "test_framework": "net6.0"
 }
 ```
 
-Makes `{{ instance.language }}`, `{{ instance.jvm_version }}`, and `{{ instance.test_framework }}` available in all subsequently rendered files.
+Makes `{{ instance.language }}` and `{{ instance.test_framework }}` available in all subsequently rendered files.
 
 Built-in fields take precedence — a metadata field will not override a built-in field of the same name.
 
@@ -183,20 +191,83 @@ RUN ./mvnw dependency:go-offline -q
 RUN rm -rf {{ instance.project_root }}/.ee-bench/
 ```
 
+## How Patches Are Split
+
+The PR's full diff is **automatically** split into two patches:
+
+- **Gold patch** (`verify/patch.diff`) — source/production code changes. This is what the AI is expected to produce when solving the issue.
+- **Test patch** (`eval/test_patch.diff`) — test file changes. Applied by `run.sh` to verify the AI's solution against the expected tests.
+
+The **base commit** is the PR's merge base (the common ancestor of the PR branch and the target branch).
+
+### Classification Rules
+
+Files in the PR diff are classified using the following precedence (highest first):
+
+1. **`patch.source_patterns`** from `metadata.json` — files matching these patterns are always classified as source code, even if they live in a test directory (highest priority)
+2. **`patch.test_patterns`** from `metadata.json` — files matching these patterns are always classified as test files
+3. **Built-in heuristics** — regex patterns matching paths containing `/test/`, `/tests/`, `/spec/`, `__tests__/`, or filenames matching `*_test.*`, `*Test.*`, `test_*.*`, `*_spec.*`, etc.
+
+Files under `.ee-bench/` are excluded from both patches.
+
+### Pattern Syntax
+
+Both `test_patterns` and `source_patterns` use Python [`fnmatch`](https://docs.python.org/3/library/fnmatch.html) glob syntax, matched against the full file path from the diff (e.g., `src/main/java/Foo.java`):
+
+| Pattern    | Meaning                                  | Example match                        |
+|------------|------------------------------------------|--------------------------------------|
+| `*`        | Matches everything (including `/`)       | `*.java` → `src/Foo.java`           |
+| `?`        | Matches any single character             | `test_?.py` → `test_a.py`           |
+| `[seq]`    | Matches any character in *seq*           | `[abc].txt` → `a.txt`               |
+| `[!seq]`   | Matches any character not in *seq*       | `[!a].txt` → `b.txt`                |
+
+Each pattern is matched against the **full relative path** from the diff header (the `a/...` path in `diff --git a/path b/path`). Since `*` matches `/` on POSIX, `test/*` matches `test/foo/bar.py`.
+
+**Examples:**
+
+```json
+{
+  "patch": {
+    "test_patterns": [
+      "src/test/*",
+      "*.Test.cs",
+      "test_helpers/*"
+    ],
+    "source_patterns": [
+      "test/fixtures/shared_data.json",
+      "tests/conftest.py"
+    ]
+  }
+}
+```
+
+Most datapoints don't need overrides — standard project layouts are handled automatically. Use overrides when your project has unconventional test/source locations:
+
+```json
+{
+  "patch": {
+    "test_patterns": ["src/utils/TestHelper.java"],
+    "source_patterns": ["test/helpers/shared_util.py"]
+  }
+}
+```
+
 ## eval/run.sh
 
-The evaluation script is the entry point for validation. It receives the patch and evaluation scripts at fixed mount points:
+The evaluation script is the entry point for validation. Like the Dockerfile, `run.sh` is rendered as a **Jinja2 template**, so it can use any metadata.json fields as template variables. For example, `{{ instance.expected.fail_to_pass | tojson }}` to embed the expected failing test list directly in the script, or `{{ instance.base_commit }}` to reset to the correct commit.
+
+It receives the patch and evaluation scripts at fixed mount points:
 
 - `/ee-bench/submission/` — contains `patch.diff` (the gold solution or prediction)
 - `/ee-bench/eval/` — contains `run.sh` and any helper scripts from `eval/scripts/`
 
-`run.sh` is a validation script, it can:
-1. Apply the test patch from `/ee-bench/eval/test_patch.diff`
-2. Apply the patch from `/ee-bench/submission/patch.diff`
-3. Build the project
-4. Run the relevant tests
+`run.sh` is a validation script, it typically:
+1. Applies the test patch from `/ee-bench/eval/test_patch.diff` (see [How Patches Are Split](#how-patches-are-split))
+2. Applies the submission patch from `/ee-bench/submission/patch.diff`
+3. Builds the project
+4. Runs the relevant tests
 
-`run.sh` must return the result Output a JSON result conforming to the result schema v2.0 to stdout.
+`run.sh` must output a JSON result conforming to the result schema v2.0 to stdout.
 
 The validation script identifies the JSON output by searching for a line containing `"schema_version"`. Make sure your script prints exactly one JSON object containing this field to stdout.
 
@@ -281,27 +352,89 @@ The validation script identifies the JSON output by searching for a line contain
 | `skipped` | No       | integer | Skipped test count |
 | `errors`  | No       | integer | Error count        |
 
+### Best Practices
+
+**Dockerfile:**
+- Use specific base image tags (e.g., `eclipse-temurin:21`, `mcr.microsoft.com/dotnet/sdk:8.0`) rather than `latest`
+- Install dependencies in a separate layer before cloning the repo — speeds up rebuilds
+- Always clean up `.ee-bench/` at the end to avoid leaking config into the test environment
+- Target `linux/amd64` platform explicitly
+- Pre-fetch/cache dependencies (e.g., `./mvnw dependency:go-offline`, `dotnet restore`) so evaluation runs are faster and more reliable
+- Avoid downloading large artifacts at eval time — bake them into the image
+
+**run.sh:**
+- Apply test patch before submission patch if test patch exists (order matters for some build systems)
+- keep in mind that submission patch is optional, so it may not be applied
+- Redirect build/test verbose output to stderr or log files — only the JSON result should go to stdout
+- Use `set -euo pipefail` for strict error handling
+- Use helper scripts in `eval/scripts/` for complex logic (parsing test results, installing dependencies)
+- Use template variables for values that change per-datapoint (base commit, project root, expected tests) rather than hardcoding
+
+### Environment Variables
+
+The following environment variables control `run.sh` behavior at runtime:
+
+| Variable           | Default | Description                                                                                                         |
+|--------------------|---------|---------------------------------------------------------------------------------------------------------------------|
+| `EE_BENCH_RESET`   | unset   | When set to any non-empty value, `run.sh` resets the repository to the base commit (`git reset --hard` + `git clean`) before applying patches. By default, no reset is performed — the container is assumed to already be at the correct state. Set this when re-running evaluations on a previously modified container. |
+| `EE_BENCH_PROJECT_ROOT` | `/repo` or `/app` | Override the project working directory inside the container. |
+
+**Example usage:**
+```bash
+# Run evaluation with repository reset (e.g., re-running on a modified container)
+docker run -e EE_BENCH_RESET=1 ...
+
+# Run evaluation without reset (default — container is already at base commit)
+docker run ...
+```
+
 ## PR Body Format
 
-You can optionally structure your PR description with these recommended headings to help reviewers understand the datapoint:
+The PR description carries the problem statement and optional metadata fields. The problem statement goes at the top as plain text. Additional fields are wrapped in `<details>` tags with `type="metadata"` and `key="..."` attributes:
 
 ```markdown
-## Problem Statement
-
 Describe what the issue or feature request is about.
+This is the problem statement — it becomes the `problem_statement` field
+in the exported dataset. Any standard markdown is supported here, including
+code blocks, links, and even `<details>` blocks without the `type="metadata"`
+attribute (e.g. stack traces).
 
-## Requirements
-
-List the specific code changes expected from an LLM solving this issue.
-
-## Hints
+<details type="metadata" key="hints_text"><summary>Hints</summary>
 
 Optional guidance or context that narrows the solution space.
 
-## Interface
+</details>
+
+<details type="metadata" key="interface"><summary>Interface</summary>
 
 Optional section describing API contracts or function signatures involved.
+
+</details>
+
+<details type="metadata" key="requirements"><summary>Requirements</summary>
+
+List the specific code changes expected from an LLM solving this issue.
+
+</details>
 ```
+
+**How it works:**
+
+- The `key` attribute determines the field name in the exported dataset (e.g. `key="hints_text"` → `hints_text` field)
+- The `<summary>` text is the visible caption shown on GitHub (collapsed by default)
+- The export pipeline automatically extracts all `<details type="metadata" key="...">` blocks by key — no additional configuration needed
+- Everything outside these blocks becomes the `problem_statement` field
+- Regular `<details>` blocks (without `type="metadata"`) are preserved as part of the problem statement
+
+**Supported fields:**
+
+| Key            | Caption      | Description                                   |
+|----------------|--------------|-----------------------------------------------|
+| `hints_text`   | Hints        | Guidance or context that narrows the solution |
+| `interface`    | Interface    | API contracts or function signatures involved |
+| `requirements` | Requirements | Specific code changes expected                |
+
+You can add custom fields by using any `key` value — they will be extracted automatically.
 
 ## Submitting
 

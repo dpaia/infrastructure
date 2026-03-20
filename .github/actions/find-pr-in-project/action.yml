@@ -1,0 +1,56 @@
+name: 'Find PR in Project'
+description: 'Resolves a PR node ID, project ID, and ensures the PR is added to the project. Returns item_id and project_id.'
+author: 'JetBrains'
+
+inputs:
+  organization:
+    description: 'GitHub organization name'
+    required: true
+  repository:
+    description: 'Repository name'
+    required: true
+  pr_number:
+    description: 'Pull request number'
+    required: true
+  project_number:
+    description: 'Project number within the organization'
+    required: true
+  github_token:
+    description: 'GitHub token for API access'
+    required: true
+
+outputs:
+  item_id:
+    description: 'The project item node ID'
+    value: ${{ steps.add-to-project.outputs.item_id }}
+  project_id:
+    description: 'The project node ID'
+    value: ${{ steps.get-project-id.outputs.project_id }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Get PR node ID
+      id: get-pr-node-id
+      uses: ./.github/actions/get-pr-node-id
+      with:
+        organization: ${{ inputs.organization }}
+        repository: ${{ inputs.repository }}
+        pr_number: ${{ inputs.pr_number }}
+        github_token: ${{ inputs.github_token }}
+
+    - name: Get project ID
+      id: get-project-id
+      uses: ./.github/actions/get-project-id
+      with:
+        organization: ${{ inputs.organization }}
+        project_number: ${{ inputs.project_number }}
+        github_token: ${{ inputs.github_token }}
+
+    - name: Add PR to project (idempotent)
+      id: add-to-project
+      uses: ./.github/actions/add-issue-to-project
+      with:
+        project_id: ${{ steps.get-project-id.outputs.project_id }}
+        issue_node_id: ${{ steps.get-pr-node-id.outputs.node_id }}
+        github_token: ${{ inputs.github_token }}

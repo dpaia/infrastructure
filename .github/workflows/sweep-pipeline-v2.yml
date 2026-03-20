@@ -3,203 +3,182 @@ run-name: "Pipeline sweep - detect and repair inconsistencies"
 
 on:
   workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'If true, detect inconsistencies but do not dispatch repairs'
+        required: false
+        type: boolean
+        default: false
+      eval_projects:
+        description: 'JSON map of eval_type -> project_number (e.g. {"codegen":"12","debugging":"13"})'
+        required: false
+        type: string
+        default: '{"codegen":"12","debugging":"13"}'
+      dataset_project_number:
+        description: 'Dataset Metadata project number'
+        required: false
+        type: string
+        default: '21'
+      organization:
+        description: 'GitHub organization'
+        required: false
+        type: string
+        default: 'dpaia'
   schedule:
     - cron: '0 */6 * * *'  # Every 6 hours
 
 jobs:
   sweep:
     runs-on: ubuntu-latest
+    env:
+      EVAL_PROJECTS: ${{ inputs.eval_projects || '{"codegen":"12","debugging":"13"}' }}
+      DATASET_PROJECT: ${{ inputs.dataset_project_number || '21' }}
+      ORG: ${{ inputs.organization || 'dpaia' }}
     steps:
       - name: Checkout infrastructure
         uses: actions/checkout@v5
 
-      - name: Query eval project items (codegen)
-        id: eval-items-codegen
-        uses: ./.github/actions/query-project-items
-        with:
-          organization: dpaia
-          project_number: '12'
-          github_token: ${{ secrets.PROJECT_TOKEN }}
-
-      - name: Query eval project items (debugging)
-        id: eval-items-debugging
-        uses: ./.github/actions/query-project-items
-        with:
-          organization: dpaia
-          project_number: '13'
-          github_token: ${{ secrets.PROJECT_TOKEN }}
-
-      - name: Query Dataset Metadata items
-        id: dataset-items
-        uses: ./.github/actions/query-project-items
-        with:
-          organization: dpaia
-          project_number: '21'
-          github_token: ${{ secrets.PROJECT_TOKEN }}
-
-      - name: Detect and repair inconsistencies
-        id: sweep
+      - name: Query eval project items
+        id: query-eval
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
-          EVAL_ITEMS_CODEGEN: ${{ steps.eval-items-codegen.outputs.items }}
-          EVAL_ITEMS_DEBUGGING: ${{ steps.eval-items-debugging.outputs.items }}
-          DATASET_ITEMS: ${{ steps.dataset-items.outputs.items }}
         run: |
-          set +e
+          EVAL_FILE="${RUNNER_TEMP}/eval-items.json"
+          echo "[]" > "$EVAL_FILE"
 
+          # Iterate over each eval project from config
+          for eval_type in $(echo "$EVAL_PROJECTS" | jq -r 'keys[]'); do
+            project_number=$(echo "$EVAL_PROJECTS" | jq -r --arg et "$eval_type" '.[$et]')
+            echo "Querying eval project: $eval_type (#$project_number)..."
+
+            # Use the query-project-items action output format — but we call inline to avoid
+            # needing a dynamic number of action steps
+            ITEMS_FILE="${RUNNER_TEMP}/eval-${eval_type}.json"
+            echo "[]" > "$ITEMS_FILE"
+
+            HAS_NEXT="true"
+            CURSOR=""
+
+            while [ "$HAS_NEXT" = "true" ]; do
+              if [ -z "$CURSOR" ]; then
+                CURSOR_ARG=""
+              else
+                CURSOR_ARG=", after: \"$CURSOR\""
+              fi
+
+              PAGE=$(gh api graphql -f query="
+                query(\$org: String!, \$number: Int!) {
+                  organization(login: \$org) {
+                    projectV2(number: \$number) {
+                      items(first: 100${CURSOR_ARG}) {
+                        pageInfo { hasNextPage endCursor }
+                        nodes {
+                          id
+                          content {
+                            __typename
+                            ... on PullRequest {
+                              number title state url headRefOid
+                              repository { owner { login } name }
+                            }
+                            ... on Issue {
+                              number title state url
+                              repository { owner { login } name }
+                            }
+                          }
+                          fieldValues(first: 20) {
+                            nodes {
+                              ... on ProjectV2ItemFieldTextValue { text field { ... on ProjectV2Field { name } } }
+                              ... on ProjectV2ItemFieldNumberValue { number field { ... on ProjectV2Field { name } } }
+                              ... on ProjectV2ItemFieldSingleSelectValue { name field { ... on ProjectV2SingleSelectField { name } } }
+                              ... on ProjectV2ItemFieldDateValue { date field { ... on ProjectV2Field { name } } }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }" -f org="$ORG" -F number="$project_number")
+
+              HAS_NEXT=$(echo "$PAGE" | jq -r '.data.organization.projectV2.items.pageInfo.hasNextPage')
+              CURSOR=$(echo "$PAGE" | jq -r '.data.organization.projectV2.items.pageInfo.endCursor')
+
+              FLAT_ITEMS=$(echo "$PAGE" | jq --arg et "$eval_type" --arg pn "$project_number" '[
+                .data.organization.projectV2.items.nodes[] |
+                {
+                  item_id: .id,
+                  content_type: (.content.__typename // "Unknown"),
+                  number: .content.number,
+                  title: .content.title,
+                  state: .content.state,
+                  url: .content.url,
+                  head_sha: .content.headRefOid,
+                  owner: .content.repository.owner.login,
+                  repo: .content.repository.name,
+                  eval_type: $et,
+                  project_number: ($pn | tonumber),
+                  fields: (
+                    [.fieldValues.nodes[] | select(.field.name != null) |
+                      { key: .field.name, value: (.text // .name // (if .number != null then (.number | tostring) else null end) // .date // null) }
+                    ] | from_entries
+                  )
+                }
+              ]')
+
+              jq -s '.[0] + .[1]' "$ITEMS_FILE" <(echo "$FLAT_ITEMS") > "${ITEMS_FILE}.tmp"
+              mv "${ITEMS_FILE}.tmp" "$ITEMS_FILE"
+            done
+
+            COUNT=$(jq 'length' "$ITEMS_FILE")
+            echo "  Found $COUNT items for $eval_type"
+
+            # Merge into combined file
+            jq -s '.[0] + .[1]' "$EVAL_FILE" "$ITEMS_FILE" > "${EVAL_FILE}.tmp"
+            mv "${EVAL_FILE}.tmp" "$EVAL_FILE"
+          done
+
+          TOTAL=$(jq 'length' "$EVAL_FILE")
+          echo "Total eval items: $TOTAL"
+          echo "eval_file=$EVAL_FILE" >> $GITHUB_OUTPUT
+
+      - name: Query Dataset Metadata items
+        id: query-dataset
+        uses: ./.github/actions/query-project-items
+        with:
+          organization: ${{ env.ORG }}
+          project_number: ${{ env.DATASET_PROJECT }}
+          github_token: ${{ secrets.PROJECT_TOKEN }}
+
+      - name: Write dataset items to file
+        id: dataset-file
+        shell: bash
+        env:
+          DATASET_ITEMS: ${{ steps.query-dataset.outputs.items }}
+        run: |
           DATASET_FILE="${RUNNER_TEMP}/dataset-items.json"
           echo "$DATASET_ITEMS" > "$DATASET_FILE"
+          echo "dataset_file=$DATASET_FILE" >> $GITHUB_OUTPUT
 
-          # Merge eval items from all projects, tagging each with its eval_type
-          EVAL_FILE="${RUNNER_TEMP}/eval-items.json"
-          jq -n --argjson codegen "$EVAL_ITEMS_CODEGEN" --argjson debugging "$EVAL_ITEMS_DEBUGGING" \
-            '[$codegen[] | . + {eval_type: "codegen"}] + [$debugging[] | . + {eval_type: "debugging"}]' \
-            > "$EVAL_FILE"
+      - name: Detect and repair inconsistencies
+        id: sweep
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
+          INFRA_REPO: "${{ env.ORG }}/infrastructure"
+          DRY_RUN: ${{ inputs.dry_run || 'false' }}
+        run: |
+          python3 .github/python/sweep_pipeline.py \
+            --eval-items "${{ steps.query-eval.outputs.eval_file }}" \
+            --dataset-items "${{ steps.dataset-file.outputs.dataset_file }}" \
+            --output "${RUNNER_TEMP}/sweep-result.json"
 
-          ISSUES_FOUND=0
-          REPAIRS=0
-
-          echo "=== Checking source PRs in Review without verification ==="
-          while IFS= read -r item; do
-            OWNER=$(echo "$item" | jq -r '.owner')
-            REPO=$(echo "$item" | jq -r '.repo')
-            NUMBER=$(echo "$item" | jq -r '.number')
-            HEAD_SHA=$(echo "$item" | jq -r '.head_sha')
-            EVAL_TYPE=$(echo "$item" | jq -r '.eval_type')
-
-            # Check if there's a recent passing or in-progress check
-            CHECKS=$(gh api "repos/$OWNER/$REPO/commits/$HEAD_SHA/check-runs" \
-              --jq '[.check_runs[] | select(.name == "Datapoint Verification")] | length' 2>/dev/null || echo "0")
-
-            if [ "$CHECKS" = "0" ]; then
-              echo "INCONSISTENCY: $OWNER/$REPO#$NUMBER in Review but no verification check for SHA $HEAD_SHA"
-              ISSUES_FOUND=$((ISSUES_FOUND + 1))
-
-              # Dispatch repair with correct eval_type
-              gh workflow run verify-source_v2.yml \
-                --repo dpaia/infrastructure \
-                -f organization="$OWNER" \
-                -f repository="$REPO" \
-                -f pr_number="$NUMBER" \
-                -f eval_type="$EVAL_TYPE" \
-                -f run_key="sweep-$(date +%s)-$NUMBER"
-              REPAIRS=$((REPAIRS + 1))
-              echo "  -> Dispatched verification repair (eval_type=$EVAL_TYPE)"
-            fi
-          done < <(jq -c '.[] | select(.fields.Status == "Review") | select(.content_type == "PullRequest") | select(.fields.Verification == null or .fields.Verification == "Pending")' "$EVAL_FILE")
-
-          echo ""
-          echo "=== Checking stale Verification on items moved from Verified/Done ==="
-          # Resolve project IDs and Verification field IDs once per eval project
-          CODEGEN_PROJECT_ID=$(gh api graphql -f query='
-            query($org:String!, $number:Int!) {
-              organization(login: $org) { projectV2(number: $number) { id } }
-            }' -f org="dpaia" -F number=12 --jq '.data.organization.projectV2.id')
-
-          DEBUGGING_PROJECT_ID=$(gh api graphql -f query='
-            query($org:String!, $number:Int!) {
-              organization(login: $org) { projectV2(number: $number) { id } }
-            }' -f org="dpaia" -F number=13 --jq '.data.organization.projectV2.id')
-
-          CODEGEN_VERIF_FIELD_ID=$(gh api graphql -f query='
-            query($project:ID!) {
-              node(id: $project) { ... on ProjectV2 { fields(first:100) { nodes { ... on ProjectV2FieldCommon { id name } } } } }
-            }' -f project="$CODEGEN_PROJECT_ID" --jq '.data.node.fields.nodes[] | select(.name == "Verification") | .id')
-
-          DEBUGGING_VERIF_FIELD_ID=$(gh api graphql -f query='
-            query($project:ID!) {
-              node(id: $project) { ... on ProjectV2 { fields(first:100) { nodes { ... on ProjectV2FieldCommon { id name } } } } }
-            }' -f project="$DEBUGGING_PROJECT_ID" --jq '.data.node.fields.nodes[] | select(.name == "Verification") | .id')
-
-          while IFS= read -r item; do
-            OWNER=$(echo "$item" | jq -r '.owner')
-            REPO=$(echo "$item" | jq -r '.repo')
-            NUMBER=$(echo "$item" | jq -r '.number')
-            STATUS=$(echo "$item" | jq -r '.fields.Status')
-            ITEM_ID=$(echo "$item" | jq -r '.item_id')
-            EVAL_TYPE=$(echo "$item" | jq -r '.eval_type')
-
-            echo "INCONSISTENCY: $OWNER/$REPO#$NUMBER has Status='$STATUS' but Verification='Passed' (stale)"
-            ISSUES_FOUND=$((ISSUES_FOUND + 1))
-
-            if [ "$EVAL_TYPE" = "codegen" ]; then
-              PROJECT_ID="$CODEGEN_PROJECT_ID"
-              FIELD_ID="$CODEGEN_VERIF_FIELD_ID"
-            else
-              PROJECT_ID="$DEBUGGING_PROJECT_ID"
-              FIELD_ID="$DEBUGGING_VERIF_FIELD_ID"
-            fi
-
-            gh api graphql -f query='
-              mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!) {
-                clearProjectV2ItemFieldValue(input: {
-                  projectId: $projectId, itemId: $itemId, fieldId: $fieldId
-                }) { projectV2Item { id } }
-              }' -f projectId="$PROJECT_ID" -f itemId="$ITEM_ID" -f fieldId="$FIELD_ID"
-            REPAIRS=$((REPAIRS + 1))
-            echo "  -> Cleared stale Verification field (eval_type=$EVAL_TYPE)"
-          done < <(jq -c '.[] | select(.fields.Status != "Verified" and .fields.Status != "Done") | select(.fields.Verification == "Passed")' "$EVAL_FILE")
-
-          echo ""
-          echo "=== Checking source PRs in Verified without dataset PR ==="
-          while IFS= read -r item; do
-            OWNER=$(echo "$item" | jq -r '.owner')
-            REPO=$(echo "$item" | jq -r '.repo')
-            NUMBER=$(echo "$item" | jq -r '.number')
-            EVAL_TYPE=$(echo "$item" | jq -r '.eval_type')
-
-            # Check if a dataset PR exists for this source
-            SOURCE_URL="https://github.com/$OWNER/$REPO/pull/$NUMBER"
-            DATASET_PR_EXISTS=$(jq --arg url "$SOURCE_URL" '[.[] | select(.fields["Source PR"] == $url)] | length' "$DATASET_FILE")
-
-            if [ "$DATASET_PR_EXISTS" = "0" ]; then
-              echo "INCONSISTENCY: $OWNER/$REPO#$NUMBER in Verified but no dataset PR found"
-              ISSUES_FOUND=$((ISSUES_FOUND + 1))
-
-              gh workflow run generate-datapoint_v2.yml \
-                --repo dpaia/infrastructure \
-                -f organization="$OWNER" \
-                -f repository="$REPO" \
-                -f pr_number="$NUMBER" \
-                -f eval_type="$EVAL_TYPE" \
-                -f run_key="sweep-$(date +%s)-$NUMBER"
-              REPAIRS=$((REPAIRS + 1))
-              echo "  -> Dispatched generation repair (eval_type=$EVAL_TYPE)"
-            fi
-          done < <(jq -c '.[] | select(.fields.Status == "Verified") | select(.content_type == "PullRequest") | select(.fields.Verification == "Passed")' "$EVAL_FILE")
-
-          echo ""
-          echo "=== Checking merged dataset PRs not marked Done ==="
-          while IFS= read -r item; do
-            ITEM_NUMBER=$(echo "$item" | jq -r '.number')
-            ITEM_TITLE=$(echo "$item" | jq -r '.title')
-            CURRENT_STATUS=$(echo "$item" | jq -r '.fields.Status')
-
-            echo "INCONSISTENCY: Dataset PR #$ITEM_NUMBER ('$ITEM_TITLE') is merged but status is '$CURRENT_STATUS'"
-            ISSUES_FOUND=$((ISSUES_FOUND + 1))
-
-            gh workflow run on-datapoint-merged_v2.yml \
-              --repo dpaia/infrastructure \
-              -f organization="dpaia" \
-              -f repository="dataset" \
-              -f pr_number="$ITEM_NUMBER" \
-              -f run_key="sweep-$(date +%s)-$ITEM_NUMBER"
-            REPAIRS=$((REPAIRS + 1))
-            echo "  -> Dispatched post-merge repair"
-          done < <(jq -c '.[] | select(.fields.Status != "Done") | select(.state == "MERGED")' "$DATASET_FILE")
-
-          echo ""
-          echo "=== Sweep complete ==="
-          echo "Issues found: $ISSUES_FOUND"
-          echo "Repairs dispatched: $REPAIRS"
-
-          echo "issues_found=$ISSUES_FOUND" >> $GITHUB_OUTPUT
-          echo "repairs=$REPAIRS" >> $GITHUB_OUTPUT
-
-          if [ "$ISSUES_FOUND" -eq 0 ]; then
-            echo "All states consistent"
-          fi
+      - name: Upload sweep result
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: sweep-result
+          path: ${{ runner.temp }}/sweep-result.json
+          if-no-files-found: ignore
+          retention-days: 7
 
       - name: Summary
         if: always()
@@ -208,3 +187,12 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "- **Issues found:** ${{ steps.sweep.outputs.issues_found }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Repairs dispatched:** ${{ steps.sweep.outputs.repairs }}" >> $GITHUB_STEP_SUMMARY
+          if [ -f "${RUNNER_TEMP}/sweep-result.json" ]; then
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "<details><summary>Details</summary>" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo '```json' >> $GITHUB_STEP_SUMMARY
+            cat "${RUNNER_TEMP}/sweep-result.json" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            echo "</details>" >> $GITHUB_STEP_SUMMARY
+          fi

@@ -97,13 +97,15 @@ dpaia/dataset/
 - **Automatic:** Bot dispatches when source PR status changes to "Review" in an eval type project
 - **Manual:** `workflow_dispatch`
 
-**Inputs:** `organization`, `repository`, `pr_number`, `eval_type`, `run_key`
+**Inputs:** `organization`, `repository`, `pr_number`, `eval_type`, `run_key`, `eval_project_number`
 
 **What it does:**
-1. Runs the export script to generate a datapoint from the source PR
-2. Runs `validate.sh` against the generated datapoint
-3. Posts a comment on the source PR with pass/fail result, test summary, and failed test details
-4. Uploads validation logs and result JSON as artifacts
+1. If `eval_project_number` is set: finds the PR in the eval project and sets Verification="Pending"
+2. Runs the export script to generate a datapoint from the source PR
+3. Runs `validate.sh` against the generated datapoint
+4. If `eval_project_number` is set: sets Verification="Passed" or "Failed" based on the result
+5. Posts a comment on the source PR with pass/fail result, test summary, and failed test details
+6. Uploads validation logs and result JSON as artifacts
 
 ---
 
@@ -138,14 +140,16 @@ dpaia/dataset/
 - **Automatic:** Bot dispatches when a PR is opened/updated in `dpaia/dataset`
 - **Manual:** `workflow_dispatch`
 
-**Inputs:** `organization`, `repository`, `pr_number`, `eval_type`, `run_key`
+**Inputs:** `organization`, `repository`, `pr_number`, `eval_type`, `run_key`, `source_organization`, `source_repository`, `source_pr_number`, `dataset_project_number`
 
 **What it does:**
 1. Checks out the dataset PR branch
 2. Detects the instance directory from changed files
 3. Runs `validate.sh` against the datapoint
-4. Posts a comment on the dataset PR with pass/fail result
-5. Uploads validation logs as artifacts
+4. On success: auto-merges the dataset PR (squash merge with mergeability retry loop)
+5. On failure + `dataset_project_number` set: finds the source PR in the Dataset Metadata project and sets Status="Failed"
+6. Posts a comment on the dataset PR with pass/fail result
+7. Uploads validation logs as artifacts
 
 ---
 
@@ -206,6 +210,25 @@ dpaia/dataset/
 
 ---
 
+### Sync Project Fields
+
+**File:** `.github/workflows/sync-project-fields_v2.yml`
+
+**Purpose:** Performs project field mutations (clear verification, reopen PR, reset status) dispatched by the bot when project status changes or new commits arrive.
+
+**Trigger:**
+- **Automatic:** Bot dispatches on status regression from Verified/Done or on source PR synchronize
+- **Manual:** `workflow_dispatch`
+
+**Inputs:** `organization`, `repository`, `pr_number`, `operation`, `eval_project_number`, `run_key`
+
+**Operations:**
+- `clear-verification`: Clears the Verification field on the eval project item
+- `reopen-pr`: Reopens the PR if closed (not merged) and clears Verification
+- `reset-on-sync`: Sets Status="In progress", Verification="Pending", and posts an informational comment on the PR
+
+---
+
 ## Reusable Composite Actions
 
 | Action | Purpose |
@@ -215,8 +238,11 @@ dpaia/dataset/
 | `get-issue-node-id` | Gets the GraphQL node ID for an issue |
 | `get-project-id` | Fetches a GitHub Project V2 ID by organization and number |
 | `add-issue-to-project` | Adds an issue/PR to a GitHub Project V2 |
+| `find-pr-in-project` | Resolves PR node ID, project ID, and adds PR to project (combines get-pr-node-id + get-project-id + add-issue-to-project) |
 | `set-project-status` | Sets the Status field on a project item |
-| `update-project-field` | Updates any field on a project item (text, number, etc.) |
+| `update-project-field` | Updates any field on a project item (text, number, single-select) |
+| `clear-project-field` | Clears a field value on a project item |
+| `get-project-field-value` | Reads a field value from a project item |
 | `query-project-items` | Queries all items in a project with their field values |
 | `run-export-script` | Resolves and runs an export script to generate a datapoint |
 | `run-validation` | Runs `validate.sh` and extracts structured results (status, test summary, failures) |
@@ -259,6 +285,6 @@ These reusable workflows are called by workflows in other `dpaia/*` repositories
 
 | Component | Location | Purpose |
 |-----------|----------|---------|
-| **issue-validator-bot** | [`dpaia/issue-validator-bot`](https://github.com/dpaia/issue-validator-bot) | GitHub App that listens to webhooks and dispatches v2 workflows |
+| **issue-validator-bot** | [`dpaia/issue-validator-bot`](https://github.com/dpaia/issue-validator-bot) | Thin orchestrator: receives webhooks, validates/guards, dispatches v2 workflows, manages check runs |
 | **ee-bench-import** | [`dpaia/ee-bench-import`](https://github.com/dpaia/ee-bench-import) | Export scripts, validation script, ee-dataset CLI source |
 | **Dataset repository** | [`dpaia/dataset`](https://github.com/dpaia/dataset) | Stores generated datapoints |

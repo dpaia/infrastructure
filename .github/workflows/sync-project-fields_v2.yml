@@ -1,0 +1,135 @@
+name: Sync Project Fields (v2)
+run-name: "[${{ inputs.organization }}/${{ inputs.repository }}] Sync #${{ inputs.pr_number }} op=${{ inputs.operation }} (key=${{ inputs.run_key }})"
+
+on:
+  workflow_dispatch:
+    inputs:
+      organization:
+        description: 'GitHub organization name'
+        required: true
+        type: string
+      repository:
+        description: 'Repository name'
+        required: true
+        type: string
+      pr_number:
+        description: 'Pull request number'
+        required: true
+        type: string
+      operation:
+        description: 'Sync operation: clear-verification, reopen-pr, reset-on-sync'
+        required: true
+        type: string
+      eval_project_number:
+        description: 'Eval project number'
+        required: true
+        type: string
+      run_key:
+        description: 'Unique run correlation key (UUID)'
+        required: false
+        type: string
+        default: 'manual'
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout infrastructure
+        uses: actions/checkout@v5
+
+      # --- Shared: find PR in eval project ---
+      - name: Find PR in eval project
+        id: find-pr
+        uses: ./.github/actions/find-pr-in-project
+        with:
+          organization: ${{ inputs.organization }}
+          repository: ${{ inputs.repository }}
+          pr_number: ${{ inputs.pr_number }}
+          project_number: ${{ inputs.eval_project_number }}
+          github_token: ${{ secrets.PROJECT_TOKEN }}
+
+      # --- Operation: clear-verification ---
+      - name: Clear Verification field
+        if: inputs.operation == 'clear-verification'
+        uses: ./.github/actions/clear-project-field
+        with:
+          organization: ${{ inputs.organization }}
+          project_number: ${{ inputs.eval_project_number }}
+          item_id: ${{ steps.find-pr.outputs.item_id }}
+          field_name: Verification
+          github_token: ${{ secrets.PROJECT_TOKEN }}
+
+      # --- Operation: reopen-pr ---
+      - name: Reopen PR
+        if: inputs.operation == 'reopen-pr'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
+        run: |
+          PR_STATE=$(gh pr view "${{ inputs.pr_number }}" \
+            --repo "${{ inputs.organization }}/${{ inputs.repository }}" \
+            --json state --jq '.state')
+
+          if [ "$PR_STATE" = "CLOSED" ]; then
+            gh pr reopen "${{ inputs.pr_number }}" \
+              --repo "${{ inputs.organization }}/${{ inputs.repository }}"
+            echo "Reopened PR #${{ inputs.pr_number }}"
+          elif [ "$PR_STATE" = "MERGED" ]; then
+            echo "PR #${{ inputs.pr_number }} is merged, cannot reopen"
+          else
+            echo "PR #${{ inputs.pr_number }} is already open"
+          fi
+
+      - name: Clear Verification field (reopen-pr)
+        if: inputs.operation == 'reopen-pr'
+        uses: ./.github/actions/clear-project-field
+        with:
+          organization: ${{ inputs.organization }}
+          project_number: ${{ inputs.eval_project_number }}
+          item_id: ${{ steps.find-pr.outputs.item_id }}
+          field_name: Verification
+          github_token: ${{ secrets.PROJECT_TOKEN }}
+
+      # --- Operation: reset-on-sync ---
+      - name: Set Status to "In progress"
+        if: inputs.operation == 'reset-on-sync'
+        uses: ./.github/actions/set-project-status
+        with:
+          organization: ${{ inputs.organization }}
+          project_number: ${{ inputs.eval_project_number }}
+          item_id: ${{ steps.find-pr.outputs.item_id }}
+          value: 'In progress'
+          github_token: ${{ secrets.PROJECT_TOKEN }}
+
+      - name: Set Verification to "Pending"
+        if: inputs.operation == 'reset-on-sync'
+        uses: ./.github/actions/update-project-field
+        with:
+          organization: ${{ inputs.organization }}
+          project_number: ${{ inputs.eval_project_number }}
+          item_id: ${{ steps.find-pr.outputs.item_id }}
+          field_name: Verification
+          value: Pending
+          value_type: single_select
+          github_token: ${{ secrets.PROJECT_TOKEN }}
+
+      - name: Comment on PR (reset-on-sync)
+        if: inputs.operation == 'reset-on-sync'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
+        run: |
+          gh pr comment "${{ inputs.pr_number }}" \
+            --repo "${{ inputs.organization }}/${{ inputs.repository }}" \
+            --body "ℹ️ New commit detected — project status reset to \"In progress\". Previous verification/generation results are stale for the new head SHA." \
+            || true
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "# Sync Project Fields Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **PR:** ${{ inputs.organization }}/${{ inputs.repository }}#${{ inputs.pr_number }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Operation:** ${{ inputs.operation }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Project:** #${{ inputs.eval_project_number }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Run key:** ${{ inputs.run_key }}" >> $GITHUB_STEP_SUMMARY

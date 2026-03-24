@@ -38,6 +38,9 @@ on:
         type: string
         default: 'dataset'
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   export:
     runs-on: ubuntu-latest

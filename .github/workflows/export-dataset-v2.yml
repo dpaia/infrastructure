@@ -10,7 +10,7 @@ on:
         type: string
         default: 'codegen'
       search_query:
-        description: 'GitHub search query to filter merged PRs in dpaia/dataset (empty = all merged). Uses GitHub search syntax.'
+        description: 'GitHub search query for project board items (e.g. label:"Language: C#"). Empty = all from filesystem.'
         required: false
         type: string
         default: ''
@@ -78,33 +78,48 @@ jobs:
           EVAL_TYPE: ${{ inputs.eval_type }}
           SEARCH_QUERY: ${{ inputs.search_query }}
           ORG: ${{ inputs.organization }}
-          DATASET_REPO: ${{ inputs.dataset_repo }}
+          PROJECT_NUMBER: "13"
           GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
         run: |
           IDS_FILE="${RUNNER_TEMP}/instance-ids.txt"
 
           if [[ -n "$SEARCH_QUERY" ]]; then
-            echo "Searching merged PRs with query: $SEARCH_QUERY"
-            gh search prs --repo "$ORG/$DATASET_REPO" --state closed --merged \
-              "$SEARCH_QUERY" --limit 1000 --json body -q '.[].body' \
-              | grep -oP '(?<=instance_id: )\S+' \
-              | sort -u > "$IDS_FILE"
+            echo "Searching project board $ORG/$PROJECT_NUMBER with query: $SEARCH_QUERY"
 
-            RAW_COUNT=$(wc -l < "$IDS_FILE")
-            echo "Found $RAW_COUNT unique instance IDs from PR search"
+            # Search project board items and extract repo names
+            REPOS_FILE="${RUNNER_TEMP}/matched-repos.txt"
+            gh api --paginate -X GET search/issues \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              -f q="project:${ORG}/${PROJECT_NUMBER} ${SEARCH_QUERY}" \
+              -f per_page="100" \
+              -q '.items[] | .repository_url | split("/") | .[-1]' \
+              | sort -u > "$REPOS_FILE"
 
-            # Filter by eval_type directory existence if not "all"
-            if [[ "$EVAL_TYPE" != "all" ]]; then
-              FILTERED_FILE="${RUNNER_TEMP}/instance-ids-filtered.txt"
-              while IFS= read -r id; do
-                if [[ -d "dataset-checkout/${EVAL_TYPE}/${id}" ]]; then
-                  echo "$id" >> "$FILTERED_FILE"
-                fi
-              done < "$IDS_FILE"
-              mv "${FILTERED_FILE:-/dev/null}" "$IDS_FILE" 2>/dev/null || true
-              FILTERED_COUNT=$(wc -l < "$IDS_FILE" 2>/dev/null || echo 0)
-              echo "After eval_type=$EVAL_TYPE filter: $FILTERED_COUNT instance IDs"
+            REPO_COUNT=$(wc -l < "$REPOS_FILE" | tr -d ' ')
+            echo "Found $REPO_COUNT unique repos from board search"
+            cat "$REPOS_FILE"
+
+            # Find all instance IDs under matched repo directories in the dataset checkout
+            while IFS= read -r repo; do
+              [[ -z "$repo" ]] && continue
+              if [[ "$EVAL_TYPE" == "all" ]]; then
+                SEARCH_DIRS=$(find dataset-checkout -maxdepth 2 -type d -iname "$repo" 2>/dev/null)
+              else
+                SEARCH_DIRS=$(find "dataset-checkout/${EVAL_TYPE}" -maxdepth 1 -type d -iname "$repo" 2>/dev/null)
+              fi
+              for dir in $SEARCH_DIRS; do
+                find "$dir" -name "datapoint.json" -exec dirname {} \; \
+                  | xargs -I{} basename {} >> "$IDS_FILE"
+              done
+            done < "$REPOS_FILE"
+
+            # Deduplicate
+            if [[ -f "$IDS_FILE" ]]; then
+              sort -u "$IDS_FILE" -o "$IDS_FILE"
             fi
+
+            RAW_COUNT=$(wc -l < "$IDS_FILE" 2>/dev/null | tr -d ' ' || echo 0)
+            echo "Found $RAW_COUNT instance IDs from matched repos"
           else
             echo "Collecting all instances from filesystem"
             if [[ "$EVAL_TYPE" == "all" ]]; then
@@ -116,11 +131,11 @@ jobs:
                 | xargs -I{} basename {} \
                 | sort -u > "$IDS_FILE"
             fi
-            FS_COUNT=$(wc -l < "$IDS_FILE" 2>/dev/null || echo 0)
+            FS_COUNT=$(wc -l < "$IDS_FILE" 2>/dev/null | tr -d ' ' || echo 0)
             echo "Found $FS_COUNT instance IDs from filesystem"
           fi
 
-          TOTAL=$(wc -l < "$IDS_FILE" 2>/dev/null || echo 0)
+          TOTAL=$(wc -l < "$IDS_FILE" 2>/dev/null | tr -d ' ' || echo 0)
           echo "count=$TOTAL" >> $GITHUB_OUTPUT
           echo "ids_file=$IDS_FILE" >> $GITHUB_OUTPUT
           echo "Total instance IDs to export: $TOTAL"

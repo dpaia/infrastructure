@@ -1,5 +1,5 @@
 name: Export Dataset (v2)
-run-name: "Export ${{ inputs.eval_type }} (${{ inputs.format }}) -> ${{ inputs.output_name }}"
+run-name: "Export ${{ inputs.eval_type }} (${{ inputs.format }}) | query: ${{ inputs.search_query || 'all' }} | repo: ${{ inputs.dataset_repo }}"
 
 on:
   workflow_dispatch:
@@ -23,10 +23,10 @@ on:
           - jsonl
         default: 'folders'
       output_name:
-        description: 'Output artifact name'
+        description: 'Output artifact name (leave empty for auto-generated "dataset-YYYY-MM-DD")'
         required: false
         type: string
-        default: 'dataset'
+        default: ''
       organization:
         description: 'GitHub organization'
         required: false
@@ -44,6 +44,17 @@ jobs:
     steps:
       - name: Checkout infrastructure
         uses: actions/checkout@v5
+
+      - name: Resolve output name
+        id: params
+        shell: bash
+        run: |
+          NAME="${{ inputs.output_name }}"
+          if [[ -z "$NAME" ]]; then
+            NAME="dataset-$(date -u +%Y-%m-%d)"
+          fi
+          echo "output_name=$NAME" >> $GITHUB_OUTPUT
+          echo "Resolved output name: $NAME"
 
       - name: Checkout dataset repo
         uses: actions/checkout@v5
@@ -74,9 +85,8 @@ jobs:
 
           if [[ -n "$SEARCH_QUERY" ]]; then
             echo "Searching merged PRs with query: $SEARCH_QUERY"
-            # Intentionally unquoted $SEARCH_QUERY for word splitting of multi-word queries
             gh search prs --repo "$ORG/$DATASET_REPO" --state closed --merged \
-              $SEARCH_QUERY --limit 1000 --json body -q '.[].body' \
+              "$SEARCH_QUERY" --limit 1000 --json body -q '.[].body' \
               | grep -oP '(?<=instance_id: )\S+' \
               | sort -u > "$IDS_FILE"
 
@@ -121,7 +131,7 @@ jobs:
         env:
           FORMAT: ${{ inputs.format }}
           EVAL_TYPE: ${{ inputs.eval_type }}
-          OUTPUT_NAME: ${{ inputs.output_name }}
+          OUTPUT_NAME: ${{ steps.params.outputs.output_name }}
           IDS_FILE: ${{ steps.resolve.outputs.ids_file }}
         run: |
           OUTPUT_DIR="${RUNNER_TEMP}/export-output/${OUTPUT_NAME}"
@@ -168,7 +178,7 @@ jobs:
       - name: Generate manifest
         shell: bash
         env:
-          OUTPUT_NAME: ${{ inputs.output_name }}
+          OUTPUT_NAME: ${{ steps.params.outputs.output_name }}
           EVAL_TYPE: ${{ inputs.eval_type }}
           FORMAT: ${{ inputs.format }}
           SEARCH_QUERY: ${{ inputs.search_query }}
@@ -211,8 +221,8 @@ jobs:
       - name: Upload export artifact
         uses: actions/upload-artifact@v5
         with:
-          name: ${{ inputs.output_name }}
-          path: "${{ runner.temp }}/export-output/${{ inputs.output_name }}"
+          name: ${{ steps.params.outputs.output_name }}
+          path: "${{ runner.temp }}/export-output/${{ steps.params.outputs.output_name }}"
           retention-days: 30
 
       - name: Summary

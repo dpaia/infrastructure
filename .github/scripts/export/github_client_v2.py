@@ -119,20 +119,23 @@ def search_board_items(org: str, project_number: int, query: str) -> list[dict]:
     return items
 
 
-def fetch_data_field_urls(org: str, project_number: int, node_ids: list[str]) -> dict[str, str]:
-    """Batch-fetch Data field values for project items via GraphQL.
+def fetch_data_field_urls(org: str, metadata_project_number: int, node_ids: list[str]) -> dict[str, str]:
+    """Batch-fetch Data field values from the metadata project via GraphQL.
+
+    The Data field lives on a separate "Dataset Metadata" project (default: project 3),
+    not on the board used for search (project 13).
 
     Returns dict mapping node_id -> Data field URL.
     """
     if not node_ids:
         return {}
 
-    # First get the project ID and Data field ID
+    # Get the metadata project ID and Data field ID
     project_info = _run_gh([
         "api", "graphql",
         "-f", f"query=query($org:String!, $number:Int!) {{ organization(login: $org) {{ projectV2(number: $number) {{ id fields(first: 50) {{ nodes {{ ... on ProjectV2FieldCommon {{ id name }} }} }} }} }} }}",
         "-f", f"org={org}",
-        "-F", f"number={project_number}",
+        "-F", f"number={metadata_project_number}",
     ])
 
     proj_data = json.loads(project_info.stdout)

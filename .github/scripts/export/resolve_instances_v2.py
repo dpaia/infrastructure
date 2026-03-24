@@ -43,9 +43,14 @@ def resolve_from_query(
     eval_type: str,
     org: str,
     project_number: int,
+    metadata_project_number: int,
     dataset_dir: Path,
 ) -> list[str]:
-    """Resolve instance IDs by searching the project board."""
+    """Resolve instance IDs by searching the project board.
+
+    Searches project_number (board with labels) for matching PRs,
+    then fetches Data field URLs from metadata_project_number (Dataset Metadata project).
+    """
 
     # Step 1: Search board for matching PRs
     print(f"Searching project board {org}/{project_number} with query: {query}")
@@ -55,10 +60,10 @@ def resolve_from_query(
     if not items:
         return []
 
-    # Step 2: Batch-fetch Data field URLs via GraphQL
+    # Step 2: Batch-fetch Data field URLs from metadata project via GraphQL
     node_ids = [item["node_id"] for item in items]
-    print(f"Fetching Data field values for {len(node_ids)} items...")
-    data_urls = fetch_data_field_urls(org, project_number, node_ids)
+    print(f"Fetching Data field values from metadata project {org}/{metadata_project_number} for {len(node_ids)} items...")
+    data_urls = fetch_data_field_urls(org, metadata_project_number, node_ids)
     print(f"Got {len(data_urls)} Data field URLs")
 
     # Step 3: Parse URLs and resolve to local paths
@@ -146,7 +151,8 @@ def main():
     parser.add_argument("--query", default="", help="GitHub search query for project board items")
     parser.add_argument("--eval-type", default="codegen", help="Eval type directory (codegen, debugging, or all)")
     parser.add_argument("--org", default="dpaia", help="GitHub organization")
-    parser.add_argument("--project-number", type=int, default=13, help="Project board number")
+    parser.add_argument("--project-number", type=int, default=13, help="Project board number (for search)")
+    parser.add_argument("--metadata-project-number", type=int, default=3, help="Dataset Metadata project number (for Data field)")
     parser.add_argument("--dataset-dir", required=True, help="Path to dataset checkout directory")
     parser.add_argument("--output", required=True, help="Output file for instance IDs (one per line)")
 
@@ -163,6 +169,7 @@ def main():
             eval_type=args.eval_type,
             org=args.org,
             project_number=args.project_number,
+            metadata_project_number=args.metadata_project_number,
             dataset_dir=dataset_dir,
         )
     else:

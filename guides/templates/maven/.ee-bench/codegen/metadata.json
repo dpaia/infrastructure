@@ -1,0 +1,17 @@
+{
+  "version": "1.0",
+  "benchmark_type": "codegen",
+  "language": "java",
+  "jvm_version": "21",
+  "expected": {
+    "fail_to_pass": [
+      "com.example.SomeTest.testFailingCase"
+    ],
+    "pass_to_pass": [
+      "com.example.SomeTest.testPassingCase"
+    ]
+  },
+  "environment": {
+    "project_root": "/repo"
+  }
+}

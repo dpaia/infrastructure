@@ -1,0 +1,17 @@
+{
+  "version": "1.0",
+  "benchmark_type": "codegen",
+  "language": "python",
+  "python_version": "3.11",
+  "expected": {
+    "fail_to_pass": [
+      "tests.test_module.TestClass.test_failing_case"
+    ],
+    "pass_to_pass": [
+      "tests.test_module.TestClass.test_passing_case"
+    ]
+  },
+  "environment": {
+    "project_root": "/app"
+  }
+}

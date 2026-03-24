@@ -1,0 +1,20 @@
+{
+  "version": "1.0",
+  "benchmark_type": "codegen",
+  "language": "csharp",
+  "dotnet_sdk": "8.0",
+  "test_project": "tests/MyProject.Tests/MyProject.Tests.csproj",
+  "test_framework_flag": "--framework net8.0",
+  "test_logger": "trx;LogFileName=results.trx",
+  "expected": {
+    "fail_to_pass": [
+      "MyProject.Tests.SomeFixture.FailingTestName"
+    ],
+    "pass_to_pass": [
+      "MyProject.Tests.SomeFixture.PassingTestName"
+    ]
+  },
+  "environment": {
+    "project_root": "/app"
+  }
+}

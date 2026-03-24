@@ -49,17 +49,18 @@ The `search_query` input uses GitHub's pull request search syntax to filter whic
 | `author:username`                | Datapoints from PRs by a specific author              |
 | `label:priority`                 | Datapoints from PRs with a specific label             |
 | `created:2025-01-01..2025-06-30` | Datapoints from PRs created in the first half of 2025 |
+| `label:"Language: C#"`           | Datapoints from PRs by a specific language            |
 
-The workflow searches merged PRs in `dpaia/dataset`, extracts `instance_id` from each PR's body metadata, and then locates the corresponding datapoint directory on the filesystem. Instance IDs not found in the repository are skipped with a warning.
+The workflow searches merged PRs in `dpaia/dataset`, then locates the corresponding datapoint directory on the filesystem. Instance IDs not found in the repository are skipped with a warning.
 
 ## What the Export Produces
 
 ### Choosing a Format
 
-| Format    | Best for                                           | Trade-off                                      |
-|-----------|----------------------------------------------------|-------------------------------------------------|
-| `folders` | Local validation, debugging, inspecting individual files | One directory per instance; many small files    |
-| `jsonl`   | Programmatic consumption, bulk processing, storage | Single file; all contents inlined as strings    |
+| Format    | Best for                                                 | Trade-off                                    |
+|-----------|----------------------------------------------------------|----------------------------------------------|
+| `folders` | Local validation, debugging, inspecting individual files | One directory per instance; many small files |
+| `jsonl`   | Programmatic consumption, bulk processing, storage       | Single file; all contents inlined as strings |
 
 ### Manifest
 
@@ -152,7 +153,7 @@ Each datapoint — whether a `datapoint.json` in a folder or a line in JSONL —
 
 Any custom fields from `metadata.json` are passed through as top-level fields.
 
-**`instance_id` derivation:** By default computed as `{owner}__{repo_name}-{pr_number}`, where hyphens in the repo name are replaced with `__` (e.g., `dpaia__spectre__console-2`). Can be overridden via `instance_id` in `metadata.json`.
+**`instance_id` derivation:** By default computed as `{owner}__{repo_name}-{pr_number}`, where hyphens in the repo name are replaced with `__` (e.g., `dpaia__spectre__console-2`).
 
 ### Dataset Repository Layout
 
@@ -379,7 +380,7 @@ JSON output:
 
 ### Criteria Array
 
-The `criteria` array contains one object per evaluated aspect. The primary criterion for codegen is `tests`.
+The `criteria` array contains one object per evaluated aspect.
 
 **Tests criterion:**
 
@@ -411,7 +412,6 @@ The `criteria` array contains one object per evaluated aspect. The primary crite
 | `patch_applied` | `files_modified`, `hunks_applied`, `hunks_failed`          | Whether the gold patch applied cleanly         |
 | `compilation`   | `exit_code`, `error_message`, `duration_seconds`           | Whether the project compiled                   |
 | `coverage`      | `metrics.line_coverage_pct`, `metrics.branch_coverage_pct` | Code coverage (optional)                       |
-| `rubric`        | `scores`, `total_score`, `max_score`                       | Rubric-based scoring (dimension-to-number map) |
 | `output_match`  | `match_type`, `similarity_score`, `diff_summary`           | Output comparison (exact/fuzzy/regex/semantic) |
 | *(custom)*      | *(any)*                                                    | Any string not in the reserved list above      |
 
@@ -538,39 +538,6 @@ curl -L -H "Authorization: token $GITHUB_TOKEN" \
   https://api.github.com/repos/dpaia/infrastructure/actions/artifacts/<artifact_id>/zip \
   -o dataset.zip
 ```
-
-### Running the Export Script Locally
-
-Contributors normally don't need to run the export script — the workflow handles it. For local testing or debugging:
-
-**Prerequisites:**
-
-- Python 3.11+
-- [uv](https://github.com/astral-sh/uv)
-- `GITHUB_TOKEN` environment variable with repo access
-
-**Usage:**
-
-```bash
-export GITHUB_TOKEN=$(gh auth token)
-cd ee-bench-import
-uv run ee-dataset run-script scripts/export_unified.py \
-  --set REPO="dpaia/my-repo" \
-  --set PR_NUMBER=42 \
-  --set OUTPUT_DIR=/tmp/output
-```
-
-**Available `--set` Flags:**
-
-| Flag          | Default       | Description                              |
-|---------------|---------------|------------------------------------------|
-| `REPO`        | `dpaia/*`     | Repository filter (e.g., `dpaia/moq`)    |
-| `PR_NUMBER`   | *(all)*       | Specific PR number                       |
-| `OUTPUT_DIR`  | *(none)*      | Write per-instance directories here      |
-| `VERSION`     | `1.0`         | Version string for the record            |
-| `LIMIT`       | *(unlimited)* | Max number of PRs to process             |
-| `DATA_FILE`   | *(none)*      | Local JSON/JSONL with override fields    |
-| `INSTANCE_ID` | *(auto)*      | Override the computed instance ID        |
 
 ## Troubleshooting
 

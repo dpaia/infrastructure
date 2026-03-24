@@ -82,18 +82,21 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
           PYTHONPATH: .github/scripts/export
+          SEARCH_QUERY: ${{ inputs.search_query }}
+          EVAL_TYPE: ${{ inputs.eval_type }}
+          ORG: ${{ inputs.organization }}
         run: |
           IDS_FILE="${RUNNER_TEMP}/instance-ids.txt"
 
-          QUERY_ARGS=""
-          if [[ -n "${{ inputs.search_query }}" ]]; then
-            QUERY_ARGS="--query '${{ inputs.search_query }}'"
+          QUERY_ARGS=()
+          if [[ -n "$SEARCH_QUERY" ]]; then
+            QUERY_ARGS+=(--query "$SEARCH_QUERY")
           fi
 
           python .github/scripts/export/resolve_instances_v2.py \
-            $QUERY_ARGS \
-            --eval-type "${{ inputs.eval_type }}" \
-            --org "${{ inputs.organization }}" \
+            "${QUERY_ARGS[@]}" \
+            --eval-type "$EVAL_TYPE" \
+            --org "$ORG" \
             --dataset-dir dataset-checkout \
             --output "$IDS_FILE"
 
@@ -106,17 +109,21 @@ jobs:
         shell: bash
         env:
           PYTHONPATH: .github/scripts/export
+          EVAL_TYPE: ${{ inputs.eval_type }}
+          FORMAT: ${{ inputs.format }}
+          OUTPUT_NAME: ${{ steps.params.outputs.output_name }}
+          IDS_FILE: ${{ steps.resolve.outputs.ids_file }}
         run: |
-          OUTPUT_DIR="${RUNNER_TEMP}/export-output/${{ steps.params.outputs.output_name }}"
+          OUTPUT_DIR="${RUNNER_TEMP}/export-output/${OUTPUT_NAME}"
           EXPORTED_IDS="${RUNNER_TEMP}/exported-ids.txt"
 
           python .github/scripts/export/export_datapoints_v2.py \
-            --ids-file "${{ steps.resolve.outputs.ids_file }}" \
-            --eval-type "${{ inputs.eval_type }}" \
+            --ids-file "$IDS_FILE" \
+            --eval-type "$EVAL_TYPE" \
             --dataset-dir dataset-checkout \
-            --format "${{ inputs.format }}" \
+            --format "$FORMAT" \
             --output-dir "$OUTPUT_DIR" \
-            --output-name "${{ steps.params.outputs.output_name }}" \
+            --output-name "$OUTPUT_NAME" \
             --exported-ids-file "$EXPORTED_IDS" \
             | tee /tmp/export-output.log
 
@@ -129,15 +136,21 @@ jobs:
         shell: bash
         env:
           PYTHONPATH: .github/scripts/export
+          EVAL_TYPE: ${{ inputs.eval_type }}
+          FORMAT: ${{ inputs.format }}
+          SEARCH_QUERY: ${{ inputs.search_query }}
+          DATASET_SHA: ${{ steps.dataset-ref.outputs.sha }}
+          OUTPUT_NAME: ${{ steps.params.outputs.output_name }}
+          EXPORTED_IDS_FILE: ${{ steps.export.outputs.exported_ids_file }}
         run: |
-          OUTPUT_DIR="${RUNNER_TEMP}/export-output/${{ steps.params.outputs.output_name }}"
+          OUTPUT_DIR="${RUNNER_TEMP}/export-output/${OUTPUT_NAME}"
 
           python .github/scripts/export/generate_manifest_v2.py \
-            --exported-ids-file "${{ steps.export.outputs.exported_ids_file }}" \
-            --eval-type "${{ inputs.eval_type }}" \
-            --format "${{ inputs.format }}" \
-            --query "${{ inputs.search_query }}" \
-            --dataset-commit "${{ steps.dataset-ref.outputs.sha }}" \
+            --exported-ids-file "$EXPORTED_IDS_FILE" \
+            --eval-type "$EVAL_TYPE" \
+            --format "$FORMAT" \
+            --query "$SEARCH_QUERY" \
+            --dataset-commit "$DATASET_SHA" \
             --output-dir "$OUTPUT_DIR"
 
       - name: Upload export artifact

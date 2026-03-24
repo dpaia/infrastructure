@@ -140,13 +140,16 @@ def fetch_data_field_urls(org: str, project_number: int, node_ids: list[str]) ->
     project_id = project_node["id"]
 
     data_field_id = None
+    field_names = []
     for field in project_node["fields"]["nodes"]:
-        if field.get("name") == "Data":
+        name = field.get("name", "")
+        field_names.append(name)
+        if name == "Data":
             data_field_id = field["id"]
             break
 
     if not data_field_id:
-        print("Warning: 'Data' field not found in project", file=sys.stderr)
+        print(f"Warning: 'Data' field not found in project. Available fields: {field_names}", file=sys.stderr)
         return {}
 
     # Fetch project items with Data field values in batches

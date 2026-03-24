@@ -90,7 +90,7 @@ jobs:
             REPOS_FILE="${RUNNER_TEMP}/matched-repos.txt"
             gh api --paginate -X GET search/issues \
               -H "X-GitHub-Api-Version: 2022-11-28" \
-              -f q="project:${ORG}/${PROJECT_NUMBER} ${SEARCH_QUERY}" \
+              -f q="project:${ORG}/${PROJECT_NUMBER} is:pr ${SEARCH_QUERY}" \
               -f per_page="100" \
               -q '.items[] | .repository_url | split("/") | .[-1]' \
               | sort -u > "$REPOS_FILE"

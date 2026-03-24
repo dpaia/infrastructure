@@ -28,6 +28,66 @@ For a complete example, see [dpaia/spectre.console#2](https://github.com/dpaia/s
 Source PRs must live in a repository under the `dpaia` GitHub organization. If the project you want to create a datapoint for is not already in the org, fork it.
 By default, the main branch should be protected from direct pushes.
 
+## Starter Templates
+
+Complete starter templates are available in [`guides/templates/`](templates/) for the following build systems:
+
+| Template | Language | Build tool | Test runner | Base image |
+|----------|----------|------------|-------------|------------|
+| [`csharp/`](templates/csharp/) | C# | `dotnet build` | `dotnet test` (TRX) | `mcr.microsoft.com/dotnet/sdk:8.0` |
+| [`python/`](templates/python/) | Python | `pip install` | `pytest` (JUnit XML) | `python:3.11-slim` |
+| [`gradle/`](templates/gradle/) | Java/Kotlin | `./gradlew` | `./gradlew test` (JUnit XML) | `eclipse-temurin:21` |
+| [`maven/`](templates/maven/) | Java | `./mvnw` | `./mvnw test` (Surefire XML) | `eclipse-temurin:21` |
+
+Each template contains a complete `.ee-bench/codegen/` directory (`metadata.json`, `Dockerfile`, `run.sh`, `parser.py`) ready to copy and customize. Replace placeholder values (test project paths, test names, SDK versions) with your project's specifics.
+
+### Generating Configuration with Agents
+
+Instead of copying templates manually, you can use an AI agent to analyze your project and generate `.ee-bench/` configuration automatically.
+
+#### Installing the Skill
+
+The `generate-ee-bench` skill lives in the [infrastructure](https://github.com/dpaia/infrastructure) repository. To make it available in your target repository:
+
+**Option 1 — Symlink (recommended for active contributors):**
+
+```bash
+# From your dpaia/* repository root
+mkdir -p .claude/skills
+ln -s /path/to/infrastructure/.claude/skills/generate-ee-bench .claude/skills/generate-ee-bench
+```
+
+**Option 2 — Copy the skill directory:**
+
+```bash
+# From your dpaia/* repository root
+mkdir -p .claude/skills
+cp -r /path/to/infrastructure/.claude/skills/generate-ee-bench .claude/skills/generate-ee-bench
+```
+
+**Option 3 — Clone infrastructure alongside your repo:**
+
+```bash
+git clone https://github.com/dpaia/infrastructure.git /tmp/ee-bench-infra
+mkdir -p .claude/skills
+cp -r /tmp/ee-bench-infra/.claude/skills/generate-ee-bench .claude/skills/generate-ee-bench
+```
+
+> **Note:** The `.claude/skills/` directory should be added to `.gitignore` — it is local tooling, not part of the datapoint.
+
+#### Using the Skill
+
+Once installed, run Claude Code in your target repository:
+
+1. Navigate to your `dpaia/*` repository
+2. Run Claude Code
+3. Type `/generate-ee-bench codegen`
+4. The skill analyzes your project, detects the build system (C#, Python, Gradle, or Maven), and generates all required files with project-specific values filled in
+5. Review the generated files and fill in `expected.fail_to_pass` and `expected.pass_to_pass` test names in `metadata.json`
+6. Follow the [Local Testing](#local-testing) steps to verify your setup
+
+For unsupported build systems, use the starter templates above as a base.
+
 ## Directory Structure
 
 Your repository main branch or PR must include a `.ee-bench/codegen/` directory in the repository root with the following structure:
@@ -443,6 +503,123 @@ You can add custom fields by using any `key` value — they will be extracted au
 3. Open a pull request — the PR itself contains the code change (the "gold patch") that solves the issue
 4. Request that the PR be added to the [Code Generation](https://github.com/orgs/dpaia/projects/13) project
 5. When PR complete, move to "Review" to begin automated verification
+
+## Local Testing
+
+Before creating a PR, verify that your `.ee-bench/codegen/` setup produces a working environment — the Docker image builds, tests execute, and the output conforms to the result schema.
+
+### 1. Render Templates
+
+Your Dockerfile and `run.sh` use Jinja2 template variables (`{{ instance.base_commit }}`, `{{ instance.expected.pass_to_pass | tojson }}`, etc.) that are normally resolved by the export pipeline. For local testing, render them manually using this script:
+
+```bash
+#!/usr/bin/env bash
+# render_templates.sh — render .ee-bench/codegen/ templates for local testing
+set -euo pipefail
+
+REPO_URL="$(git remote get-url origin)"
+HEAD_COMMIT="$(git rev-parse HEAD)"
+PROJECT_ROOT="/repo"
+
+# Read expected tests from metadata.json (if defined)
+METADATA=".ee-bench/codegen/metadata.json"
+PASS_TO_PASS="[]"
+FAIL_TO_PASS="[]"
+if [ -f "$METADATA" ]; then
+  PASS_TO_PASS=$(jq -c '.expected.pass_to_pass // []' "$METADATA")
+  FAIL_TO_PASS=$(jq -c '.expected.fail_to_pass // []' "$METADATA")
+fi
+
+OUT_DIR="/tmp/ee-bench-local"
+rm -rf "$OUT_DIR"
+cp -r .ee-bench/codegen "$OUT_DIR"
+
+# Replace template variables in all files
+find "$OUT_DIR" -type f | while read -r file; do
+  sed -i.bak \
+    -e "s|{{ *instance\.repo_url *}}|${REPO_URL}|g" \
+    -e "s|{{ *instance\.base_commit *}}|${HEAD_COMMIT}|g" \
+    -e "s|{{ *instance\.head_commit *}}|${HEAD_COMMIT}|g" \
+    -e "s|{{ *instance\.project_root *}}|${PROJECT_ROOT}|g" \
+    -e "s|{{ *instance\.expected\.pass_to_pass *| *tojson *}}|${PASS_TO_PASS}|g" \
+    -e "s|{{ *instance\.expected\.fail_to_pass *| *tojson *}}|${FAIL_TO_PASS}|g" \
+    -e "s|{{ *instance\.expected *| *tojson *}}|{\"pass_to_pass\":${PASS_TO_PASS},\"fail_to_pass\":${FAIL_TO_PASS}}|g" \
+    "$file"
+  rm -f "${file}.bak"
+done
+
+echo "Rendered templates in $OUT_DIR"
+```
+
+This copies `.ee-bench/codegen/` to `/tmp/ee-bench-local/` and substitutes the most common variables. If your templates use custom metadata fields (e.g., `{{ instance.jvm_version }}`), add corresponding `sed` lines.
+
+### 2. Build the Docker Image
+
+```bash
+docker build --platform linux/amd64 -t test-datapoint -f /tmp/ee-bench-local/environment/Dockerfile /tmp/ee-bench-local/environment/
+```
+
+### 3. Run Tests (baseline — no patches)
+
+Run `run.sh` without any patches to verify the environment works and all existing tests pass:
+
+```bash
+mkdir -p /tmp/ee-bench-local/submission  # empty — no patches to apply
+
+docker run --rm --platform linux/amd64 \
+  -v /tmp/ee-bench-local/eval:/ee-bench/eval:ro \
+  -v /tmp/ee-bench-local/submission:/ee-bench/submission:ro \
+  test-datapoint \
+  bash /ee-bench/eval/run.sh
+```
+
+Your `run.sh` should handle the case where `/ee-bench/submission/patch.diff` does not exist (submission patch is optional).
+
+### 4. Verify the Output
+
+Check that the output:
+- Contains exactly one JSON line with `"schema_version": "2.0"`
+- Has `"status": "success"` at the top level
+- Includes a `tests` criterion with all tests passing (`"failed": 0`)
+- The `passed_tests` array contains the test names you intend to list in `metadata.json` as `pass_to_pass`
+
+If all tests pass and the output conforms to the schema, your `.ee-bench/codegen/` setup is ready. You can now create a branch with your code fix, open a PR, and proceed with the submission workflow.
+
+### 5. Debug Failures
+
+If the build or tests fail, enter the container interactively:
+
+```bash
+docker run --rm -it --platform linux/amd64 test-datapoint bash
+```
+
+Inside the container, check that dependencies are installed, the repository is cloned at the correct commit, and tests can be run manually.
+
+## Bot Commands
+
+You can trigger the bot manually by mentioning `@dpaia-validator` in a PR comment with one of the following commands:
+
+### `@dpaia-validator validate`
+
+Triggers the verification workflow on the current PR head commit. The bot:
+1. Reacts with a :rocket: emoji to acknowledge the command
+2. Dispatches the verification workflow
+3. Creates a "Datapoint Verification" check run on the PR
+4. Posts a comment with the verification result
+
+Use this to re-run verification after pushing fixes, or if the automatic trigger from the project board didn't fire.
+
+### `@dpaia-validator generate`
+
+Triggers the dataset generation workflow. The bot:
+1. Checks that a passing "Datapoint Verification" check exists on the current head SHA
+2. Dispatches the generation workflow
+3. Creates a "Datapoint Generation" check run on the PR
+4. Posts a comment linking to the generated dataset PR
+
+Use this to re-trigger generation if it previously failed or wasn't triggered automatically.
+
+> **Note:** Commands are case-insensitive. If both `validate` and `generate` appear in the same comment, `validate` takes priority.
 
 ## Pipeline Status Flow
 

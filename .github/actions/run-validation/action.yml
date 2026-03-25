@@ -30,7 +30,7 @@ outputs:
     value: ${{ steps.validate.outputs.failed_tests }}
   result_json_path:
     description: 'Path to the validation result JSON file'
-    value: ${{ steps.validate.outputs.result_json }}
+    value: ${{ steps.validate.outputs.result_json_path }}
   log_path:
     description: 'Path to the validation log file'
     value: ${{ steps.validate.outputs.log_path }}
@@ -56,27 +56,29 @@ runs:
 
         # Extract JSON result from validation output (appears after "JSON output:" line)
         RESULT_JSON_FILE="${RUNNER_TEMP}/validation-result.json"
-        sed -n '/^JSON output:$/,$ { /^JSON output:$/d; p }' "$LOG_FILE" > "$RESULT_JSON_FILE"
+        awk '/^JSON output:$/{found=1; next} found{print}' "$LOG_FILE" > "$RESULT_JSON_FILE"
+
+        # Ensure file exists for artifact upload even if empty
+        echo "result_json_path=$RESULT_JSON_FILE" >> $GITHUB_OUTPUT
 
         # Parse structured results from JSON
-        if jq empty "$RESULT_JSON_FILE" 2>/dev/null; then
-          echo "result_json=$RESULT_JSON_FILE" >> $GITHUB_OUTPUT
-
+        if [ -s "$RESULT_JSON_FILE" ] && jq empty "$RESULT_JSON_FILE" 2>/dev/null; then
           STATUS=$(jq -r '.status' "$RESULT_JSON_FILE")
           DURATION=$(jq -r '.duration_seconds' "$RESULT_JSON_FILE")
-          TEST_SUMMARY=$(jq -r '.criteria[] | select(.criterion == "tests") | .summary | "Total: \(.total), Passed: \(.passed), Failed: \(.failed), Skipped: \(.skipped)"' "$RESULT_JSON_FILE" 2>/dev/null || echo "")
-          FAIL_TO_PASS=$(jq -r '.criteria[] | select(.criterion == "fail_to_pass") | .summary | "Expected: \(.expected), Matched: \(.matched)"' "$RESULT_JSON_FILE" 2>/dev/null || echo "")
+          TEST_SUMMARY=$(jq -r '(.criteria // []) | map(select(.criterion == "tests")) | first | .summary | "Total: \(.total), Passed: \(.passed), Failed: \(.failed), Skipped: \(.skipped)"' "$RESULT_JSON_FILE" 2>/dev/null || echo "")
+          F2P_STATUS=$(jq -r '(.criteria // []) | map(select(.criterion == "fail_to_pass")) | first | .status' "$RESULT_JSON_FILE" 2>/dev/null || echo "")
+          F2P_DETAIL=$(jq -r '(.criteria // []) | map(select(.criterion == "fail_to_pass")) | first | .detail // ""' "$RESULT_JSON_FILE" 2>/dev/null || echo "")
 
           echo "status=$STATUS" >> $GITHUB_OUTPUT
           echo "duration=$DURATION" >> $GITHUB_OUTPUT
           echo "test_summary=$TEST_SUMMARY" >> $GITHUB_OUTPUT
-          echo "fail_to_pass=$FAIL_TO_PASS" >> $GITHUB_OUTPUT
+          echo "fail_to_pass=$F2P_STATUS: $F2P_DETAIL" >> $GITHUB_OUTPUT
 
           if [ "$STATUS" != "success" ]; then
-            FAILED_CRITERIA=$(jq -r '[.criteria[] | select(.status != "pass")] | map("\(.criterion): \(.status)") | join(", ")' "$RESULT_JSON_FILE" 2>/dev/null || echo "unknown")
+            FAILED_CRITERIA=$(jq -r '[.criteria[] | select(.status == "fail")] | map("\(.criterion): \(.status)") | join(", ")' "$RESULT_JSON_FILE" 2>/dev/null || echo "unknown")
             echo "failed_criteria=$FAILED_CRITERIA" >> $GITHUB_OUTPUT
 
-            FAILED_TESTS=$(jq -r '.criteria[] | select(.criterion == "tests") | .failed_tests // [] | .[0:20] | map("- \(.name): \(.status)") | join("\n")' "$RESULT_JSON_FILE" 2>/dev/null || echo "")
+            FAILED_TESTS=$(jq -r '(.criteria // []) | map(select(.criterion == "tests")) | first | .failed_tests // [] | .[0:20] | map("- \(.name)") | join("\n")' "$RESULT_JSON_FILE" 2>/dev/null || echo "")
             if [ -n "$FAILED_TESTS" ]; then
               echo "failed_tests<<FTESTS_EOF" >> $GITHUB_OUTPUT
               echo "$FAILED_TESTS" >> $GITHUB_OUTPUT

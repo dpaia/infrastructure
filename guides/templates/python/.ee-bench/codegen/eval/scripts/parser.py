@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Parse C# test result logs (JUnit XML or TRX) into EE-bench JSON."""
+"""Parse test result logs (JUnit XML or TRX) into EE-bench JSON."""
 import json
 import os
 import sys
@@ -14,10 +14,8 @@ def _truncate(text: str, limit: int = MAX_STACKTRACE) -> str:
     return text
 
 
-def parse_junit_xml(path: str) -> list[dict]:
+def parse_junit_xml(root: ET.Element) -> list[dict]:
     """Parse JUnit XML format (<testsuites><testsuite><testcase>)."""
-    tree = ET.parse(path)
-    root = tree.getroot()
     methods = []
 
     if root.tag == "testsuite":
@@ -31,7 +29,10 @@ def parse_junit_xml(path: str) -> list[dict]:
         for tc in suite.findall("testcase"):
             name = tc.get("name", "unknown")
             classname = tc.get("classname", "")
-            full_name = f"{classname}.{name}" if classname else name
+            if classname and not name.startswith(classname):
+                full_name = f"{classname}.{name}"
+            else:
+                full_name = name
 
             duration = 0.0
             try:
@@ -70,10 +71,8 @@ def parse_junit_xml(path: str) -> list[dict]:
     return methods
 
 
-def parse_trx(path: str) -> list[dict]:
+def parse_trx(root: ET.Element) -> list[dict]:
     """Parse Visual Studio TRX format."""
-    tree = ET.parse(path)
-    root = tree.getroot()
     ns = {"t": "http://microsoft.com/schemas/VisualStudio/TeamTest/2010"}
     methods = []
 
@@ -137,63 +136,52 @@ def detect_and_parse(artifacts_dir: str) -> list[dict]:
 
         ns_tag = root.tag
         if "TestRun" in ns_tag or "VisualStudio" in ns_tag:
-            methods.extend(parse_trx(fpath))
+            methods.extend(parse_trx(root))
         elif root.tag in ("testsuites", "testsuite"):
-            methods.extend(parse_junit_xml(fpath))
+            methods.extend(parse_junit_xml(root))
         else:
             if root.findall(".//testcase"):
-                methods.extend(parse_junit_xml(fpath))
+                methods.extend(parse_junit_xml(root))
 
     return methods
 
 
 def aggregate(methods: list[dict]) -> dict:
-    """Build class-level aggregation and summary from method-level results."""
-    passed_classes = set()
-    failed_classes = set()
-    skipped_classes = set()
+    """Build method-level aggregation and summary from parsed results."""
+    passed_names = []
+    failed_names = []
+    skipped_names = []
     total_duration = 0.0
+    n_errors = 0
 
     for m in methods:
-        cls = m["name"].rsplit(".", 1)[0] if "." in m["name"] else m["name"]
         total_duration += m.get("duration_seconds", 0.0)
-        if m["status"] == "passed":
-            passed_classes.add(cls)
-        elif m["status"] == "failed":
-            failed_classes.add(cls)
-        elif m["status"] == "skipped":
-            skipped_classes.add(cls)
+        status = m["status"]
+        if status == "passed":
+            passed_names.append(m["name"])
+        elif status == "failed":
+            failed_names.append(m["name"])
+            if m.get("type") == "error":
+                n_errors += 1
+        elif status == "skipped":
+            skipped_names.append(m["name"])
 
-    # A class that has any failure is failed, not passed
-    passed_classes -= failed_classes
-    passed_classes -= skipped_classes
-
-    passed_tests = [{"name": c} for c in sorted(passed_classes)]
-    failed_tests = [{"name": c} for c in sorted(failed_classes)]
-    skipped_tests = [{"name": c} for c in sorted(skipped_classes)]
-
-    n_passed = sum(1 for m in methods if m["status"] == "passed")
-    n_failed = sum(1 for m in methods if m["status"] == "failed" and m.get("type") != "error")
-    n_errors = sum(1 for m in methods if m["status"] == "failed" and m.get("type") == "error")
-    n_skipped = sum(1 for m in methods if m["status"] == "skipped")
-
-    summary = {
-        "total": len(methods),
-        "passed": n_passed,
-        "failed": n_failed,
-        "errors": n_errors,
-        "skipped": n_skipped,
-        "duration_seconds": round(total_duration, 3),
-    }
+    n_passed = len(passed_names)
+    n_failed = len(failed_names)
+    n_skipped = len(skipped_names)
 
     return {
-        "total": len(methods),
-        "passed": n_passed,
-        "failed": n_failed + n_errors,
-        "summary": summary,
-        "passed_tests": passed_tests,
-        "failed_tests": failed_tests,
-        "skipped_tests": skipped_tests,
+        "summary": {
+            "total": len(methods),
+            "passed": n_passed,
+            "failed": n_failed - n_errors,
+            "errors": n_errors,
+            "skipped": n_skipped,
+            "duration_seconds": round(total_duration, 3),
+        },
+        "passed_tests": [{"name": n} for n in sorted(set(passed_names))],
+        "failed_tests": [{"name": n} for n in sorted(set(failed_names))],
+        "skipped_tests": [{"name": n} for n in sorted(set(skipped_names))],
         "methods": methods,
     }
 

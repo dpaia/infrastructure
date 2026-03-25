@@ -12,7 +12,8 @@ Generate `.ee-bench/codegen/` configuration that builds a Docker image, runs tes
 └── eval/
     ├── run.sh
     └── scripts/
-        └── parser.py
+        ├── parser.py
+        └── emitter.py
 ```
 
 ## Step 1: Detect Build System
@@ -286,33 +287,25 @@ mkdir -p "$ARTIFACTS_DIR"
 
 TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 OVERALL_START=$SECONDS
-MAX_OUTPUT=51200
 
 _elapsed() { echo $(( SECONDS - ${1:-$OVERALL_START} )); }
 
-_capture_output() {
-  local file="$1" limit="${2:-$MAX_OUTPUT}"
-  if [ -f "$file" ]; then
-    head -c "$limit" "$file"
-  fi
-}
-
-# --- Helper: run tests in isolation (stash/unstash working tree) ---
+# --- _run_tests: run tests with isolated ARTIFACTS_DIR ---
+# Usage: _run_tests <label>
+# Writes: /tmp/<label>_stdout.log, /tmp/<label>_stderr.log, /tmp/<label>_parser.json
 _run_tests() {
-  local label="$1" out_prefix="$2"
-  local start=$SECONDS
+  local label="$1"
+  local orig_artifacts="$ARTIFACTS_DIR"
+  export ARTIFACTS_DIR="$orig_artifacts/$label"
+  mkdir -p "$ARTIFACTS_DIR"
+
   set +e
-  <TEST_COMMAND> > "/tmp/${out_prefix}_stdout.log" 2> "/tmp/${out_prefix}_stderr.log"
-  local exit_code=$?
+  <TEST_COMMAND> > "/tmp/${label}_stdout.log" 2> "/tmp/${label}_stderr.log"
   set -e
-  local duration=$(( SECONDS - start ))
-  <COPY_ARTIFACTS_IF_NEEDED>
-  local parser_json
-  parser_json=$(python3 "$EVAL_DIR/scripts/parser.py" "$ARTIFACTS_DIR" 2>/dev/null || echo '{}')
-  rm -rf "$ARTIFACTS_DIR"/* 2>/dev/null || true
-  echo "$duration" > "/tmp/${out_prefix}_duration.txt"
-  echo "$parser_json" > "/tmp/${out_prefix}_parser.json"
-  return $exit_code
+
+  python3 "$EVAL_DIR/scripts/parser.py" "$ARTIFACTS_DIR" > "/tmp/${label}_parser.json" 2>/dev/null || echo '{}' > "/tmp/${label}_parser.json"
+
+  export ARTIFACTS_DIR="$orig_artifacts"
 }
 
 cd "$PROJECT_ROOT"
@@ -324,7 +317,16 @@ if [ -n "${EE_BENCH_RESET:-}" ]; then
 fi
 
 # ============================================================
-# CRITERION 1: compilation
+# Apply test patch (setup — not a criterion)
+# ============================================================
+HAS_TEST_PATCH="false"
+if [ -f "$EVAL_DIR/test_patch.diff" ]; then
+  git apply -v "$EVAL_DIR/test_patch.diff" 2>/dev/null || true
+  HAS_TEST_PATCH="true"
+fi
+
+# ============================================================
+# Criterion: compilation (initial build)
 # ============================================================
 COMPILE_START=$SECONDS
 COMPILE_STATUS="pass"
@@ -332,63 +334,62 @@ COMPILE_STATUS="pass"
   COMPILE_STATUS="fail"
 }
 COMPILE_DURATION=$(_elapsed $COMPILE_START)
-COMPILE_OUTPUT=$(_capture_output /tmp/compile_stdout.log)
-COMPILE_STDERR=$(_capture_output /tmp/compile_stderr.log)
 
 # ============================================================
-# CRITERION 2: baseline_tests (before submission, with test_patch)
+# Run baseline tests (only if test_patch exists)
 # ============================================================
-BASELINE_STATUS="skipped"
 BASELINE_DURATION=0
-BASELINE_OUTPUT=""
-if [ "$COMPILE_STATUS" = "pass" ] && [ -f "$EVAL_DIR/test_patch.diff" ]; then
-  git apply -v "$EVAL_DIR/test_patch.diff" 2>/dev/null || true
-  _run_tests "baseline" "baseline" && BASELINE_STATUS="pass" || BASELINE_STATUS="pass"
-  # baseline always "passes" — we just record what tests looked like before submission
-  BASELINE_DURATION=$(cat /tmp/baseline_duration.txt 2>/dev/null || echo 0)
-  BASELINE_OUTPUT=$(_capture_output /tmp/baseline_stdout.log)
+if [ "$COMPILE_STATUS" = "pass" ] && [ "$HAS_TEST_PATCH" = "true" ]; then
+  BASELINE_START=$SECONDS
+  _run_tests baseline
+  BASELINE_DURATION=$(_elapsed $BASELINE_START)
 fi
 
 # ============================================================
-# CRITERION 3: patch_applied
+# Criterion: patch_applied (submission patch)
 # ============================================================
 PATCH_START=$SECONDS
-PATCH_STATUS="skipped"
+PATCH_STATUS="pass"
 PATCH_OUTPUT=""
 if [ -f "$SUBMISSION_DIR/patch.diff" ]; then
-  PATCH_STATUS="pass"
   PATCH_OUTPUT=$(git apply -v "$SUBMISSION_DIR/patch.diff" 2>&1) || {
     PATCH_STATUS="fail"
     echo "WARN: git apply failed for submission patch" >&2
   }
+else
+  PATCH_STATUS="skipped"
 fi
 PATCH_DURATION=$(_elapsed $PATCH_START)
 
-# --- Apply test patch if not already applied ---
-if [ "$BASELINE_STATUS" = "skipped" ] && [ -f "$EVAL_DIR/test_patch.diff" ]; then
-  git apply -v "$EVAL_DIR/test_patch.diff" 2>/dev/null || true
+# ============================================================
+# Rebuild after submission patch
+# ============================================================
+REBUILD_STATUS="skipped"
+if [ "$COMPILE_STATUS" = "pass" ] && [ "$PATCH_STATUS" = "pass" ]; then
+  <COMPILE_COMMAND> > /tmp/rebuild_stdout.log 2> /tmp/rebuild_stderr.log || {
+    REBUILD_STATUS="fail"
+    COMPILE_STATUS="fail"
+  }
+  if [ "$REBUILD_STATUS" != "fail" ]; then
+    REBUILD_STATUS="pass"
+  fi
 fi
 
 # ============================================================
-# CRITERION 4: tests (after submission)
+# Run eval tests (only if compilation and patch OK)
 # ============================================================
-TEST_STATUS="skipped"
 TEST_DURATION=0
-TEST_OUTPUT=""
-if [ "$COMPILE_STATUS" = "pass" ] && [ "$PATCH_STATUS" != "fail" ]; then
-  _run_tests "eval" "test" && true
-  TEST_DURATION=$(cat /tmp/test_duration.txt 2>/dev/null || echo 0)
-  TEST_OUTPUT=$(_capture_output /tmp/test_stdout.log)
+if [ "$COMPILE_STATUS" = "pass" ] && [ "$PATCH_STATUS" = "pass" ]; then
+  TEST_START=$SECONDS
+  _run_tests eval
+  TEST_DURATION=$(_elapsed $TEST_START)
 fi
 
 OVERALL_DURATION=$(_elapsed $OVERALL_START)
 
-# --- Write temp files for Python emitter ---
+# --- Write temp files for safe passing to Python emitter ---
 echo "$PATCH_OUTPUT" > /tmp/_patch_output.txt
-echo "$COMPILE_OUTPUT" > /tmp/_compile_output.txt
-printf '%s\n%s' "$COMPILE_STDERR" "" >> /tmp/_compile_output.txt
-echo "$TEST_OUTPUT" > /tmp/_test_output.txt
-echo "$BASELINE_OUTPUT" > /tmp/_baseline_output.txt
+cat /tmp/compile_stdout.log /tmp/compile_stderr.log > /tmp/_compile_output.txt 2>/dev/null || true
 
 # --- Write expected test lists to file (avoids shell quoting issues) ---
 cat > /tmp/_expected.json << 'EXPECTED_EOF'
@@ -398,140 +399,30 @@ EXPECTED_EOF
 # ============================================================
 # Emit EE-bench JSON v2.0 (6 criteria)
 # ============================================================
-
 export PATCH_STATUS PATCH_DURATION COMPILE_STATUS COMPILE_DURATION
-export TEST_STATUS TEST_DURATION BASELINE_STATUS BASELINE_DURATION
-export OVERALL_DURATION TIMESTAMP
+export TEST_DURATION BASELINE_DURATION OVERALL_DURATION TIMESTAMP
+export HAS_TEST_PATCH
 
-python3 -c "
-import json, sys, os
-
-def read_file(path, limit=51200):
-    try:
-        with open(path) as f:
-            return f.read(limit)
-    except Exception:
-        return ''
-
-def load_parser(path):
-    try:
-        with open(path) as f:
-            return json.load(f)
-    except Exception:
-        return {}
-
-compile_status = os.environ.get('COMPILE_STATUS', 'pass')
-compile_duration = int(os.environ.get('COMPILE_DURATION', '0'))
-baseline_status = os.environ.get('BASELINE_STATUS', 'skipped')
-baseline_duration = int(os.environ.get('BASELINE_DURATION', '0'))
-patch_status = os.environ.get('PATCH_STATUS', 'skipped')
-patch_duration = int(os.environ.get('PATCH_DURATION', '0'))
-test_status = os.environ.get('TEST_STATUS', 'skipped')
-test_duration = int(os.environ.get('TEST_DURATION', '0'))
-overall_duration = int(os.environ.get('OVERALL_DURATION', '0'))
-timestamp = os.environ.get('TIMESTAMP', '')
-
-compile_output = read_file('/tmp/_compile_output.txt')
-baseline_output = read_file('/tmp/_baseline_output.txt')
-patch_output = read_file('/tmp/_patch_output.txt')
-test_output = read_file('/tmp/_test_output.txt')
-
-baseline_parser = load_parser('/tmp/baseline_parser.json')
-eval_parser = load_parser('/tmp/test_parser.json')
-
-# Load expected test lists from file
-_expected = load_parser('/tmp/_expected.json')
-fail_to_pass = _expected.get('fail_to_pass', [])
-pass_to_pass = _expected.get('pass_to_pass', [])
-
-# Extract passed/failed test name sets from parser results
-def test_names(parser_data, status_key):
-    return {t['name'] for t in parser_data.get(status_key, [])}
-
-baseline_passed = test_names(baseline_parser, 'passed_tests')
-baseline_failed = test_names(baseline_parser, 'failed_tests')
-eval_passed = test_names(eval_parser, 'passed_tests')
-eval_failed = test_names(eval_parser, 'failed_tests')
-
-# Criterion 5: fail_to_pass
-ftp_status = 'skipped'
-if fail_to_pass and test_status != 'skipped' and baseline_status != 'skipped':
-    ftp_ok = all(t in eval_passed and t in baseline_failed for t in fail_to_pass)
-    ftp_status = 'pass' if ftp_ok else 'fail'
-
-# Criterion 6: pass_to_pass
-ptp_status = 'skipped'
-if pass_to_pass and test_status != 'skipped' and baseline_status != 'skipped':
-    ptp_ok = all(t in eval_passed and t in baseline_passed for t in pass_to_pass)
-    ptp_status = 'pass' if ptp_ok else 'fail'
-
-eval_summary = eval_parser.get('summary', {
-    'total': 0, 'passed': 0, 'failed': 0, 'errors': 0, 'skipped': 0, 'duration_seconds': 0.0,
-})
-
-result = {
-    'schema_version': '2.0',
-    'status': 'success' if compile_status == 'pass' and patch_status != 'fail' and ftp_status == 'pass' else 'failure',
-    'timestamp': timestamp,
-    'duration_seconds': overall_duration,
-    'criteria': [
-        {
-            'criterion': 'compilation',
-            'status': compile_status,
-            'duration_seconds': compile_duration,
-            'output': compile_output[:51200],
-        },
-        {
-            'criterion': 'baseline_tests',
-            'status': baseline_status,
-            'duration_seconds': baseline_duration,
-            'output': baseline_output[:51200],
-        },
-        {
-            'criterion': 'patch_applied',
-            'status': patch_status,
-            'duration_seconds': patch_duration,
-            'output': patch_output[:51200],
-        },
-        {
-            'criterion': 'tests',
-            'status': test_status,
-            'duration_seconds': test_duration,
-            'output': test_output[:51200],
-            'summary': eval_summary,
-            'passed_tests': eval_parser.get('passed_tests', []),
-            'failed_tests': eval_parser.get('failed_tests', []),
-            'skipped_tests': eval_parser.get('skipped_tests', []),
-            'methods': eval_parser.get('methods', []),
-        },
-        {
-            'criterion': 'fail_to_pass',
-            'status': ftp_status,
-            'expected': fail_to_pass,
-        },
-        {
-            'criterion': 'pass_to_pass',
-            'status': ptp_status,
-            'expected': pass_to_pass,
-        },
-    ],
-}
-print(json.dumps(result))
-"
+python3 "$EVAL_DIR/scripts/emitter.py"
 ```
 
 **Language-specific substitutions:**
 
-| Language | `<default_project_root>` | `<COMPILE_COMMAND>` | `<TEST_COMMAND>` | `<COPY_ARTIFACTS_IF_NEEDED>` |
-|----------|-------------------------|---------------------|------------------|------------------------------|
-| C# | `/app` | `dotnet build {{ instance.test_project }}` | `dotnet test --no-build {{ instance.test_framework_flag }} "{{ instance.test_project }}" --logger "{{ instance.test_logger }}" --results-directory "$ARTIFACTS_DIR"` | *(none — results go directly to ARTIFACTS_DIR)* |
-| Python | `/app` | `pip install -e .` | `python -m pytest --junitxml="$ARTIFACTS_DIR/results.xml" -v` | *(none — results go directly to ARTIFACTS_DIR)* |
-| Gradle | `/repo` | `./gradlew classes testClasses --no-daemon -q` | `./gradlew test --no-daemon` | `find . -path "*/build/test-results/test/*.xml" -exec cp {} "$ARTIFACTS_DIR/" \; 2>/dev/null \|\| true` |
-| Maven | `/repo` | `./mvnw compile test-compile -q` | `./mvnw test -q` | `find . -path "*/target/surefire-reports/*.xml" -exec cp {} "$ARTIFACTS_DIR/" \; 2>/dev/null \|\| true` |
+| Language | `<default_project_root>` | `<COMPILE_COMMAND>` | `<TEST_COMMAND>` |
+|----------|-------------------------|---------------------|------------------|
+| C# | `/app` | `bash "$EVAL_DIR/scripts/install.sh"` | `dotnet test --no-build {{ instance.test_framework_flag }} "{{ instance.test_project }}" --logger "{{ instance.test_logger }}"` |
+| Python | `/app` | `pip install -e .` | `python -m pytest --junitxml="$ARTIFACTS_DIR/results.xml" -v` |
+| Gradle | `/repo` | `./gradlew classes testClasses --no-daemon -q` | `./gradlew test --no-daemon` |
+| Maven | `/repo` | `./mvnw compile test-compile -q` | `./mvnw test -q` |
 
 ### eval/scripts/parser.py
 
-Generate the same parser for all languages. It handles both JUnit XML and TRX formats:
+Generate the same parser for all languages. It handles both JUnit XML and TRX formats.
+
+Key design points:
+- `parse_junit_xml()` and `parse_trx()` accept a pre-parsed `ET.Element` root (not a file path) -- `detect_and_parse()` parses the XML once and dispatches by root tag
+- `aggregate()` uses a single-pass loop to collect names and count errors simultaneously
+- Output schema has top-level `summary`, `passed_tests`, `failed_tests`, `skipped_tests`, `methods` (no top-level `total`/`passed`/`failed`)
 
 ```python
 #!/usr/bin/env python3
@@ -550,10 +441,8 @@ def _truncate(text: str, limit: int = MAX_STACKTRACE) -> str:
     return text
 
 
-def parse_junit_xml(path: str) -> list[dict]:
+def parse_junit_xml(root: ET.Element) -> list[dict]:
     """Parse JUnit XML format (<testsuites><testsuite><testcase>)."""
-    tree = ET.parse(path)
-    root = tree.getroot()
     methods = []
 
     if root.tag == "testsuite":
@@ -606,10 +495,8 @@ def parse_junit_xml(path: str) -> list[dict]:
     return methods
 
 
-def parse_trx(path: str) -> list[dict]:
+def parse_trx(root: ET.Element) -> list[dict]:
     """Parse Visual Studio TRX format."""
-    tree = ET.parse(path)
-    root = tree.getroot()
     ns = {"t": "http://microsoft.com/schemas/VisualStudio/TeamTest/2010"}
     methods = []
 
@@ -668,12 +555,12 @@ def detect_and_parse(artifacts_dir: str) -> list[dict]:
 
         ns_tag = root.tag
         if "TestRun" in ns_tag or "VisualStudio" in ns_tag:
-            methods.extend(parse_trx(fpath))
+            methods.extend(parse_trx(root))
         elif root.tag in ("testsuites", "testsuite"):
-            methods.extend(parse_junit_xml(fpath))
+            methods.extend(parse_junit_xml(root))
         else:
             if root.findall(".//testcase"):
-                methods.extend(parse_junit_xml(fpath))
+                methods.extend(parse_junit_xml(root))
 
     return methods
 
@@ -684,42 +571,36 @@ def aggregate(methods: list[dict]) -> dict:
     failed_names = []
     skipped_names = []
     total_duration = 0.0
+    n_errors = 0
 
     for m in methods:
         total_duration += m.get("duration_seconds", 0.0)
-        if m["status"] == "passed":
+        status = m["status"]
+        if status == "passed":
             passed_names.append(m["name"])
-        elif m["status"] == "failed":
+        elif status == "failed":
             failed_names.append(m["name"])
-        elif m["status"] == "skipped":
+            if m.get("type") == "error":
+                n_errors += 1
+        elif status == "skipped":
             skipped_names.append(m["name"])
 
-    passed_tests = [{"name": n} for n in sorted(set(passed_names))]
-    failed_tests = [{"name": n} for n in sorted(set(failed_names))]
-    skipped_tests = [{"name": n} for n in sorted(set(skipped_names))]
-
-    n_passed = sum(1 for m in methods if m["status"] == "passed")
-    n_failed = sum(1 for m in methods if m["status"] == "failed" and m.get("type") != "error")
-    n_errors = sum(1 for m in methods if m["status"] == "failed" and m.get("type") == "error")
-    n_skipped = sum(1 for m in methods if m["status"] == "skipped")
-
-    summary = {
-        "total": len(methods),
-        "passed": n_passed,
-        "failed": n_failed,
-        "errors": n_errors,
-        "skipped": n_skipped,
-        "duration_seconds": round(total_duration, 3),
-    }
+    n_passed = len(passed_names)
+    n_failed = len(failed_names)
+    n_skipped = len(skipped_names)
 
     return {
-        "total": len(methods),
-        "passed": n_passed,
-        "failed": n_failed + n_errors,
-        "summary": summary,
-        "passed_tests": passed_tests,
-        "failed_tests": failed_tests,
-        "skipped_tests": skipped_tests,
+        "summary": {
+            "total": len(methods),
+            "passed": n_passed,
+            "failed": n_failed - n_errors,
+            "errors": n_errors,
+            "skipped": n_skipped,
+            "duration_seconds": round(total_duration, 3),
+        },
+        "passed_tests": [{"name": n} for n in sorted(set(passed_names))],
+        "failed_tests": [{"name": n} for n in sorted(set(failed_names))],
+        "skipped_tests": [{"name": n} for n in sorted(set(skipped_names))],
         "methods": methods,
     }
 
@@ -738,6 +619,17 @@ def main():
 if __name__ == "__main__":
     main()
 ```
+
+### eval/scripts/emitter.py
+
+The emitter is a separate, language-agnostic Python script that reads environment variables (set by `run.sh`) and parser JSON files from `/tmp`, then prints the final EE-bench JSON v2.0 to stdout. Generate the same emitter for all languages.
+
+Key features:
+- **`_prefix(name)`** strips parameterized suffixes: `Foo.Bar(x: 1)` becomes `Foo.Bar`
+- **`_test_in(name, name_set)`** matches by exact name first, then by prefix (handles parameterized test methods)
+- **`_evaluate_criterion()`** is a shared helper for both `fail_to_pass` and `pass_to_pass` criteria -- it checks eval pass status and baseline consistency in one call
+- Reads `HAS_TEST_PATCH` env var to decide whether baseline checks apply
+- Empty `fail_to_pass` list results in `"fail"` status; empty `pass_to_pass` results in `"skipped"`
 
 ## Step 5: Post-Generation
 

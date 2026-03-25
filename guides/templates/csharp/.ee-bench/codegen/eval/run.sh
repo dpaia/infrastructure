@@ -168,8 +168,8 @@ baseline_passed = {t['name'] for t in baseline_data.get('passed_tests', []) if i
 eval_passed = {t['name'] for t in eval_data.get('passed_tests', []) if isinstance(t, dict)}
 
 # Expected test lists (baked in at template render time)
-expected_f2p = {{ instance.expected.FAIL_TO_PASS | tojson }}
-expected_p2p = {{ instance.expected.PASS_TO_PASS | tojson }}
+expected_f2p = {{ instance.expected.fail_to_pass | tojson }}
+expected_p2p = {{ instance.expected.pass_to_pass | tojson }}
 
 # --- Criterion: baseline_tests ---
 if has_test_patch and compile_status == 'pass':
@@ -187,7 +187,7 @@ else:
 # --- Criterion: fail_to_pass ---
 if not expected_f2p:
     f2p_status = 'skipped'
-    f2p_detail = 'no expected FAIL_TO_PASS tests'
+    f2p_detail = 'no expected fail_to_pass tests'
 elif compile_status != 'pass' or patch_status not in ('pass', 'skipped'):
     f2p_status = 'skipped'
     f2p_detail = 'skipped due to compilation or patch failure'
@@ -205,12 +205,12 @@ else:
     if not f2p_baseline_ok:
         unexpected = [t for t in expected_f2p if t in baseline_passed]
         detail_parts.append('baseline unexpected pass: ' + ', '.join(unexpected[:10]))
-    f2p_detail = '; '.join(detail_parts) if detail_parts else 'all FAIL_TO_PASS tests fixed'
+    f2p_detail = '; '.join(detail_parts) if detail_parts else 'all fail_to_pass tests fixed'
 
 # --- Criterion: pass_to_pass ---
 if not expected_p2p:
     p2p_status = 'skipped'
-    p2p_detail = 'no expected PASS_TO_PASS tests'
+    p2p_detail = 'no expected pass_to_pass tests'
 elif compile_status != 'pass' or patch_status not in ('pass', 'skipped'):
     p2p_status = 'skipped'
     p2p_detail = 'skipped due to compilation or patch failure'
@@ -228,7 +228,7 @@ else:
     if not p2p_baseline_ok:
         baseline_missing = [t for t in expected_p2p if t not in baseline_passed]
         detail_parts.append('baseline missing: ' + ', '.join(baseline_missing[:10]))
-    p2p_detail = '; '.join(detail_parts) if detail_parts else 'all PASS_TO_PASS tests still passing'
+    p2p_detail = '; '.join(detail_parts) if detail_parts else 'all pass_to_pass tests still passing'
 
 # --- Overall status ---
 has_failure = any(

@@ -102,7 +102,7 @@ All top-level scalar fields from `metadata.json` are merged into the template co
 
 - Files without `{{` markers pass through unchanged
 - `tojson` filter available for JSON serialization: `{{ instance.expected | tojson }}`
-- `{{ instance.expected.FAIL_TO_PASS | tojson }}` and `{{ instance.expected.PASS_TO_PASS | tojson }}` render JSON arrays of test names (baked into run.sh)
+- `{{ instance.expected.fail_to_pass | tojson }}` and `{{ instance.expected.pass_to_pass | tojson }}` render JSON arrays of test names (baked into run.sh)
 - Built-in fields take precedence — a metadata field will not override a built-in field of the same name
 
 ## Step 4: Generate Files
@@ -118,10 +118,10 @@ Generate with detected values. Use placeholders for test names:
   "language": "<detected>",
   "<language-specific fields>": "<detected values>",
   "expected": {
-    "FAIL_TO_PASS": [
+    "fail_to_pass": [
       "TODO: Add fully qualified test names that should fail before fix and pass after"
     ],
-    "PASS_TO_PASS": [
+    "pass_to_pass": [
       "TODO: Add fully qualified test names that should always pass"
     ]
   },
@@ -131,7 +131,7 @@ Generate with detected values. Use placeholders for test names:
 }
 ```
 
-**Note:** `expected.FAIL_TO_PASS` and `expected.PASS_TO_PASS` are consumed by `run.sh` at **template render time**. They are baked into the script as JSON literals via `{{ instance.expected.FAIL_TO_PASS | tojson }}` and `{{ instance.expected.PASS_TO_PASS | tojson }}`, so the running container does not need access to `metadata.json`.
+**Note:** `expected.fail_to_pass` and `expected.pass_to_pass` are consumed by `run.sh` at **template render time**. They are baked into the script as JSON literals via `{{ instance.expected.fail_to_pass | tojson }}` and `{{ instance.expected.pass_to_pass | tojson }}`, so the running container does not need access to `metadata.json`.
 
 Language-specific fields to include:
 
@@ -261,8 +261,8 @@ All run.sh scripts follow the same 6-criterion structure. Only the compile and t
 | `baseline_tests` | Test run before submission (with test_patch, no submission) | `pass`, `fail`, `skipped` |
 | `patch_applied` | Apply submission patch | `pass`, `fail`, `skipped` |
 | `tests` | Test run after submission | `pass`, `fail`, `skipped` |
-| `fail_to_pass` | FAIL_TO_PASS tests failed in baseline, pass after submission | `pass`, `fail`, `skipped` |
-| `pass_to_pass` | PASS_TO_PASS tests passed in baseline, still pass after submission | `pass`, `fail`, `skipped` |
+| `fail_to_pass` | Expected-failing tests failed in baseline, pass after submission | `pass`, `fail`, `skipped` |
+| `pass_to_pass` | Expected-passing tests passed in baseline, still pass after submission | `pass`, `fail`, `skipped` |
 
 **When criteria are skipped:**
 
@@ -394,8 +394,8 @@ echo "$BASELINE_OUTPUT" > /tmp/_baseline_output.txt
 # Emit EE-bench JSON v2.0 (6 criteria)
 # ============================================================
 # Expected test lists are baked in at template render time:
-FAIL_TO_PASS_JSON='{{ instance.expected.FAIL_TO_PASS | tojson }}'
-PASS_TO_PASS_JSON='{{ instance.expected.PASS_TO_PASS | tojson }}'
+FAIL_TO_PASS_JSON='{{ instance.expected.fail_to_pass | tojson }}'
+PASS_TO_PASS_JSON='{{ instance.expected.pass_to_pass | tojson }}'
 
 export PATCH_STATUS PATCH_DURATION COMPILE_STATUS COMPILE_DURATION
 export TEST_STATUS TEST_DURATION BASELINE_STATUS BASELINE_DURATION
@@ -743,7 +743,7 @@ After generating all files, report to the user:
 
 1. **What was generated**: List all created files with their paths
 2. **What to fill in manually**:
-   - `expected.FAIL_TO_PASS` in `metadata.json` — fully qualified names of tests that should fail before the fix and pass after
-   - `expected.PASS_TO_PASS` in `metadata.json` — fully qualified names of tests that should always pass
+   - `expected.fail_to_pass` in `metadata.json` — fully qualified names of tests that should fail before the fix and pass after
+   - `expected.pass_to_pass` in `metadata.json` — fully qualified names of tests that should always pass
 3. **How to verify locally**: Point user to the Local Testing section of the contribution guide — render templates, build Docker image, run tests, check JSON output
 4. **Dockerfile customization**: If the project has unusual dependencies, the user may need to add extra `RUN` commands to the Dockerfile

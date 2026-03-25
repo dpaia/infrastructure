@@ -9,7 +9,7 @@ EE-Bench evaluates how well AI-generated code solves real software engineering t
 The evaluation pipeline has three stages:
 
 1. **Export** — extract validated datapoints from the dataset repository into a portable format (folders or JSONL)
-2. **Evaluate** — build a Docker environment from the datapoint, apply a patch (gold or candidate), and run the evaluation harness
+2. **Evaluate** — build a Docker environment from the datapoint, apply a patch (gold or candidate), and run the self-evaluating `run.sh` script
 3. **Interpret** — parse the structured JSON result to determine pass/fail status
 
 Currently only the **codegen** (code generation) evaluation type is supported. Datapoints live in the `dpaia/dataset` repository, organized as `<eval_type>/<source_repo_name>/<instance_id>/`.
@@ -128,8 +128,8 @@ Each datapoint — whether a `datapoint.json` in a folder or a line in JSONL —
   "build_system": "dotnet",
   "project_root": "/repo",
   "expected": {
-    "FAIL_TO_PASS": ["Moq.Tests.Regressions.IssueReportsFixture.Issue1259"],
-    "PASS_TO_PASS": ["Moq.Tests.MatcherAttributeFixture.TypedMatcherDoesNotMismatch"]
+    "fail_to_pass": ["Moq.Tests.Regressions.IssueReportsFixture.Issue1259"],
+    "pass_to_pass": ["Moq.Tests.MatcherAttributeFixture.TypedMatcherDoesNotMismatch"]
   },
   "environment": {
     "files": {
@@ -199,8 +199,8 @@ bash .github/scripts/validate.sh dataset.jsonl instance_id
    - Additional `docker run` params from `datapoint.json` (`environment.docker.run_params`)
 5. Executes: `bash /ee-bench/eval/run.sh`
 6. Parses JSON output (looks for a line containing `"schema_version"`)
-7. Verifies FAIL_TO_PASS expectations if defined
-8. Exits 0 on success (all tests pass), 1 on failure
+7. Checks that all 6 criteria pass (run.sh self-evaluates `fail_to_pass` and `pass_to_pass` expectations internally)
+8. Exits 0 on success (all criteria pass), 1 on failure
 
 ### Manual Validation
 
@@ -359,13 +359,20 @@ fi
 ```
 Building image devlooped__moq-1259:eef6e1b8f968 ...
 Running validation ...
-Results: 5/5 passed, 0 failed
-FAIL_TO_PASS check: all 1 expected tests found in passed_tests
+6/6 criteria passed
 
 JSON output:
 {
   "schema_version": "2.0",
   "status": "success",
+  "criteria": [
+    { "criterion": "compilation", "status": "pass" },
+    { "criterion": "baseline_tests", "status": "pass" },
+    { "criterion": "patch_applied", "status": "pass" },
+    { "criterion": "tests", "status": "pass" },
+    { "criterion": "fail_to_pass", "status": "pass" },
+    { "criterion": "pass_to_pass", "status": "pass" }
+  ],
   ...
 }
 ```
@@ -380,9 +387,32 @@ JSON output:
 
 ### Criteria Array
 
-The `criteria` array contains one object per evaluated aspect.
+The `criteria` array contains 6 criterion objects, evaluated in order. `run.sh` is self-evaluating — it performs all criteria checks internally, including `fail_to_pass` and `pass_to_pass` matching, with no external harness needed.
 
-**Tests criterion:**
+**The 6 criteria (in order):**
+
+| Criterion | Description | Status values |
+|-----------|-------------|---------------|
+| `compilation` | Build via install.sh | `pass`, `fail` |
+| `baseline_tests` | Test run before submission (with test_patch, no submission) | `pass`, `fail`, `skipped` |
+| `patch_applied` | Apply submission patch | `pass`, `fail`, `skipped` |
+| `tests` | Test run after submission | `pass`, `fail`, `skipped` |
+| `fail_to_pass` | Expected-failing tests failed in baseline, pass after submission | `pass`, `fail`, `skipped` |
+| `pass_to_pass` | Expected-passing tests passed in baseline, still pass after submission | `pass`, `fail`, `skipped` |
+
+**When criteria are skipped:**
+- `baseline_tests`: no test_patch file or compilation failed
+- `patch_applied`: no submission patch provided
+- `tests`: compilation or patch application failed
+- `fail_to_pass`: expected list empty or upstream criteria failed
+- `pass_to_pass`: expected list empty or upstream criteria failed
+
+**Two-phase test execution:**
+1. Apply test_patch, build, run baseline tests (verify the bug exists before the fix)
+2. Apply submission patch, rebuild, run eval tests (verify the fix works)
+3. Compare both runs against expected test lists (`fail_to_pass` and `pass_to_pass`)
+
+**Tests criterion example:**
 
 ```json
 {
@@ -402,22 +432,24 @@ The `criteria` array contains one object per evaluated aspect.
 ```
 
 - `summary.total` / `summary.passed` / `summary.failed` — test counts
-- `passed_tests[].name` — fully qualified names of passing tests (used to verify FAIL_TO_PASS expectations)
+- `passed_tests[].name` — fully qualified names of passing tests
 - `failed_tests[].name` — names of failing tests, with optional `message`, `stacktrace`, and `type` fields
 
-**Other criteria:**
+**Other criteria key fields:**
 
-| Criterion       | Key Fields                                                 | Description                                    |
-|-----------------|------------------------------------------------------------|------------------------------------------------|
-| `patch_applied` | `files_modified`, `hunks_applied`, `hunks_failed`          | Whether the gold patch applied cleanly         |
-| `compilation`   | `exit_code`, `error_message`, `duration_seconds`           | Whether the project compiled                   |
-| `coverage`      | `metrics.line_coverage_pct`, `metrics.branch_coverage_pct` | Code coverage (optional)                       |
-| `output_match`  | `match_type`, `similarity_score`, `diff_summary`           | Output comparison (exact/fuzzy/regex/semantic) |
-| *(custom)*      | *(any)*                                                    | Any string not in the reserved list above      |
+| Criterion        | Key Fields                                        | Description                                               |
+|------------------|---------------------------------------------------|-----------------------------------------------------------|
+| `compilation`    | `exit_code`, `error_message`, `duration_seconds`  | Whether the project compiled                              |
+| `baseline_tests` | `summary`, `passed_tests`, `failed_tests`         | Test results before submission patch                      |
+| `patch_applied`  | `files_modified`, `hunks_applied`, `hunks_failed` | Whether the submission patch applied cleanly              |
+| `fail_to_pass`   | `expected`, `matched`, `unmatched`                | Comparison of expected-failing tests against actual results |
+| `pass_to_pass`   | `expected`, `matched`, `unmatched`                | Comparison of expected-passing tests against actual results |
 
 Note: `additionalProperties: true` at all levels — custom fields are allowed.
 
 ### Full Result Schema v2.0
+
+The result contains 6 criteria evaluated in order. `run.sh` is self-evaluating — it bakes expected test lists via template variables (`{{ instance.expected.fail_to_pass | tojson }}` and `{{ instance.expected.pass_to_pass | tojson }}`) and performs all criteria matching internally.
 
 ```json
 {
@@ -427,22 +459,39 @@ Note: `additionalProperties: true` at all levels — custom fields are allowed.
   "duration_seconds": 45.2,
   "criteria": [
     {
-      "criterion": "patch_applied",
-      "status": "pass | fail | error | skip",
-      "files_modified": ["path/to/file.java"],
-      "hunks_applied": 3,
-      "hunks_failed": 0
-    },
-    {
       "criterion": "compilation",
-      "status": "pass | fail | error | skip",
+      "status": "pass | fail",
       "exit_code": 0,
       "error_message": "string (optional)",
       "duration_seconds": 12.1
     },
     {
+      "criterion": "baseline_tests",
+      "status": "pass | fail | skipped",
+      "summary": {
+        "total": 10,
+        "passed": 9,
+        "failed": 1,
+        "skipped": 0
+      },
+      "passed_tests": [
+        { "name": "fully.qualified.TestName" }
+      ],
+      "failed_tests": [
+        { "name": "fully.qualified.FailingTest" }
+      ],
+      "duration_seconds": 8.0
+    },
+    {
+      "criterion": "patch_applied",
+      "status": "pass | fail | skipped",
+      "files_modified": ["path/to/file.java"],
+      "hunks_applied": 3,
+      "hunks_failed": 0
+    },
+    {
       "criterion": "tests",
-      "status": "pass | fail | error | skip",
+      "status": "pass | fail | skipped",
       "summary": {
         "total": 10,
         "passed": 10,
@@ -456,24 +505,22 @@ Note: `additionalProperties: true` at all levels — custom fields are allowed.
           "duration_seconds": 0.5
         }
       ],
-      "failed_tests": [
-        {
-          "name": "fully.qualified.TestName",
-          "message": "assertion failure message",
-          "stacktrace": "full stack trace",
-          "type": "assertion | error | timeout"
-        }
-      ],
+      "failed_tests": [],
       "duration_seconds": 8.3
     },
     {
-      "criterion": "coverage",
-      "status": "pass | fail",
-      "metrics": {
-        "line_coverage_pct": 85.2,
-        "branch_coverage_pct": 75.0,
-        "function_coverage_pct": 90.0
-      }
+      "criterion": "fail_to_pass",
+      "status": "pass | fail | skipped",
+      "expected": ["fully.qualified.FailingTest"],
+      "matched": ["fully.qualified.FailingTest"],
+      "unmatched": []
+    },
+    {
+      "criterion": "pass_to_pass",
+      "status": "pass | fail | skipped",
+      "expected": ["fully.qualified.PassingTest"],
+      "matched": ["fully.qualified.PassingTest"],
+      "unmatched": []
     }
   ],
   "stdout": "captured output (optional)",
@@ -545,7 +592,7 @@ curl -L -H "Authorization: token $GITHUB_TOKEN" \
 |-------------------------------------------|---------------------------------------------------------------------------------------|---------------------------------------------------------------------------------------------------------------------------------|
 | Docker build fails                        | Missing dependencies, wrong base image, or template rendering errors                  | Check the Dockerfile for invalid template variables. Build locally with `docker build --platform linux/amd64`                   |
 | No JSON output from run.sh                | Script doesn't print a line containing `"schema_version"` to stdout                   | Ensure `run.sh` outputs exactly one JSON object with `"schema_version": "2.0"`. Redirect build/test output to stderr or a file. |
-| FAIL_TO_PASS mismatch                     | Test names in `expected.FAIL_TO_PASS` don't match `passed_tests[].name` in the result | Verify fully qualified test names. The matcher checks exact match, prefix match, and suffix match.                              |
+| `fail_to_pass` mismatch                   | Test names in `expected.fail_to_pass` don't match `passed_tests[].name` in the result | Verify fully qualified test names. run.sh self-evaluates these — check the `fail_to_pass` criterion in the JSON output.         |
 | Patch application failure                 | Gold patch doesn't apply to the codebase at `base_commit`                             | Check that `base_commit` is correct and that `patch.diff` in `verify/` was generated from that base                             |
 | Compilation failure                       | Build tools or dependencies missing in Docker image                                   | Enter the container interactively (`docker run --rm -it ... bash`) and debug the build                                          |
 | Validation passes locally but fails in CI | Environment differences (network, platform, caching)                                  | Ensure `--platform linux/amd64` is set. Check if `docker.run_params` includes network flags.                                    |

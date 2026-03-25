@@ -321,17 +321,37 @@ It receives the patch and evaluation scripts at fixed mount points:
 - `/ee-bench/submission/` — contains `patch.diff` (the gold solution or prediction)
 - `/ee-bench/eval/` — contains `run.sh` and any helper scripts from `eval/scripts/`
 
-`run.sh` is a validation script, it typically:
-1. Applies the test patch from `/ee-bench/eval/test_patch.diff` (see [How Patches Are Split](#how-patches-are-split))
-2. Applies the submission patch from `/ee-bench/submission/patch.diff`
-3. Builds the project
-4. Runs the relevant tests
+`run.sh` is a self-evaluating validation script that performs a two-phase test execution:
+1. **Baseline phase**: applies the test patch from `/ee-bench/eval/test_patch.diff`, builds, and runs tests (verifying the bug exists)
+2. **Eval phase**: applies the submission patch from `/ee-bench/submission/patch.diff`, rebuilds, and runs tests (verifying the fix works)
+3. **Comparison**: checks `fail_to_pass` tests (failed in baseline, pass after submission) and `pass_to_pass` tests (passed in baseline, still pass after submission)
 
-`run.sh` must output a JSON result conforming to the result schema v2.0 to stdout.
+`run.sh` is self-evaluating — it outputs a JSON result conforming to the result schema v2.0 to stdout, including all 6 criteria checks. No external harness is needed for criteria matching. The expected test lists are baked into `run.sh` at render time via template variables (`{{ instance.expected.fail_to_pass | tojson }}` and `{{ instance.expected.pass_to_pass | tojson }}`).
 
 The validation script identifies the JSON output by searching for a line containing `"schema_version"`. Make sure your script prints exactly one JSON object containing this field to stdout.
 
+### Two-Phase Test Execution
+
+`run.sh` performs evaluation in two phases:
+
+1. **Baseline phase** — apply test_patch, build, run tests (verify the bug exists before the fix)
+2. **Eval phase** — apply submission patch, rebuild, run tests (verify the fix works)
+3. **Comparison** — compare both runs against expected test lists (`fail_to_pass` and `pass_to_pass`)
+
 ### Result Schema v2.0
+
+The result contains 6 criteria, evaluated in order:
+
+| Criterion | Description | Status values |
+|-----------|-------------|---------------|
+| `compilation` | Build via install.sh | `pass`, `fail` |
+| `baseline_tests` | Test run before submission (with test_patch, no submission) | `pass`, `fail`, `skipped` |
+| `patch_applied` | Apply submission patch | `pass`, `fail`, `skipped` |
+| `tests` | Test run after submission | `pass`, `fail`, `skipped` |
+| `fail_to_pass` | Expected-failing tests failed in baseline, pass after submission | `pass`, `fail`, `skipped` |
+| `pass_to_pass` | Expected-passing tests passed in baseline, still pass after submission | `pass`, `fail`, `skipped` |
+
+Criteria are skipped when their prerequisites are not met (e.g., `tests` is skipped if compilation or patch application failed; `fail_to_pass`/`pass_to_pass` are skipped if the expected list is empty or upstream criteria failed).
 
 ```json
 {
@@ -340,6 +360,24 @@ The validation script identifies the JSON output by searching for a line contain
   "duration_seconds": 45.2,
   "criteria": [
     {
+      "criterion": "compilation",
+      "status": "pass",
+      "exit_code": 0,
+      "duration_seconds": 12.1
+    },
+    {
+      "criterion": "baseline_tests",
+      "status": "pass",
+      "summary": { "total": 5, "passed": 4, "failed": 1, "skipped": 0 },
+      "passed_tests": [
+        { "name": "com.example.FooTest#testBar" }
+      ],
+      "failed_tests": [
+        { "name": "com.example.FooTest#testBug" }
+      ],
+      "duration_seconds": 4.0
+    },
+    {
       "criterion": "patch_applied",
       "status": "pass",
       "files_modified": ["src/main/java/Example.java"],
@@ -347,25 +385,29 @@ The validation script identifies the JSON output by searching for a line contain
       "hunks_failed": 0
     },
     {
-      "criterion": "compilation",
-      "status": "pass",
-      "exit_code": 0,
-      "duration_seconds": 12.1
-    },
-    {
       "criterion": "tests",
       "status": "pass",
-      "summary": {
-        "total": 5,
-        "passed": 5,
-        "failed": 0,
-        "skipped": 0
-      },
+      "summary": { "total": 5, "passed": 5, "failed": 0, "skipped": 0 },
       "passed_tests": [
-        { "name": "com.example.FooTest#testBar" }
+        { "name": "com.example.FooTest#testBar" },
+        { "name": "com.example.FooTest#testBug" }
       ],
       "failed_tests": [],
       "duration_seconds": 8.3
+    },
+    {
+      "criterion": "fail_to_pass",
+      "status": "pass",
+      "expected": ["com.example.FooTest#testBug"],
+      "matched": ["com.example.FooTest#testBug"],
+      "unmatched": []
+    },
+    {
+      "criterion": "pass_to_pass",
+      "status": "pass",
+      "expected": ["com.example.FooTest#testBar"],
+      "matched": ["com.example.FooTest#testBar"],
+      "unmatched": []
     }
   ]
 }
@@ -377,21 +419,23 @@ The validation script identifies the JSON output by searching for a line contain
 |--------------------|----------|--------------------------|----------------------------------------|
 | `schema_version`   | Yes      | `"2.0"`                  | Must be exactly `"2.0"`                |
 | `status`           | Yes      | `"success"` or `"error"` | Whether run.sh completed successfully  |
-| `criteria`         | Yes      | array                    | Array of criterion objects             |
+| `criteria`         | Yes      | array                    | Array of 6 criterion objects           |
 | `duration_seconds` | No       | number                   | Total wall-clock time                  |
 | `timestamp`        | No       | string                   | ISO-8601 UTC completion time           |
 | `error`            | No       | string                   | Error message when status is `"error"` |
 
 **Criterion types:**
 
-| Criterion       | Required Fields                                                  | Description                       |
-|-----------------|------------------------------------------------------------------|-----------------------------------|
-| `patch_applied` | `criterion`, `status`                                            | Whether the patch applied cleanly |
-| `compilation`   | `criterion`, `status`                                            | Whether the project compiles      |
-| `tests`         | `criterion`, `status`, `summary`, `passed_tests`, `failed_tests` | Test execution results            |
-| `coverage`      | `criterion`, `status`, `metrics`                                 | Code coverage metrics             |
+| Criterion        | Required Fields                                                  | Description                                                       |
+|------------------|------------------------------------------------------------------|-------------------------------------------------------------------|
+| `compilation`    | `criterion`, `status`                                            | Whether the project compiles                                      |
+| `baseline_tests` | `criterion`, `status`, `summary`, `passed_tests`, `failed_tests` | Test results before submission (verifies the bug exists)          |
+| `patch_applied`  | `criterion`, `status`                                            | Whether the submission patch applied cleanly                      |
+| `tests`          | `criterion`, `status`, `summary`, `passed_tests`, `failed_tests` | Test results after submission                                     |
+| `fail_to_pass`   | `criterion`, `status`                                            | Whether expected-failing tests now pass after submission           |
+| `pass_to_pass`   | `criterion`, `status`                                            | Whether expected-passing tests still pass after submission         |
 
-**Criterion status values:** `"pass"`, `"fail"`, `"error"`, `"skip"`
+**Criterion status values:** `"pass"`, `"fail"`, `"skipped"`
 
 **Test entry fields (for `passed_tests` / `failed_tests`):**
 
@@ -642,7 +686,9 @@ The comment looks like:
 **Instance:** `devlooped__moq-1259`
 **Duration:** 45s
 **Tests:** Total: 5, Passed: 5, Failed: 0, Skipped: 0
-**FAIL_TO_PASS:** Expected: 1, Matched: 1
+**fail_to_pass:** Expected: 1, Matched: 1
+**pass_to_pass:** Expected: 1, Matched: 1
+**Criteria:** 6/6 passed
 **Details:** [Workflow run](https://github.com/...)
 ```
 
@@ -671,7 +717,7 @@ If you push new commits while the PR is in "Review", "Verified", or "Rejected" s
 |--------------------------------------------|--------------------------------------------------------------------------------------|------------------------------------------------------------------------------------------------------------------------|
 | Docker build fails                         | Missing dependencies, incorrect base image, or template variable errors              | Test locally: `docker build --platform linux/amd64 -t test .ee-bench/codegen/environment/`                             |
 | No JSON output from run.sh                 | `run.sh` doesn't print a JSON object containing `"schema_version"` to stdout         | Ensure exactly one line of stdout contains `"schema_version"`. Redirect other output to stderr.                        |
-| FAIL_TO_PASS mismatch                      | Test names in `metadata.json` don't match actual test names in `passed_tests` output | Check fully qualified test names. The matcher supports exact match and suffix matching.                                |
+| `fail_to_pass` mismatch                    | Test names in `metadata.json` don't match actual test names in `passed_tests` output | Check fully qualified test names. run.sh self-evaluates these — check the `fail_to_pass` criterion in the JSON output. |
 | Patch doesn't apply                        | The gold patch (PR diff) doesn't apply cleanly to `base_commit`                      | Verify `base_commit` in `metadata.json` matches the actual merge base of your PR                                       |
 | Verification comment shows failures        | One or more criteria in the result JSON have non-pass status                         | Check the "Failed criteria" and "Failed tests" sections in the bot comment. Click the workflow run link for full logs. |
 | Status reset to "In progress" unexpectedly | New commits were pushed to the PR                                                    | This is expected behavior — the bot invalidates previous verification when the code changes                            |

@@ -34,7 +34,7 @@ The bot enforces that **Verified** and **Done** statuses require `Verification =
 Before moving a PR to "Review", verify:
 
 - [ ] `.ee-bench/codegen/` directory exists in the repository with required files:
-  - `metadata.json` with `instance_id`, `base_commit`, and `expected.FAIL_TO_PASS`
+  - `metadata.json` with `instance_id`, `base_commit`, and `expected.fail_to_pass`
   - `environment/Dockerfile`
   - `eval/run.sh`
 - [ ] PR body includes a problem statement explaining the issue being solved
@@ -55,7 +55,9 @@ After verification completes, the bot posts a comment on the PR:
 **Instance:** `devlooped__moq-1259`
 **Duration:** 45s
 **Tests:** Total: 5, Passed: 5, Failed: 0, Skipped: 0
-**FAIL_TO_PASS:** Expected: 1, Matched: 1
+**fail_to_pass:** Expected: 1, Matched: 1
+**pass_to_pass:** Expected: 1, Matched: 1
+**Criteria:** 6/6 passed
 **Details:** [Workflow run](https://github.com/...)
 ```
 
@@ -66,9 +68,11 @@ After verification completes, the bot posts a comment on the PR:
 **Instance:** `devlooped__moq-1259`
 **Duration:** 120s
 **Tests:** Total: 5, Passed: 3, Failed: 2, Skipped: 0
-**FAIL_TO_PASS:** Expected: 1, Matched: 0
+**fail_to_pass:** Expected: 1, Matched: 0
+**pass_to_pass:** Expected: 1, Matched: 1
+**Criteria:** 4/6 passed, 1 failed, 1 skipped
 
-**Failed criteria:** tests: fail, compilation: error
+**Failed criteria:** tests: fail, fail_to_pass: fail
 
 <details><summary>Failed tests (up to 20)</summary>
 - com.example.FooTest#testBar: fail
@@ -83,8 +87,10 @@ After verification completes, the bot posts a comment on the PR:
 | Field | What to Look For |
 |-------|------------------|
 | **Tests** | All tests pass (`Failed: 0`) and total count is reasonable |
-| **FAIL_TO_PASS** | `Matched` equals `Expected` — all expected-to-fail tests now pass with the gold patch |
-| **Failed criteria** | Only appears on failure — indicates which criteria didn't pass |
+| **fail_to_pass** | `Matched` equals `Expected` — all expected-to-fail tests failed in baseline and pass after submission |
+| **pass_to_pass** | `Matched` equals `Expected` — all expected-to-pass tests still pass after submission |
+| **Criteria** | All 6 criteria pass. Criteria may be `skipped` when prerequisites are not met (e.g., empty expected lists) |
+| **Failed criteria** | Only appears on failure — indicates which of the 6 criteria didn't pass |
 | **Failed tests** | Only appears on failure — lists up to 20 failed test names with status |
 
 ### Check Run

@@ -20,6 +20,24 @@ _capture_output() {
   fi
 }
 
+# --- _run_tests: run dotnet test with isolated ARTIFACTS_DIR ---
+_run_tests() {
+  local label="$1"
+  local orig_artifacts="$ARTIFACTS_DIR"
+  export ARTIFACTS_DIR="$orig_artifacts/$label"
+  mkdir -p "$ARTIFACTS_DIR"
+
+  set +e
+  dotnet test --no-build {{ instance.test_framework_flag }} "{{ instance.test_project }}" \
+    --logger "{{ instance.test_logger }}" \
+    > "/tmp/${label}_stdout.log" 2> "/tmp/${label}_stderr.log"
+  set -e
+
+  python3 "$EVAL_DIR/scripts/parser.py" "$ARTIFACTS_DIR" > "/tmp/${label}_parser.json" 2>/dev/null || echo '{}' > "/tmp/${label}_parser.json"
+
+  export ARTIFACTS_DIR="$orig_artifacts"
+}
+
 cd "$PROJECT_ROOT"
 
 # --- Reset to base commit (only if EE_BENCH_RESET is set) ---
@@ -29,7 +47,36 @@ if [ -n "${EE_BENCH_RESET:-}" ]; then
 fi
 
 # ============================================================
-# CRITERION 1: patch_applied
+# STEP 1: Apply test patch (setup — not a criterion)
+# ============================================================
+HAS_TEST_PATCH="false"
+if [ -f "$EVAL_DIR/test_patch.diff" ]; then
+  git apply -v "$EVAL_DIR/test_patch.diff" 2>/dev/null || true
+  HAS_TEST_PATCH="true"
+fi
+
+# ============================================================
+# CRITERION 1: compilation (initial build)
+# ============================================================
+COMPILE_START=$SECONDS
+COMPILE_STATUS="pass"
+bash "$EVAL_DIR/scripts/install.sh" > /tmp/compile_stdout.log 2> /tmp/compile_stderr.log || {
+  COMPILE_STATUS="fail"
+}
+COMPILE_DURATION=$(_elapsed $COMPILE_START)
+
+# ============================================================
+# STEP 3: Run baseline tests (only if test_patch exists and build OK)
+# ============================================================
+BASELINE_DURATION=0
+if [ "$COMPILE_STATUS" = "pass" ] && [ "$HAS_TEST_PATCH" = "true" ]; then
+  BASELINE_START=$SECONDS
+  _run_tests baseline
+  BASELINE_DURATION=$(_elapsed $BASELINE_START)
+fi
+
+# ============================================================
+# CRITERION 2: patch_applied (submission patch)
 # ============================================================
 PATCH_START=$SECONDS
 PATCH_STATUS="pass"
@@ -39,59 +86,48 @@ if [ -f "$SUBMISSION_DIR/patch.diff" ]; then
     PATCH_STATUS="fail"
     echo "WARN: git apply failed for submission patch" >&2
   }
+else
+  PATCH_STATUS="skipped"
 fi
 PATCH_DURATION=$(_elapsed $PATCH_START)
 
-# --- Apply test patch (informational, not a criterion) ---
-if [ -f "$EVAL_DIR/test_patch.diff" ]; then
-  git apply -v "$EVAL_DIR/test_patch.diff" 2>/dev/null || true
+# ============================================================
+# STEP 5: Rebuild after submission patch
+# ============================================================
+REBUILD_STATUS="skipped"
+if [ "$COMPILE_STATUS" = "pass" ] && [ "$PATCH_STATUS" = "pass" ]; then
+  bash "$EVAL_DIR/scripts/install.sh" > /tmp/rebuild_stdout.log 2> /tmp/rebuild_stderr.log || {
+    REBUILD_STATUS="fail"
+    COMPILE_STATUS="fail"
+  }
+  if [ "$REBUILD_STATUS" != "fail" ]; then
+    REBUILD_STATUS="pass"
+  fi
 fi
 
 # ============================================================
-# CRITERION 2: compilation
+# STEP 6: Run eval tests (only if compilation and patch OK)
 # ============================================================
-COMPILE_START=$SECONDS
-COMPILE_STATUS="pass"
-dotnet build {{ instance.test_project }} > /tmp/compile_stdout.log 2> /tmp/compile_stderr.log || {
-  COMPILE_STATUS="fail"
-}
-COMPILE_DURATION=$(_elapsed $COMPILE_START)
-COMPILE_OUTPUT=$(_capture_output /tmp/compile_stdout.log)
-COMPILE_STDERR=$(_capture_output /tmp/compile_stderr.log)
-
-# ============================================================
-# CRITERION 3: tests
-# ============================================================
-TEST_START=$SECONDS
-set +e
-dotnet test --no-build {{ instance.test_framework_flag }} "{{ instance.test_project }}" \
-  --logger "{{ instance.test_logger }}" \
-  --results-directory "$ARTIFACTS_DIR" \
-  > /tmp/test_stdout.log 2> /tmp/test_stderr.log
-TEST_EXIT=$?
-set -e
-TEST_DURATION=$(_elapsed $TEST_START)
-TEST_OUTPUT=$(_capture_output /tmp/test_stdout.log)
-TEST_STDERR=$(_capture_output /tmp/test_stderr.log)
-
-# --- Parse results (stdout = JSON) ---
-PARSER_JSON=$(python3 "$EVAL_DIR/scripts/parser.py" "$ARTIFACTS_DIR" 2>/dev/null || echo '{}')
+TEST_DURATION=0
+if [ "$COMPILE_STATUS" = "pass" ] && [ "$PATCH_STATUS" = "pass" ]; then
+  TEST_START=$SECONDS
+  _run_tests eval
+  TEST_DURATION=$(_elapsed $TEST_START)
+fi
 
 OVERALL_DURATION=$(_elapsed $OVERALL_START)
 
 # --- Write temp files for safe passing to Python emitter ---
 echo "$PATCH_OUTPUT" > /tmp/_patch_output.txt
-echo "$COMPILE_OUTPUT" > /tmp/_compile_output.txt
-printf '%s\n%s' "$COMPILE_STDERR" "" >> /tmp/_compile_output.txt
-echo "$TEST_OUTPUT" > /tmp/_test_output.txt
-printf '%s\n%s' "$TEST_STDERR" "" >> /tmp/_test_output.txt
-echo "$PARSER_JSON" > /tmp/_parser.json
+_capture_output /tmp/compile_stdout.log > /tmp/_compile_output.txt
+_capture_output /tmp/compile_stderr.log >> /tmp/_compile_output.txt
 
 # ============================================================
-# Emit EE-bench JSON v2.0
+# Emit EE-bench JSON v2.0 (6 criteria)
 # ============================================================
 export PATCH_STATUS PATCH_DURATION COMPILE_STATUS COMPILE_DURATION
-export TEST_DURATION OVERALL_DURATION TIMESTAMP
+export TEST_DURATION BASELINE_DURATION OVERALL_DURATION TIMESTAMP
+export HAS_TEST_PATCH REBUILD_STATUS
 
 python3 -c "
 import json, sys, os
@@ -103,47 +139,115 @@ def read_file(path, limit=51200):
     except Exception:
         return ''
 
+def load_json(path):
+    try:
+        with open(path) as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
 patch_status = os.environ.get('PATCH_STATUS', 'pass')
 patch_duration = int(os.environ.get('PATCH_DURATION', '0'))
 compile_status = os.environ.get('COMPILE_STATUS', 'pass')
 compile_duration = int(os.environ.get('COMPILE_DURATION', '0'))
 test_duration = int(os.environ.get('TEST_DURATION', '0'))
+baseline_duration = int(os.environ.get('BASELINE_DURATION', '0'))
 overall_duration = int(os.environ.get('OVERALL_DURATION', '0'))
 timestamp = os.environ.get('TIMESTAMP', '')
+has_test_patch = os.environ.get('HAS_TEST_PATCH', 'false') == 'true'
+rebuild_status = os.environ.get('REBUILD_STATUS', 'skipped')
 
 patch_output = read_file('/tmp/_patch_output.txt')
 compile_output = read_file('/tmp/_compile_output.txt')
-test_output = read_file('/tmp/_test_output.txt')
 
-try:
-    with open('/tmp/_parser.json') as f:
-        parser_data = json.load(f)
-except Exception:
-    parser_data = {}
+# Load parser results for baseline and eval
+baseline_data = load_json('/tmp/baseline_parser.json')
+eval_data = load_json('/tmp/eval_parser.json')
 
-summary = parser_data.get('summary', {
+baseline_passed = {t['name'] for t in baseline_data.get('passed_tests', []) if isinstance(t, dict)}
+eval_passed = {t['name'] for t in eval_data.get('passed_tests', []) if isinstance(t, dict)}
+
+# Expected test lists (baked in at template render time)
+expected_f2p = {{ instance.expected.FAIL_TO_PASS | tojson }}
+expected_p2p = {{ instance.expected.PASS_TO_PASS | tojson }}
+
+# --- Criterion: baseline_tests ---
+if has_test_patch and compile_status == 'pass':
+    baseline_status = 'pass'
+else:
+    baseline_status = 'skipped'
+
+# --- Criterion: tests (eval run) ---
+if compile_status != 'pass' or patch_status not in ('pass', 'skipped'):
+    tests_status = 'skipped'
+else:
+    eval_summary = eval_data.get('summary', {})
+    tests_status = 'fail' if eval_summary.get('failed', 0) > 0 else 'pass'
+
+# --- Criterion: fail_to_pass ---
+if not expected_f2p:
+    f2p_status = 'skipped'
+    f2p_detail = 'no expected FAIL_TO_PASS tests'
+elif compile_status != 'pass' or patch_status not in ('pass', 'skipped'):
+    f2p_status = 'skipped'
+    f2p_detail = 'skipped due to compilation or patch failure'
+else:
+    f2p_ok = all(t in eval_passed for t in expected_f2p)
+    if has_test_patch:
+        f2p_baseline_ok = all(t not in baseline_passed for t in expected_f2p)
+    else:
+        f2p_baseline_ok = True
+    f2p_status = 'pass' if (f2p_ok and f2p_baseline_ok) else 'fail'
+    detail_parts = []
+    if not f2p_ok:
+        missing = [t for t in expected_f2p if t not in eval_passed]
+        detail_parts.append('eval missing: ' + ', '.join(missing[:10]))
+    if not f2p_baseline_ok:
+        unexpected = [t for t in expected_f2p if t in baseline_passed]
+        detail_parts.append('baseline unexpected pass: ' + ', '.join(unexpected[:10]))
+    f2p_detail = '; '.join(detail_parts) if detail_parts else 'all FAIL_TO_PASS tests fixed'
+
+# --- Criterion: pass_to_pass ---
+if not expected_p2p:
+    p2p_status = 'skipped'
+    p2p_detail = 'no expected PASS_TO_PASS tests'
+elif compile_status != 'pass' or patch_status not in ('pass', 'skipped'):
+    p2p_status = 'skipped'
+    p2p_detail = 'skipped due to compilation or patch failure'
+else:
+    p2p_eval_ok = all(t in eval_passed for t in expected_p2p)
+    if has_test_patch:
+        p2p_baseline_ok = all(t in baseline_passed for t in expected_p2p)
+    else:
+        p2p_baseline_ok = True
+    p2p_status = 'pass' if (p2p_eval_ok and p2p_baseline_ok) else 'fail'
+    detail_parts = []
+    if not p2p_eval_ok:
+        regressed = [t for t in expected_p2p if t not in eval_passed]
+        detail_parts.append('eval regressions: ' + ', '.join(regressed[:10]))
+    if not p2p_baseline_ok:
+        baseline_missing = [t for t in expected_p2p if t not in baseline_passed]
+        detail_parts.append('baseline missing: ' + ', '.join(baseline_missing[:10]))
+    p2p_detail = '; '.join(detail_parts) if detail_parts else 'all PASS_TO_PASS tests still passing'
+
+# --- Overall status ---
+has_failure = any(
+    s == 'fail' for s in [compile_status, patch_status, f2p_status, p2p_status]
+)
+overall_status = 'failure' if has_failure else 'success'
+
+# --- Build eval test output/summary ---
+eval_summary = eval_data.get('summary', {
     'total': 0, 'passed': 0, 'failed': 0, 'errors': 0, 'skipped': 0, 'duration_seconds': 0.0,
 })
-passed_tests = parser_data.get('passed_tests', [])
-failed_tests = parser_data.get('failed_tests', [])
-skipped_tests = parser_data.get('skipped_tests', [])
-methods = parser_data.get('methods', [])
-
-has_failures = parser_data.get('failed', 0) > 0
-test_status = 'fail' if has_failures else 'pass'
+eval_test_output = read_file('/tmp/eval_stdout.log') + read_file('/tmp/eval_stderr.log')
 
 result = {
     'schema_version': '2.0',
-    'status': 'success' if patch_status == 'pass' and compile_status == 'pass' else 'failure',
+    'status': overall_status,
     'timestamp': timestamp,
     'duration_seconds': overall_duration,
     'criteria': [
-        {
-            'criterion': 'patch_applied',
-            'status': patch_status,
-            'duration_seconds': patch_duration,
-            'output': patch_output[:51200],
-        },
         {
             'criterion': 'compilation',
             'status': compile_status,
@@ -151,15 +255,40 @@ result = {
             'output': compile_output[:51200],
         },
         {
+            'criterion': 'baseline_tests',
+            'status': baseline_status,
+            'duration_seconds': baseline_duration,
+            'passed_tests': list(baseline_passed),
+            'failed_tests': baseline_data.get('failed_tests', []),
+        },
+        {
+            'criterion': 'patch_applied',
+            'status': patch_status,
+            'duration_seconds': patch_duration,
+            'output': patch_output[:51200],
+        },
+        {
             'criterion': 'tests',
-            'status': test_status,
+            'status': tests_status,
             'duration_seconds': test_duration,
-            'output': test_output[:51200],
-            'summary': summary,
-            'passed_tests': passed_tests,
-            'failed_tests': failed_tests,
-            'skipped_tests': skipped_tests,
-            'methods': methods,
+            'output': eval_test_output[:51200],
+            'summary': eval_summary,
+            'passed_tests': eval_data.get('passed_tests', []),
+            'failed_tests': eval_data.get('failed_tests', []),
+            'skipped_tests': eval_data.get('skipped_tests', []),
+            'methods': eval_data.get('methods', []),
+        },
+        {
+            'criterion': 'fail_to_pass',
+            'status': f2p_status,
+            'expected': expected_f2p,
+            'detail': f2p_detail,
+        },
+        {
+            'criterion': 'pass_to_pass',
+            'status': p2p_status,
+            'expected': expected_p2p,
+            'detail': p2p_detail,
         },
     ],
 }

@@ -163,6 +163,33 @@ fi
 echo ""
 echo "$JSON" | jq -r '.criteria[] | "  \(.criterion): \(.status)"'
 
+# ─── Sanity checks (catch broken templates, empty runs) ──────────────
+
+TESTS_TOTAL=$(echo "$JSON" | jq -r '(.criteria // []) | map(select(.criterion == "tests")) | first | .summary.total // 0')
+TESTS_OUTPUT=$(echo "$JSON" | jq -r '(.criteria // []) | map(select(.criterion == "tests")) | first | .output // ""')
+
+# Check for unrendered Jinja2 template variables in output
+if echo "$TESTS_OUTPUT" | grep -q '{{ instance\.' 2>/dev/null; then
+  echo "FAIL: run.sh contains unrendered Jinja2 template variables"
+  echo "This means the template was not properly rendered during export."
+  echo ""
+  echo "JSON output:"
+  echo "$JSON" | jq .
+  exit 1
+fi
+
+# Check that tests actually ran
+if [ "$TESTS_TOTAL" -eq 0 ]; then
+  TESTS_STATUS=$(echo "$JSON" | jq -r '(.criteria // []) | map(select(.criterion == "tests")) | first | .status // "skipped"')
+  if [ "$TESTS_STATUS" != "skipped" ]; then
+    echo "FAIL: tests criterion reports status=$TESTS_STATUS but 0 tests ran"
+    echo ""
+    echo "JSON output:"
+    echo "$JSON" | jq .
+    exit 1
+  fi
+fi
+
 # ─── Final verdict (run.sh self-evaluates; trust its overall status) ──
 
 echo ""

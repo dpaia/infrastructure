@@ -122,6 +122,11 @@ echo "$PATCH_OUTPUT" > /tmp/_patch_output.txt
 _capture_output /tmp/compile_stdout.log > /tmp/_compile_output.txt
 _capture_output /tmp/compile_stderr.log >> /tmp/_compile_output.txt
 
+# --- Write expected test lists to file (avoids shell quoting issues) ---
+cat > /tmp/_expected.json << 'EXPECTED_EOF'
+{"fail_to_pass": {{ instance.expected.fail_to_pass | tojson }}, "pass_to_pass": {{ instance.expected.pass_to_pass | tojson }}}
+EXPECTED_EOF
+
 # ============================================================
 # Emit EE-bench JSON v2.0 (6 criteria)
 # ============================================================
@@ -168,8 +173,9 @@ baseline_passed = {t['name'] for t in baseline_data.get('passed_tests', []) if i
 eval_passed = {t['name'] for t in eval_data.get('passed_tests', []) if isinstance(t, dict)}
 
 # Expected test lists (baked in at template render time)
-expected_f2p = {{ instance.expected.fail_to_pass | tojson }}
-expected_p2p = {{ instance.expected.pass_to_pass | tojson }}
+_expected = load_json('/tmp/_expected.json')
+expected_f2p = _expected.get('fail_to_pass', [])
+expected_p2p = _expected.get('pass_to_pass', [])
 
 # --- Criterion: baseline_tests ---
 if has_test_patch and compile_status == 'pass':

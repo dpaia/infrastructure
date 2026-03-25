@@ -31,7 +31,10 @@ def parse_junit_xml(path: str) -> list[dict]:
         for tc in suite.findall("testcase"):
             name = tc.get("name", "unknown")
             classname = tc.get("classname", "")
-            full_name = f"{classname}.{name}" if classname else name
+            if classname and not name.startswith(classname):
+                full_name = f"{classname}.{name}"
+            else:
+                full_name = name
 
             duration = 0.0
             try:
@@ -148,29 +151,24 @@ def detect_and_parse(artifacts_dir: str) -> list[dict]:
 
 
 def aggregate(methods: list[dict]) -> dict:
-    """Build class-level aggregation and summary from method-level results."""
-    passed_classes = set()
-    failed_classes = set()
-    skipped_classes = set()
+    """Build method-level aggregation and summary from parsed results."""
+    passed_names = []
+    failed_names = []
+    skipped_names = []
     total_duration = 0.0
 
     for m in methods:
-        cls = m["name"].rsplit(".", 1)[0] if "." in m["name"] else m["name"]
         total_duration += m.get("duration_seconds", 0.0)
         if m["status"] == "passed":
-            passed_classes.add(cls)
+            passed_names.append(m["name"])
         elif m["status"] == "failed":
-            failed_classes.add(cls)
+            failed_names.append(m["name"])
         elif m["status"] == "skipped":
-            skipped_classes.add(cls)
+            skipped_names.append(m["name"])
 
-    # A class that has any failure is failed, not passed
-    passed_classes -= failed_classes
-    passed_classes -= skipped_classes
-
-    passed_tests = [{"name": c} for c in sorted(passed_classes)]
-    failed_tests = [{"name": c} for c in sorted(failed_classes)]
-    skipped_tests = [{"name": c} for c in sorted(skipped_classes)]
+    passed_tests = [{"name": n} for n in sorted(set(passed_names))]
+    failed_tests = [{"name": n} for n in sorted(set(failed_names))]
+    skipped_tests = [{"name": n} for n in sorted(set(skipped_names))]
 
     n_passed = sum(1 for m in methods if m["status"] == "passed")
     n_failed = sum(1 for m in methods if m["status"] == "failed" and m.get("type") != "error")

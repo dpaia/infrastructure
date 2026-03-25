@@ -158,48 +158,22 @@ if [ -z "$JSON" ]; then
   exit 1
 fi
 
-PASSED=$(echo "$JSON" | jq -r '(.criteria // []) | map(select(.criterion == "tests")) | first | .summary.passed // 0')
-FAILED=$(echo "$JSON" | jq -r '(.criteria // []) | map(select(.criterion == "tests")) | first | .summary.failed // 0')
-TOTAL=$(echo "$JSON"  | jq -r '(.criteria // []) | map(select(.criterion == "tests")) | first | .summary.total // 0')
+# ─── Print criteria summary ───────────────────────────────────────────
 
-echo "Results: $PASSED/$TOTAL passed, $FAILED failed"
+echo ""
+echo "$JSON" | jq -r '.criteria[] | "  \(.criterion): \(.status)"'
 
-# ─── FAIL_TO_PASS verification (optional enhancement) ──────────────────
-
-DATAPOINT_JSON="$INSTANCE_DIR/datapoint.json"
-if [ -f "$DATAPOINT_JSON" ]; then
-  FTP_COUNT=$(jq -r '.expected.FAIL_TO_PASS | length' "$DATAPOINT_JSON")
-
-  if [ "$FTP_COUNT" -gt 0 ]; then
-    # Write JSON output to temp file for reliable jq piping
-    RESULT_FILE="$STAGE_DIR/result.json"
-    printf '%s' "$JSON" > "$RESULT_FILE"
-
-    MISSING=$(jq -r --slurpfile dp "$DATAPOINT_JSON" '
-      ((.criteria // []) | map(select(.criterion == "tests")) | first | .passed_tests // [] | map(if type == "object" then .name else . end)) as $passed |
-      $dp[0].expected.FAIL_TO_PASS[] |
-      select(. as $t | $passed | map(. == $t or endswith($t) or ($t | endswith(.))) | any | not)
-    ' "$RESULT_FILE")
-
-    if [ -z "$MISSING" ]; then
-      echo "FAIL_TO_PASS check: all $FTP_COUNT expected tests found in passed_tests"
-    else
-      echo "FAIL_TO_PASS check: FAILED — some expected tests not in passed_tests:"
-      echo "$MISSING" | sed 's/^/  - /'
-    fi
-  else
-    echo "FAIL_TO_PASS check: skipped (no expected tests defined)"
-  fi
-fi
-
-# ─── Final verdict ─────────────────────────────────────────────────────
+# ─── Final verdict (run.sh self-evaluates; trust its overall status) ──
 
 echo ""
 echo "JSON output:"
 echo "$JSON" | jq .
 
-if [ "$FAILED" -eq 0 ] && [ "$TOTAL" -gt 0 ]; then
+STATUS=$(echo "$JSON" | jq -r '.status')
+if [ "$STATUS" = "success" ]; then
   exit 0
 else
+  echo "Validation failed (status=$STATUS)"
+  echo "$JSON" | jq -r '[.criteria[] | select(.status == "fail")] | map("  FAIL: \(.criterion) — \(.detail // .output // "")") | .[]' 2>/dev/null || true
   exit 1
 fi

@@ -102,7 +102,7 @@ All top-level scalar fields from `metadata.json` are merged into the template co
 
 - Files without `{{` markers pass through unchanged
 - `tojson` filter available for JSON serialization: `{{ instance.expected | tojson }}`
-- `{{ instance.expected.pass_to_pass | tojson }}` renders a JSON array of test names
+- `{{ instance.expected.FAIL_TO_PASS | tojson }}` and `{{ instance.expected.PASS_TO_PASS | tojson }}` render JSON arrays of test names (baked into run.sh)
 - Built-in fields take precedence — a metadata field will not override a built-in field of the same name
 
 ## Step 4: Generate Files
@@ -118,10 +118,10 @@ Generate with detected values. Use placeholders for test names:
   "language": "<detected>",
   "<language-specific fields>": "<detected values>",
   "expected": {
-    "fail_to_pass": [
+    "FAIL_TO_PASS": [
       "TODO: Add fully qualified test names that should fail before fix and pass after"
     ],
-    "pass_to_pass": [
+    "PASS_TO_PASS": [
       "TODO: Add fully qualified test names that should always pass"
     ]
   },
@@ -130,6 +130,8 @@ Generate with detected values. Use placeholders for test names:
   }
 }
 ```
+
+**Note:** `expected.FAIL_TO_PASS` and `expected.PASS_TO_PASS` are consumed by `run.sh` at **template render time**. They are baked into the script as JSON literals via `{{ instance.expected.FAIL_TO_PASS | tojson }}` and `{{ instance.expected.PASS_TO_PASS | tojson }}`, so the running container does not need access to `metadata.json`.
 
 Language-specific fields to include:
 
@@ -249,7 +251,26 @@ RUN rm -rf {{ instance.project_root }}/.ee-bench/ 2>/dev/null || true
 
 ### eval/run.sh
 
-All run.sh scripts follow the same 3-criterion structure. Only the compile and test commands differ.
+All run.sh scripts follow the same 6-criterion structure. Only the compile and test commands differ.
+
+**Evaluation criteria:**
+
+| Criterion | Description | Status values |
+|-----------|-------------|---------------|
+| `compilation` | Build via install.sh | `pass`, `fail` |
+| `baseline_tests` | Test run before submission (with test_patch, no submission) | `pass`, `fail`, `skipped` |
+| `patch_applied` | Apply submission patch | `pass`, `fail`, `skipped` |
+| `tests` | Test run after submission | `pass`, `fail`, `skipped` |
+| `fail_to_pass` | FAIL_TO_PASS tests failed in baseline, pass after submission | `pass`, `fail`, `skipped` |
+| `pass_to_pass` | PASS_TO_PASS tests passed in baseline, still pass after submission | `pass`, `fail`, `skipped` |
+
+**When criteria are skipped:**
+
+- `patch_applied` — no submission patch provided
+- `baseline_tests` — no test_patch file or compilation failed
+- `tests` — compilation or patch application failed
+- `fail_to_pass` — expected list empty or upstream criteria failed
+- `pass_to_pass` — expected list empty or upstream criteria failed
 
 **Common structure (all languages):**
 
@@ -276,6 +297,24 @@ _capture_output() {
   fi
 }
 
+# --- Helper: run tests in isolation (stash/unstash working tree) ---
+_run_tests() {
+  local label="$1" out_prefix="$2"
+  local start=$SECONDS
+  set +e
+  <TEST_COMMAND> > "/tmp/${out_prefix}_stdout.log" 2> "/tmp/${out_prefix}_stderr.log"
+  local exit_code=$?
+  set -e
+  local duration=$(( SECONDS - start ))
+  <COPY_ARTIFACTS_IF_NEEDED>
+  local parser_json
+  parser_json=$(python3 "$EVAL_DIR/scripts/parser.py" "$ARTIFACTS_DIR" 2>/dev/null || echo '{}')
+  rm -rf "$ARTIFACTS_DIR"/* 2>/dev/null || true
+  echo "$duration" > "/tmp/${out_prefix}_duration.txt"
+  echo "$parser_json" > "/tmp/${out_prefix}_parser.json"
+  return $exit_code
+}
+
 cd "$PROJECT_ROOT"
 
 # --- Reset to base commit (only if EE_BENCH_RESET is set) ---
@@ -285,26 +324,7 @@ if [ -n "${EE_BENCH_RESET:-}" ]; then
 fi
 
 # ============================================================
-# CRITERION 1: patch_applied
-# ============================================================
-PATCH_START=$SECONDS
-PATCH_STATUS="pass"
-PATCH_OUTPUT=""
-if [ -f "$SUBMISSION_DIR/patch.diff" ]; then
-  PATCH_OUTPUT=$(git apply -v "$SUBMISSION_DIR/patch.diff" 2>&1) || {
-    PATCH_STATUS="fail"
-    echo "WARN: git apply failed for submission patch" >&2
-  }
-fi
-PATCH_DURATION=$(_elapsed $PATCH_START)
-
-# --- Apply test patch (informational, not a criterion) ---
-if [ -f "$EVAL_DIR/test_patch.diff" ]; then
-  git apply -v "$EVAL_DIR/test_patch.diff" 2>/dev/null || true
-fi
-
-# ============================================================
-# CRITERION 2: compilation
+# CRITERION 1: compilation
 # ============================================================
 COMPILE_START=$SECONDS
 COMPILE_STATUS="pass"
@@ -316,21 +336,50 @@ COMPILE_OUTPUT=$(_capture_output /tmp/compile_stdout.log)
 COMPILE_STDERR=$(_capture_output /tmp/compile_stderr.log)
 
 # ============================================================
-# CRITERION 3: tests
+# CRITERION 2: baseline_tests (before submission, with test_patch)
 # ============================================================
-TEST_START=$SECONDS
-set +e
-<TEST_COMMAND> > /tmp/test_stdout.log 2> /tmp/test_stderr.log
-TEST_EXIT=$?
-set -e
-TEST_DURATION=$(_elapsed $TEST_START)
-TEST_OUTPUT=$(_capture_output /tmp/test_stdout.log)
-TEST_STDERR=$(_capture_output /tmp/test_stderr.log)
+BASELINE_STATUS="skipped"
+BASELINE_DURATION=0
+BASELINE_OUTPUT=""
+if [ "$COMPILE_STATUS" = "pass" ] && [ -f "$EVAL_DIR/test_patch.diff" ]; then
+  git apply -v "$EVAL_DIR/test_patch.diff" 2>/dev/null || true
+  _run_tests "baseline" "baseline" && BASELINE_STATUS="pass" || BASELINE_STATUS="pass"
+  # baseline always "passes" — we just record what tests looked like before submission
+  BASELINE_DURATION=$(cat /tmp/baseline_duration.txt 2>/dev/null || echo 0)
+  BASELINE_OUTPUT=$(_capture_output /tmp/baseline_stdout.log)
+fi
 
-<COPY_ARTIFACTS_IF_NEEDED>
+# ============================================================
+# CRITERION 3: patch_applied
+# ============================================================
+PATCH_START=$SECONDS
+PATCH_STATUS="skipped"
+PATCH_OUTPUT=""
+if [ -f "$SUBMISSION_DIR/patch.diff" ]; then
+  PATCH_STATUS="pass"
+  PATCH_OUTPUT=$(git apply -v "$SUBMISSION_DIR/patch.diff" 2>&1) || {
+    PATCH_STATUS="fail"
+    echo "WARN: git apply failed for submission patch" >&2
+  }
+fi
+PATCH_DURATION=$(_elapsed $PATCH_START)
 
-# --- Parse results ---
-PARSER_JSON=$(python3 "$EVAL_DIR/scripts/parser.py" "$ARTIFACTS_DIR" 2>/dev/null || echo '{}')
+# --- Apply test patch if not already applied ---
+if [ "$BASELINE_STATUS" = "skipped" ] && [ -f "$EVAL_DIR/test_patch.diff" ]; then
+  git apply -v "$EVAL_DIR/test_patch.diff" 2>/dev/null || true
+fi
+
+# ============================================================
+# CRITERION 4: tests (after submission)
+# ============================================================
+TEST_STATUS="skipped"
+TEST_DURATION=0
+TEST_OUTPUT=""
+if [ "$COMPILE_STATUS" = "pass" ] && [ "$PATCH_STATUS" != "fail" ]; then
+  _run_tests "eval" "test" && true
+  TEST_DURATION=$(cat /tmp/test_duration.txt 2>/dev/null || echo 0)
+  TEST_OUTPUT=$(_capture_output /tmp/test_stdout.log)
+fi
 
 OVERALL_DURATION=$(_elapsed $OVERALL_START)
 
@@ -339,14 +388,18 @@ echo "$PATCH_OUTPUT" > /tmp/_patch_output.txt
 echo "$COMPILE_OUTPUT" > /tmp/_compile_output.txt
 printf '%s\n%s' "$COMPILE_STDERR" "" >> /tmp/_compile_output.txt
 echo "$TEST_OUTPUT" > /tmp/_test_output.txt
-printf '%s\n%s' "$TEST_STDERR" "" >> /tmp/_test_output.txt
-echo "$PARSER_JSON" > /tmp/_parser.json
+echo "$BASELINE_OUTPUT" > /tmp/_baseline_output.txt
 
 # ============================================================
-# Emit EE-bench JSON v2.0
+# Emit EE-bench JSON v2.0 (6 criteria)
 # ============================================================
+# Expected test lists are baked in at template render time:
+FAIL_TO_PASS_JSON='{{ instance.expected.FAIL_TO_PASS | tojson }}'
+PASS_TO_PASS_JSON='{{ instance.expected.PASS_TO_PASS | tojson }}'
+
 export PATCH_STATUS PATCH_DURATION COMPILE_STATUS COMPILE_DURATION
-export TEST_DURATION OVERALL_DURATION TIMESTAMP
+export TEST_STATUS TEST_DURATION BASELINE_STATUS BASELINE_DURATION
+export OVERALL_DURATION TIMESTAMP
 
 python3 -c "
 import json, sys, os
@@ -358,47 +411,67 @@ def read_file(path, limit=51200):
     except Exception:
         return ''
 
-patch_status = os.environ.get('PATCH_STATUS', 'pass')
-patch_duration = int(os.environ.get('PATCH_DURATION', '0'))
+def load_parser(path):
+    try:
+        with open(path) as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
 compile_status = os.environ.get('COMPILE_STATUS', 'pass')
 compile_duration = int(os.environ.get('COMPILE_DURATION', '0'))
+baseline_status = os.environ.get('BASELINE_STATUS', 'skipped')
+baseline_duration = int(os.environ.get('BASELINE_DURATION', '0'))
+patch_status = os.environ.get('PATCH_STATUS', 'skipped')
+patch_duration = int(os.environ.get('PATCH_DURATION', '0'))
+test_status = os.environ.get('TEST_STATUS', 'skipped')
 test_duration = int(os.environ.get('TEST_DURATION', '0'))
 overall_duration = int(os.environ.get('OVERALL_DURATION', '0'))
 timestamp = os.environ.get('TIMESTAMP', '')
 
-patch_output = read_file('/tmp/_patch_output.txt')
 compile_output = read_file('/tmp/_compile_output.txt')
+baseline_output = read_file('/tmp/_baseline_output.txt')
+patch_output = read_file('/tmp/_patch_output.txt')
 test_output = read_file('/tmp/_test_output.txt')
 
-try:
-    with open('/tmp/_parser.json') as f:
-        parser_data = json.load(f)
-except Exception:
-    parser_data = {}
+baseline_parser = load_parser('/tmp/baseline_parser.json')
+eval_parser = load_parser('/tmp/test_parser.json')
 
-summary = parser_data.get('summary', {
+# Baked-in expected test lists
+fail_to_pass = json.loads('$FAIL_TO_PASS_JSON')
+pass_to_pass = json.loads('$PASS_TO_PASS_JSON')
+
+# Extract passed/failed test name sets from parser results
+def test_names(parser_data, status_key):
+    return {t['name'] for t in parser_data.get(status_key, [])}
+
+baseline_passed = test_names(baseline_parser, 'passed_tests')
+baseline_failed = test_names(baseline_parser, 'failed_tests')
+eval_passed = test_names(eval_parser, 'passed_tests')
+eval_failed = test_names(eval_parser, 'failed_tests')
+
+# Criterion 5: fail_to_pass
+ftp_status = 'skipped'
+if fail_to_pass and test_status != 'skipped' and baseline_status != 'skipped':
+    ftp_ok = all(t in eval_passed and t in baseline_failed for t in fail_to_pass)
+    ftp_status = 'pass' if ftp_ok else 'fail'
+
+# Criterion 6: pass_to_pass
+ptp_status = 'skipped'
+if pass_to_pass and test_status != 'skipped' and baseline_status != 'skipped':
+    ptp_ok = all(t in eval_passed and t in baseline_passed for t in pass_to_pass)
+    ptp_status = 'pass' if ptp_ok else 'fail'
+
+eval_summary = eval_parser.get('summary', {
     'total': 0, 'passed': 0, 'failed': 0, 'errors': 0, 'skipped': 0, 'duration_seconds': 0.0,
 })
-passed_tests = parser_data.get('passed_tests', [])
-failed_tests = parser_data.get('failed_tests', [])
-skipped_tests = parser_data.get('skipped_tests', [])
-methods = parser_data.get('methods', [])
-
-has_failures = parser_data.get('failed', 0) > 0
-test_status = 'fail' if has_failures else 'pass'
 
 result = {
     'schema_version': '2.0',
-    'status': 'success' if patch_status == 'pass' and compile_status == 'pass' else 'failure',
+    'status': 'success' if compile_status == 'pass' and patch_status != 'fail' and ftp_status == 'pass' else 'failure',
     'timestamp': timestamp,
     'duration_seconds': overall_duration,
     'criteria': [
-        {
-            'criterion': 'patch_applied',
-            'status': patch_status,
-            'duration_seconds': patch_duration,
-            'output': patch_output[:51200],
-        },
         {
             'criterion': 'compilation',
             'status': compile_status,
@@ -406,15 +479,37 @@ result = {
             'output': compile_output[:51200],
         },
         {
+            'criterion': 'baseline_tests',
+            'status': baseline_status,
+            'duration_seconds': baseline_duration,
+            'output': baseline_output[:51200],
+        },
+        {
+            'criterion': 'patch_applied',
+            'status': patch_status,
+            'duration_seconds': patch_duration,
+            'output': patch_output[:51200],
+        },
+        {
             'criterion': 'tests',
             'status': test_status,
             'duration_seconds': test_duration,
             'output': test_output[:51200],
-            'summary': summary,
-            'passed_tests': passed_tests,
-            'failed_tests': failed_tests,
-            'skipped_tests': skipped_tests,
-            'methods': methods,
+            'summary': eval_summary,
+            'passed_tests': eval_parser.get('passed_tests', []),
+            'failed_tests': eval_parser.get('failed_tests', []),
+            'skipped_tests': eval_parser.get('skipped_tests', []),
+            'methods': eval_parser.get('methods', []),
+        },
+        {
+            'criterion': 'fail_to_pass',
+            'status': ftp_status,
+            'expected': fail_to_pass,
+        },
+        {
+            'criterion': 'pass_to_pass',
+            'status': ptp_status,
+            'expected': pass_to_pass,
         },
     ],
 }
@@ -648,7 +743,7 @@ After generating all files, report to the user:
 
 1. **What was generated**: List all created files with their paths
 2. **What to fill in manually**:
-   - `expected.fail_to_pass` in `metadata.json` — fully qualified names of tests that should fail before the fix and pass after
-   - `expected.pass_to_pass` in `metadata.json` — fully qualified names of tests that should always pass
+   - `expected.FAIL_TO_PASS` in `metadata.json` — fully qualified names of tests that should fail before the fix and pass after
+   - `expected.PASS_TO_PASS` in `metadata.json` — fully qualified names of tests that should always pass
 3. **How to verify locally**: Point user to the Local Testing section of the contribution guide — render templates, build Docker image, run tests, check JSON output
 4. **Dockerfile customization**: If the project has unusual dependencies, the user may need to add extra `RUN` commands to the Dockerfile

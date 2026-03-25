@@ -6,15 +6,16 @@ Generate `.ee-bench/codegen/` configuration that builds a Docker image, runs tes
 
 ```
 .ee-bench/codegen/
-├── metadata.json
+├── metadata.json                # Required: datapoint configuration
 ├── environment/
-│   └── Dockerfile
+│   └── Dockerfile               # Required: builds the test environment
 └── eval/
-    ├── run.sh
-    └── scripts/
-        ├── parser.py
-        └── emitter.py
+    ├── run.sh                   # Required: evaluation entry point
+    └── scripts/                 # Optional: helper scripts used by run.sh
+        └── ...
 ```
+
+Only `metadata.json`, `Dockerfile`, and `run.sh` are required. The `eval/scripts/` directory is optional — `run.sh` can use helper scripts (e.g., `parser.py`, `emitter.py`) but can also be fully self-contained. The templates below include `parser.py` and `emitter.py` as reusable helpers for parsing test results and emitting the JSON output, but these are a convenience, not a requirement.
 
 ## Step 1: Detect Build System
 
@@ -147,7 +148,7 @@ Language-specific fields to include:
 
 Generate a Dockerfile following these specifications. **All Dockerfiles must:**
 - Use `{{ instance.owner }}`, `{{ instance.repo_name }}`, `{{ instance.base_commit }}`, `{{ instance.project_root }}` Jinja2 variables
-- Install `git`, `python3`, `python3-pip` (needed for parser)
+- Install `git` and any tools needed by `run.sh` and its helper scripts (e.g., `python3` if using the parser/emitter helpers)
 - Clone the repo and checkout base commit
 - Pre-fetch/cache dependencies
 - Include labels: `LABEL ee-bench.type="codegen"` and `LABEL ee-bench.version="1.0"`
@@ -415,9 +416,9 @@ python3 "$EVAL_DIR/scripts/emitter.py"
 | Gradle | `/repo` | `./gradlew classes testClasses --no-daemon -q` | `./gradlew test --no-daemon` |
 | Maven | `/repo` | `./mvnw compile test-compile -q` | `./mvnw test -q` |
 
-### eval/scripts/parser.py
+### eval/scripts/parser.py (optional helper)
 
-Generate the same parser for all languages. It handles both JUnit XML and TRX formats.
+The templates include a reusable parser that handles both JUnit XML and TRX formats. This is an optional helper script called by `run.sh` — not a required file. If the project uses a different test output format, `run.sh` can parse results directly or use a different helper.
 
 Key design points:
 - `parse_junit_xml()` and `parse_trx()` accept a pre-parsed `ET.Element` root (not a file path) -- `detect_and_parse()` parses the XML once and dispatches by root tag
@@ -620,9 +621,9 @@ if __name__ == "__main__":
     main()
 ```
 
-### eval/scripts/emitter.py
+### eval/scripts/emitter.py (optional helper)
 
-The emitter is a separate, language-agnostic Python script that reads environment variables (set by `run.sh`) and parser JSON files from `/tmp`, then prints the final EE-bench JSON v2.0 to stdout. Generate the same emitter for all languages.
+The emitter is a separate, language-agnostic Python script that reads environment variables (set by `run.sh`) and parser JSON files from `/tmp`, then prints the final EE-bench JSON v2.0 to stdout. This is an optional helper — `run.sh` could emit the JSON directly if preferred.
 
 Key features:
 - **`_prefix(name)`** strips parameterized suffixes: `Foo.Bar(x: 1)` becomes `Foo.Bar`

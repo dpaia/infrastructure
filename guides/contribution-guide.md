@@ -39,7 +39,7 @@ Complete starter templates are available in [`guides/templates/`](templates/) fo
 | [`gradle/`](templates/gradle/) | Java/Kotlin | `./gradlew` | `./gradlew test` (JUnit XML) | `eclipse-temurin:21` |
 | [`maven/`](templates/maven/) | Java | `./mvnw` | `./mvnw test` (Surefire XML) | `eclipse-temurin:21` |
 
-Each template contains a complete `.ee-bench/codegen/` directory (`metadata.json`, `Dockerfile`, `run.sh`, `parser.py`) ready to copy and customize. Replace placeholder values (test project paths, test names, SDK versions) with your project's specifics.
+Each template contains a complete `.ee-bench/codegen/` directory (`metadata.json`, `Dockerfile`, `run.sh`, and optional helper scripts) ready to copy and customize. Replace placeholder values (test project paths, test names, SDK versions) with your project's specifics.
 
 ### Generating Configuration with Agents
 

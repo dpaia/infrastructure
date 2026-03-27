@@ -128,7 +128,37 @@ IMAGE_NAME="${INSTANCE_ID}:${COMMIT_SHORT}"
 
 DOCKER_RUN_PARAMS=""
 if [ -f "$INSTANCE_DIR/datapoint.json" ]; then
-  DOCKER_RUN_PARAMS="$(jq -r '.environment.docker.run_params // empty' "$INSTANCE_DIR/datapoint.json")"
+  RUN_PARAMS_TYPE="$(jq -r '.environment.docker.run_params | type' "$INSTANCE_DIR/datapoint.json" 2>/dev/null || echo "null")"
+
+  if [ "$RUN_PARAMS_TYPE" = "object" ]; then
+    # Structured format: convert object fields to docker CLI flags
+    _rp='.environment.docker.run_params'
+
+    # --privileged
+    if [ "$(jq -r "${_rp}.privileged // false" "$INSTANCE_DIR/datapoint.json")" = "true" ]; then
+      DOCKER_RUN_PARAMS+=" --privileged"
+    fi
+
+    # --network
+    _net="$(jq -r "${_rp}.network // empty" "$INSTANCE_DIR/datapoint.json")"
+    if [ -n "$_net" ]; then
+      DOCKER_RUN_PARAMS+=" --network $_net"
+    fi
+
+    # -v (volumes array)
+    while IFS= read -r vol; do
+      [ -n "$vol" ] && DOCKER_RUN_PARAMS+=" -v $vol"
+    done < <(jq -r "${_rp}.volumes // [] | .[]" "$INSTANCE_DIR/datapoint.json")
+
+    # -e (environment object)
+    while IFS= read -r line; do
+      [ -n "$line" ] && DOCKER_RUN_PARAMS+=" -e $line"
+    done < <(jq -r "${_rp}.environment // {} | to_entries[] | \"\(.key)=\(.value)\"" "$INSTANCE_DIR/datapoint.json")
+
+  elif [ "$RUN_PARAMS_TYPE" = "string" ]; then
+    # Legacy string format: pass through as-is
+    DOCKER_RUN_PARAMS="$(jq -r '.environment.docker.run_params // empty' "$INSTANCE_DIR/datapoint.json")"
+  fi
 fi
 
 # ─── Build Docker image (skip if already present) ──────────────────────

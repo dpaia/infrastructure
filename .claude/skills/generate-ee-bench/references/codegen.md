@@ -72,6 +72,21 @@ Extract language-specific values needed for template generation.
 2. **Wrapper**: Check if `mvnw` exists. If not, use `mvn` and note this to user
 3. **Default project_root**: `/repo`
 
+### Detect Docker-in-Docker Requirements
+
+Scan project dependencies for libraries that start Docker containers during tests:
+
+| Build system | Where to scan | Match pattern |
+|-------------|---------------|---------------|
+| Maven | `pom.xml` | `<groupId>org.testcontainers</groupId>` |
+| Gradle | `build.gradle(.kts)` | `testcontainers` in dependency declarations |
+| Python | `pyproject.toml`, `requirements*.txt` | `testcontainers` package name |
+| C# | `*.csproj` | `Testcontainers` in `<PackageReference>` |
+
+If detected, set `uses_testcontainers = true`. This affects Step 4:
+1. **Dockerfile**: Add Docker CLI installation block after base packages
+2. **metadata.json**: Add `environment.docker.run_params` with Docker-in-Docker config
+
 ## Step 3: Template Variables Reference
 
 All files in `.ee-bench/codegen/` are rendered as **Jinja2 templates** before use. Use these variables in the generated Dockerfile and run.sh.
@@ -140,7 +155,39 @@ Language-specific fields to include:
 | Gradle | `jvm_version` |
 | Maven | `jvm_version` |
 
+**If `uses_testcontainers` is true**, add to `environment`:
+
+```json
+"docker": {
+  "run_params": {
+    "privileged": true,
+    "network": "host",
+    "volumes": ["/var/run/docker.sock:/var/run/docker.sock"],
+    "environment": {
+      "TESTCONTAINERS_RYUK_DISABLED": "true",
+      "TESTCONTAINERS_CHECKS_DISABLE": "true",
+      "DOCKER_HOST": "unix:///var/run/docker.sock",
+      "TESTCONTAINERS_HOST_OVERRIDE": "host.docker.internal"
+    }
+  }
+}
+```
+
 ### environment/Dockerfile
+
+**If `uses_testcontainers` is true**, all Dockerfile templates below should replace their `apt-get install` RUN with an extended version that also installs Docker CLI:
+
+```dockerfile
+RUN apt-get update && \
+    apt-get install -y build-essential git curl wget python3 python3-pip ca-certificates gnupg && \
+    install -m 0755 -d /etc/apt/keyrings && \
+    curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg && \
+    chmod a+r /etc/apt/keyrings/docker.gpg && \
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable" > /etc/apt/sources.list.d/docker.list && \
+    apt-get update && \
+    apt-get install -y docker-ce-cli && \
+    rm -rf /var/lib/apt/lists/*
+```
 
 Generate a Dockerfile following these specifications. **All Dockerfiles must:**
 - **Hardcode** the repository owner, repository name, base image version (with language version), and project root with actual detected values — do NOT use Jinja2 variables for these
@@ -301,6 +348,9 @@ _run_tests() {
   <TEST_COMMAND> > "/tmp/${label}_stdout.log" 2> "/tmp/${label}_stderr.log"
   set -e
 
+  # Copy test reports to ARTIFACTS_DIR for parser
+  <COPY_REPORTS_COMMAND>
+
   python3 "$EVAL_DIR/scripts/parser.py" "$ARTIFACTS_DIR" > "/tmp/${label}_parser.json" 2>/dev/null || echo '{}' > "/tmp/${label}_parser.json"
 
   export ARTIFACTS_DIR="$orig_artifacts"
@@ -374,10 +424,10 @@ if [ "$COMPILE_STATUS" = "pass" ] && [ "$PATCH_STATUS" = "pass" ]; then
 fi
 
 # ============================================================
-# Run eval tests (only if compilation and patch OK)
+# Run eval tests (only if compilation OK and patch not failed)
 # ============================================================
 TEST_DURATION=0
-if [ "$COMPILE_STATUS" = "pass" ] && [ "$PATCH_STATUS" = "pass" ]; then
+if [ "$COMPILE_STATUS" = "pass" ] && [ "$PATCH_STATUS" != "fail" ]; then
   TEST_START=$SECONDS
   _run_tests eval
   TEST_DURATION=$(_elapsed $TEST_START)
@@ -406,12 +456,12 @@ python3 "$EVAL_DIR/scripts/emitter.py"
 
 **Language-specific substitutions:**
 
-| Language | `<default_project_root>` | `<COMPILE_COMMAND>` | `<TEST_COMMAND>` |
-|----------|-------------------------|---------------------|------------------|
-| C# | `/app` | `bash "$EVAL_DIR/scripts/install.sh"` | `dotnet test --no-build {{ instance.test_framework_flag }} "{{ instance.test_project }}" --logger "{{ instance.test_logger }}"` |
-| Python | `/app` | `pip install -e .` | `python -m pytest --junitxml="$ARTIFACTS_DIR/results.xml" -v` |
-| Gradle | `/repo` | `./gradlew classes testClasses --no-daemon -q` | `./gradlew test --no-daemon` |
-| Maven | `/repo` | `./mvnw compile test-compile -q` | `./mvnw test -q` |
+| Language | `<default_project_root>` | `<COMPILE_COMMAND>` | `<TEST_COMMAND>` | `<COPY_REPORTS_COMMAND>` |
+|----------|-------------------------|---------------------|------------------|--------------------------|
+| C# | `/app` | `bash "$EVAL_DIR/scripts/install.sh"` | `dotnet test --no-build {{ instance.test_framework_flag }} "{{ instance.test_project }}" --logger "{{ instance.test_logger }}"` | *(empty — dotnet writes to ARTIFACTS_DIR via logger)* |
+| Python | `/app` | `pip install -e .` | `python -m pytest --junitxml="$ARTIFACTS_DIR/results.xml" -v` | *(empty — pytest writes to ARTIFACTS_DIR via --junitxml)* |
+| Gradle | `/repo` | `./gradlew classes testClasses --no-daemon -q` | `./gradlew test --no-daemon` | `cp "$PROJECT_ROOT"/build/test-results/test/*.xml "$ARTIFACTS_DIR/" 2>/dev/null \|\| true` |
+| Maven | `/repo` | `./mvnw compile test-compile -q` | `./mvnw test -q` | `cp "$PROJECT_ROOT"/target/surefire-reports/*.xml "$ARTIFACTS_DIR/" 2>/dev/null \|\| true` |
 
 ### eval/scripts/parser.py (optional helper)
 
@@ -622,12 +672,223 @@ if __name__ == "__main__":
 
 The emitter is a separate, language-agnostic Python script that reads environment variables (set by `run.sh`) and parser JSON files from `/tmp`, then prints the final EE-bench JSON v2.0 to stdout. This is an optional helper — `run.sh` could emit the JSON directly if preferred.
 
-Key features:
+Key design points:
 - **`_prefix(name)`** strips parameterized suffixes: `Foo.Bar(x: 1)` becomes `Foo.Bar`
 - **`_test_in(name, name_set)`** matches by exact name first, then by prefix (handles parameterized test methods)
 - **`_evaluate_criterion()`** is a shared helper for both `fail_to_pass` and `pass_to_pass` criteria -- it checks eval pass status and baseline consistency in one call
 - Reads `HAS_TEST_PATCH` env var to decide whether baseline checks apply
+- `tests` and `pass_to_pass` evaluate when `patch_status` is `"pass"` OR `"skipped"` (no submission)
+- `fail_to_pass` only evaluates when `patch_status` is `"pass"` (needs actual submission)
 - Empty `fail_to_pass` list results in `"fail"` status; empty `pass_to_pass` results in `"skipped"`
+
+```python
+#!/usr/bin/env python3
+"""Emit EE-bench JSON v2.0 evaluation output (6 criteria)."""
+import json
+import os
+import re
+import sys
+
+MAX_OUTPUT = 8192
+
+
+def _read(path: str, limit: int = MAX_OUTPUT) -> str:
+    try:
+        with open(path) as f:
+            text = f.read(limit)
+        return text
+    except FileNotFoundError:
+        return ""
+
+
+def _load_json(path: str) -> dict:
+    try:
+        with open(path) as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
+
+
+def _prefix(name: str) -> str:
+    """Strip parameterized suffixes: Foo.Bar(x: 1) -> Foo.Bar"""
+    return re.sub(r"\(.*\)$", "", name)
+
+
+def _test_in(name: str, name_set: set) -> bool:
+    """Match by exact name first, then by prefix."""
+    if name in name_set:
+        return True
+    return _prefix(name) in name_set
+
+
+def _evaluate_criterion(
+    expected_names: list[str],
+    eval_passed: set[str],
+    eval_failed: set[str],
+    baseline_passed: set[str],
+    baseline_failed: set[str],
+    should_fail_baseline: bool,
+    has_test_patch: bool,
+    empty_means: str,
+) -> dict:
+    """Shared evaluator for fail_to_pass and pass_to_pass criteria.
+
+    Args:
+        expected_names: list of expected test names
+        eval_passed: set of tests that passed in eval run
+        eval_failed: set of tests that failed in eval run
+        baseline_passed: set of tests that passed in baseline run
+        baseline_failed: set of tests that failed in baseline run
+        should_fail_baseline: if True, tests must fail in baseline (fail_to_pass)
+        has_test_patch: whether a test patch was applied
+        empty_means: "fail" or "skipped" — what to return if expected list is empty
+    """
+    if not expected_names:
+        return {
+            "status": empty_means,
+            "detail": {"expected": [], "actual_pass": [], "actual_fail": []},
+        }
+
+    expected_set = set(expected_names)
+    actual_pass = [n for n in expected_names if _test_in(n, eval_passed)]
+    actual_fail = [n for n in expected_names if _test_in(n, eval_failed)]
+
+    # Check baseline consistency
+    baseline_ok = True
+    if has_test_patch:
+        for n in expected_names:
+            if should_fail_baseline:
+                if not _test_in(n, baseline_failed):
+                    baseline_ok = False
+                    break
+            else:
+                if not _test_in(n, baseline_passed):
+                    baseline_ok = False
+                    break
+
+    if should_fail_baseline:
+        all_now_pass = all(_test_in(n, eval_passed) for n in expected_names)
+        status = "pass" if (all_now_pass and baseline_ok) else "fail"
+    else:
+        all_still_pass = all(_test_in(n, eval_passed) for n in expected_names)
+        status = "pass" if (all_still_pass and baseline_ok) else "fail"
+
+    return {
+        "status": status,
+        "detail": {
+            "expected": expected_names,
+            "actual_pass": actual_pass,
+            "actual_fail": actual_fail,
+        },
+    }
+
+
+def main():
+    compile_status = os.environ.get("COMPILE_STATUS", "fail")
+    compile_duration = int(os.environ.get("COMPILE_DURATION", "0"))
+    patch_status = os.environ.get("PATCH_STATUS", "skipped")
+    patch_duration = int(os.environ.get("PATCH_DURATION", "0"))
+    test_duration = int(os.environ.get("TEST_DURATION", "0"))
+    baseline_duration = int(os.environ.get("BASELINE_DURATION", "0"))
+    overall_duration = int(os.environ.get("OVERALL_DURATION", "0"))
+    timestamp = os.environ.get("TIMESTAMP", "")
+    has_test_patch = os.environ.get("HAS_TEST_PATCH", "false") == "true"
+
+    compile_output = _read("/tmp/_compile_output.txt")
+    patch_output = _read("/tmp/_patch_output.txt")
+
+    expected = _load_json("/tmp/_expected.json")
+    fail_to_pass_names = expected.get("fail_to_pass", [])
+    pass_to_pass_names = expected.get("pass_to_pass", [])
+
+    eval_data = _load_json("/tmp/eval_parser.json")
+    baseline_data = _load_json("/tmp/baseline_parser.json")
+
+    eval_passed = {m["name"] for m in eval_data.get("methods", []) if m.get("status") == "passed"}
+    eval_failed = {m["name"] for m in eval_data.get("methods", []) if m.get("status") == "failed"}
+    baseline_passed = {m["name"] for m in baseline_data.get("methods", []) if m.get("status") == "passed"}
+    baseline_failed = {m["name"] for m in baseline_data.get("methods", []) if m.get("status") == "failed"}
+
+    # --- Compilation criterion ---
+    compilation = {
+        "status": compile_status,
+        "duration_seconds": compile_duration,
+        "output": compile_output[:MAX_OUTPUT] if compile_status == "fail" else "",
+    }
+
+    # --- Baseline tests criterion ---
+    if compile_status != "pass" or not has_test_patch:
+        baseline_tests = {"status": "skipped", "duration_seconds": 0}
+    else:
+        baseline_tests = {
+            "status": "pass" if baseline_data.get("summary") else "fail",
+            "duration_seconds": baseline_duration,
+            "summary": baseline_data.get("summary", {}),
+        }
+
+    # --- Patch applied criterion ---
+    patch_applied = {
+        "status": patch_status,
+        "duration_seconds": patch_duration,
+        "output": patch_output[:MAX_OUTPUT] if patch_status == "fail" else "",
+    }
+
+    # --- Tests criterion ---
+    if compile_status != "pass" or patch_status not in ("pass", "skipped"):
+        tests = {"status": "skipped", "duration_seconds": 0}
+    else:
+        tests = {
+            "status": "pass" if eval_data.get("summary") else "fail",
+            "duration_seconds": test_duration,
+            "summary": eval_data.get("summary", {}),
+        }
+
+    # --- fail_to_pass criterion (only with actual submission) ---
+    if compile_status != "pass" or patch_status not in ("pass",):
+        ftp = {"status": "skipped", "detail": {"expected": fail_to_pass_names, "actual_pass": [], "actual_fail": []}}
+    else:
+        ftp = _evaluate_criterion(
+            fail_to_pass_names, eval_passed, eval_failed,
+            baseline_passed, baseline_failed,
+            should_fail_baseline=True, has_test_patch=has_test_patch,
+            empty_means="fail",
+        )
+
+    # --- pass_to_pass criterion (with or without submission) ---
+    if compile_status != "pass" or patch_status not in ("pass", "skipped"):
+        ptp = {"status": "skipped", "detail": {"expected": pass_to_pass_names, "actual_pass": [], "actual_fail": []}}
+    else:
+        ptp = _evaluate_criterion(
+            pass_to_pass_names, eval_passed, eval_failed,
+            baseline_passed, baseline_failed,
+            should_fail_baseline=False, has_test_patch=has_test_patch,
+            empty_means="skipped",
+        )
+
+    result = {
+        "version": "2.0",
+        "timestamp": timestamp,
+        "duration_seconds": overall_duration,
+        "criteria": {
+            "compilation": compilation,
+            "baseline_tests": baseline_tests,
+            "patch_applied": patch_applied,
+            "tests": tests,
+            "fail_to_pass": ftp,
+            "pass_to_pass": ptp,
+        },
+        "test_results": {
+            "baseline": baseline_data if has_test_patch else {},
+            "eval": eval_data,
+        },
+    }
+
+    print(json.dumps(result, indent=2))
+
+
+if __name__ == "__main__":
+    main()
+```
 
 ## Step 5: Post-Generation
 
@@ -649,6 +910,6 @@ After reporting what was generated, automatically run verification if the `verif
    - Test compilation failure → check compile commands match the project's build system
    - run.sh failure → fix script errors (wrong paths, missing tools, template rendering issues)
    - Output validation failure → fix JSON output format or criteria logic
-   - Testcontainers errors → tests need Docker-in-Docker; add `"--privileged --network bridge -v /var/run/docker.sock:/var/run/docker.sock"` to `metadata.json` at `environment.docker.run_params`, and add env vars to the Dockerfile: `ENV TESTCONTAINERS_RYUK_DISABLED=true`, `ENV TESTCONTAINERS_CHECKS_DISABLE=true`, `ENV DOCKER_HOST=unix:///var/run/docker.sock`
+   - Testcontainers errors → tests need Docker-in-Docker; add structured `environment.docker.run_params` to `metadata.json` with `privileged: true`, `network: "host"`, volume `/var/run/docker.sock:/var/run/docker.sock`, and env vars `TESTCONTAINERS_RYUK_DISABLED=true`, `TESTCONTAINERS_CHECKS_DISABLE=true`, `DOCKER_HOST=unix:///var/run/docker.sock`, `TESTCONTAINERS_HOST_OVERRIDE=host.docker.internal`. Also install Docker CLI in the Dockerfile (see Step 2 detection and Step 4 Dockerfile templates)
 3. **Re-run `/verify-ee-bench codegen`** after each fix until verification passes
 4. If the `verify-ee-bench` skill is not installed, skip this step and point the user to the [Local Testing](../../guides/contribution-guide.md#local-testing) section of the contribution guide instead

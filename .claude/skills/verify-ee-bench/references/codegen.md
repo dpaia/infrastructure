@@ -29,14 +29,33 @@ REPO_NAME=$(echo "$REPO_FULL" | cut -d'/' -f2)
 
 Read `metadata.json` and extract:
 - `environment.project_root` (default: `/repo`)
-- `environment.docker.run_params` (default: empty string) — extra `docker run` flags, e.g. `"--privileged --network bridge -v /var/run/docker.sock:/var/run/docker.sock"`
+- `environment.docker.run_params` (default: empty) — structured Docker run config: `privileged` (bool), `network` (string), `volumes` (string[]), `environment` (key-value object)
 - All top-level scalar fields (e.g., `jvm_version`, `python_version`, `dotnet_sdk`, `language`)
 - `expected.fail_to_pass` and `expected.pass_to_pass` (use as-is from file, typically empty arrays)
 
-Store `run_params` in a variable for use in all `docker run` commands (Steps 4, 6):
+Build docker run flags from the structured `run_params` for use in all `docker run` commands (Steps 4, 6):
 
 ```bash
-DOCKER_RUN_PARAMS=$(jq -r '.environment.docker.run_params // ""' .ee-bench/codegen/metadata.json)
+# Build docker run flags from structured metadata
+DOCKER_RUN_PARAMS=""
+RUN_PARAMS_JSON=$(jq -c '.environment.docker.run_params // null' .ee-bench/codegen/metadata.json)
+if [ "$RUN_PARAMS_JSON" != "null" ]; then
+  if echo "$RUN_PARAMS_JSON" | jq -e '.privileged == true' >/dev/null 2>&1; then
+    DOCKER_RUN_PARAMS="$DOCKER_RUN_PARAMS --privileged"
+  fi
+  NETWORK=$(echo "$RUN_PARAMS_JSON" | jq -r '.network // empty')
+  [ -n "$NETWORK" ] && DOCKER_RUN_PARAMS="$DOCKER_RUN_PARAMS --network $NETWORK"
+  for vol in $(echo "$RUN_PARAMS_JSON" | jq -r '.volumes[]? // empty'); do
+    DOCKER_RUN_PARAMS="$DOCKER_RUN_PARAMS -v $vol"
+  done
+  for key in $(echo "$RUN_PARAMS_JSON" | jq -r '.environment // {} | keys[]'); do
+    val=$(echo "$RUN_PARAMS_JSON" | jq -r ".environment[\"$key\"]")
+    DOCKER_RUN_PARAMS="$DOCKER_RUN_PARAMS -e $key=$val"
+  done
+else
+  # Fallback: treat as flat string (backward compatible)
+  DOCKER_RUN_PARAMS=$(jq -r '.environment.docker.run_params // ""' .ee-bench/codegen/metadata.json)
+fi
 ```
 
 Build the template context JSON:
@@ -276,7 +295,7 @@ VERIFICATION FAILED
 
 | Problem | Cause | Fix |
 |---------|-------|-----|
-| Tests fail with Testcontainers errors | Tests need Docker-in-Docker access | Add `"--privileged --network bridge -v /var/run/docker.sock:/var/run/docker.sock"` to `metadata.json` at `environment.docker.run_params`, and set `TESTCONTAINERS_RYUK_DISABLED=true`, `TESTCONTAINERS_CHECKS_DISABLE=true`, `DOCKER_HOST=unix:///var/run/docker.sock` as env vars in the Dockerfile |
+| Tests fail with Testcontainers errors | Tests need Docker-in-Docker access | Add structured `environment.docker.run_params` to `metadata.json` with `privileged: true`, `network: "host"`, volume `/var/run/docker.sock:/var/run/docker.sock`, and env vars `TESTCONTAINERS_RYUK_DISABLED=true`, `TESTCONTAINERS_CHECKS_DISABLE=true`, `DOCKER_HOST=unix:///var/run/docker.sock`, `TESTCONTAINERS_HOST_OVERRIDE=host.docker.internal`. Also install Docker CLI in the Dockerfile |
 | Unrendered `{{ }}` in Dockerfile | Template variable not in context.json | Check metadata.json has all fields referenced in templates |
 | Build fails with dependency errors | Missing system packages | Add extra `RUN apt-get install` commands to the Dockerfile |
 | Parser returns empty results | Test results not in expected location | Verify the results directory matches the build system (surefire-reports for Maven, build/test-results for Gradle, etc.) |

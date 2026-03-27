@@ -29,8 +29,15 @@ REPO_NAME=$(echo "$REPO_FULL" | cut -d'/' -f2)
 
 Read `metadata.json` and extract:
 - `environment.project_root` (default: `/repo`)
+- `environment.docker.run_params` (default: empty string) — extra `docker run` flags, e.g. `"--privileged --network bridge -v /var/run/docker.sock:/var/run/docker.sock"`
 - All top-level scalar fields (e.g., `jvm_version`, `python_version`, `dotnet_sdk`, `language`)
 - `expected.fail_to_pass` and `expected.pass_to_pass` (use as-is from file, typically empty arrays)
+
+Store `run_params` in a variable for use in all `docker run` commands (Steps 4, 6):
+
+```bash
+DOCKER_RUN_PARAMS=$(jq -r '.environment.docker.run_params // ""' .ee-bench/codegen/metadata.json)
+```
 
 Build the template context JSON:
 
@@ -144,6 +151,7 @@ Run the tests inside the built image and copy parser results back:
 
 ```bash
 docker run --rm --platform linux/amd64 \
+  $DOCKER_RUN_PARAMS \
   -v "$WORK_DIR/eval/scripts:/ee-bench/scripts:ro" \
   "ee-bench-verify:$REPO_NAME" \
   bash -c '
@@ -154,6 +162,8 @@ docker run --rm --platform linux/amd64 \
     python3 /ee-bench/scripts/parser.py <RESULTS_DIR> 2>/dev/null
   ' > "$WORK_DIR/discovery_results.json"
 ```
+
+Note: `$DOCKER_RUN_PARAMS` is expanded from `metadata.json` `environment.docker.run_params` (extracted in Step 1). If empty, it has no effect.
 
 Replace `<PROJECT_ROOT>`, `<COMPILE_COMMAND>`, `<TEST_COMMAND>`, and `<RESULTS_DIR>` with the values from the language table above.
 
@@ -205,6 +215,7 @@ Execute the full evaluation pipeline:
 mkdir -p "$WORK_DIR/submission"  # empty — no submission patch
 
 docker run --rm --platform linux/amd64 \
+  $DOCKER_RUN_PARAMS \
   -v "$WORK_DIR/eval:/ee-bench/eval:ro" \
   -v "$WORK_DIR/submission:/ee-bench/submission:ro" \
   "ee-bench-verify:$REPO_NAME" \
@@ -259,26 +270,6 @@ VERIFICATION PASSED
 Otherwise:
 ```
 VERIFICATION FAILED
-```
-
-## Docker Run Parameters
-
-If `metadata.json` contains `environment.docker.run_params`, append those flags to every `docker run` command (Steps 4, 6). For example, if `run_params` is `"--privileged --network bridge -v /var/run/docker.sock:/var/run/docker.sock"`, the docker run in Step 4 becomes:
-
-```bash
-docker run --rm --platform linux/amd64 \
-  --privileged --network bridge -v /var/run/docker.sock:/var/run/docker.sock \
-  -v "$WORK_DIR/eval/scripts:/ee-bench/scripts:ro" \
-  "ee-bench-verify:$REPO_NAME" \
-  bash -c '...'
-```
-
-Also set any required environment variables inside the container. For example, if tests use **Testcontainers**, add these env vars to the `docker run` commands:
-
-```bash
--e TESTCONTAINERS_RYUK_DISABLED=true \
--e TESTCONTAINERS_CHECKS_DISABLE=true \
--e DOCKER_HOST=unix:///var/run/docker.sock
 ```
 
 ## Troubleshooting

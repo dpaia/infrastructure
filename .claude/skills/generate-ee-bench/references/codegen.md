@@ -809,6 +809,13 @@ def main():
     baseline_passed = {m["name"] for m in baseline_data.get("methods", []) if m.get("status") == "passed"}
     baseline_failed = {m["name"] for m in baseline_data.get("methods", []) if m.get("status") == "failed"}
 
+    # Expand wildcards: ["*"] means "all discovered tests"
+    all_eval_tests = sorted(eval_passed | eval_failed)
+    if fail_to_pass_names == ["*"]:
+        fail_to_pass_names = all_eval_tests
+    if pass_to_pass_names == ["*"]:
+        pass_to_pass_names = all_eval_tests
+
     # --- Compilation criterion ---
     compilation = {
         "status": compile_status,

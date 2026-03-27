@@ -104,7 +104,7 @@ fi
 # Run eval tests (only if compilation and patch OK)
 # ============================================================
 TEST_DURATION=0
-if [ "$COMPILE_STATUS" = "pass" ] && [ "$PATCH_STATUS" = "pass" ]; then
+if [ "$COMPILE_STATUS" = "pass" ] && [ "$PATCH_STATUS" != "fail" ]; then
   TEST_START=$SECONDS
   _run_tests eval
   TEST_DURATION=$(_elapsed $TEST_START)

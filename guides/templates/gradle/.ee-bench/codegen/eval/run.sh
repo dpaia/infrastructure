@@ -9,15 +9,28 @@ mkdir -p "$ARTIFACTS_DIR"
 
 TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 OVERALL_START=$SECONDS
-MAX_OUTPUT=51200  # 50K truncation limit
 
 _elapsed() { echo $(( SECONDS - ${1:-$OVERALL_START} )); }
 
-_capture_output() {
-  local file="$1" limit="${2:-$MAX_OUTPUT}"
-  if [ -f "$file" ]; then
-    head -c "$limit" "$file"
-  fi
+# --- _run_tests: run tests with isolated ARTIFACTS_DIR ---
+# Usage: _run_tests <label>
+# Writes: /tmp/<label>_stdout.log, /tmp/<label>_stderr.log, /tmp/<label>_parser.json
+_run_tests() {
+  local label="$1"
+  local orig_artifacts="$ARTIFACTS_DIR"
+  export ARTIFACTS_DIR="$orig_artifacts/$label"
+  mkdir -p "$ARTIFACTS_DIR"
+
+  set +e
+  ./gradlew test --no-daemon > "/tmp/${label}_stdout.log" 2> "/tmp/${label}_stderr.log"
+  set -e
+
+  # Copy JUnit XML results to ARTIFACTS_DIR for parser
+  cp "$PROJECT_ROOT"/build/test-results/test/*.xml "$ARTIFACTS_DIR/" 2>/dev/null || true
+
+  python3 "$EVAL_DIR/scripts/parser.py" "$ARTIFACTS_DIR" > "/tmp/${label}_parser.json" 2>/dev/null || echo '{}' > "/tmp/${label}_parser.json"
+
+  export ARTIFACTS_DIR="$orig_artifacts"
 }
 
 cd "$PROJECT_ROOT"
@@ -29,7 +42,36 @@ if [ -n "${EE_BENCH_RESET:-}" ]; then
 fi
 
 # ============================================================
-# CRITERION 1: patch_applied
+# Apply test patch (setup — not a criterion)
+# ============================================================
+HAS_TEST_PATCH="false"
+if [ -f "$EVAL_DIR/test_patch.diff" ]; then
+  git apply -v "$EVAL_DIR/test_patch.diff" 2>/dev/null || true
+  HAS_TEST_PATCH="true"
+fi
+
+# ============================================================
+# Criterion: compilation (initial build)
+# ============================================================
+COMPILE_START=$SECONDS
+COMPILE_STATUS="pass"
+./gradlew classes testClasses --no-daemon -q > /tmp/compile_stdout.log 2> /tmp/compile_stderr.log || {
+  COMPILE_STATUS="fail"
+}
+COMPILE_DURATION=$(_elapsed $COMPILE_START)
+
+# ============================================================
+# Run baseline tests (only if test_patch exists)
+# ============================================================
+BASELINE_DURATION=0
+if [ "$COMPILE_STATUS" = "pass" ] && [ "$HAS_TEST_PATCH" = "true" ]; then
+  BASELINE_START=$SECONDS
+  _run_tests baseline
+  BASELINE_DURATION=$(_elapsed $BASELINE_START)
+fi
+
+# ============================================================
+# Criterion: patch_applied (submission patch)
 # ============================================================
 PATCH_START=$SECONDS
 PATCH_STATUS="pass"
@@ -39,129 +81,51 @@ if [ -f "$SUBMISSION_DIR/patch.diff" ]; then
     PATCH_STATUS="fail"
     echo "WARN: git apply failed for submission patch" >&2
   }
+else
+  PATCH_STATUS="skipped"
 fi
 PATCH_DURATION=$(_elapsed $PATCH_START)
 
-# --- Apply test patch (informational, not a criterion) ---
-if [ -f "$EVAL_DIR/test_patch.diff" ]; then
-  git apply -v "$EVAL_DIR/test_patch.diff" 2>/dev/null || true
+# ============================================================
+# Rebuild after submission patch
+# ============================================================
+REBUILD_STATUS="skipped"
+if [ "$COMPILE_STATUS" = "pass" ] && [ "$PATCH_STATUS" = "pass" ]; then
+  ./gradlew classes testClasses --no-daemon -q > /tmp/rebuild_stdout.log 2> /tmp/rebuild_stderr.log || {
+    REBUILD_STATUS="fail"
+    COMPILE_STATUS="fail"
+  }
+  if [ "$REBUILD_STATUS" != "fail" ]; then
+    REBUILD_STATUS="pass"
+  fi
 fi
 
 # ============================================================
-# CRITERION 2: compilation
+# Run eval tests (only if compilation OK and patch not failed)
 # ============================================================
-COMPILE_START=$SECONDS
-COMPILE_STATUS="pass"
-./gradlew classes testClasses --no-daemon -q > /tmp/compile_stdout.log 2> /tmp/compile_stderr.log || {
-  COMPILE_STATUS="fail"
-}
-COMPILE_DURATION=$(_elapsed $COMPILE_START)
-COMPILE_OUTPUT=$(_capture_output /tmp/compile_stdout.log)
-COMPILE_STDERR=$(_capture_output /tmp/compile_stderr.log)
-
-# ============================================================
-# CRITERION 3: tests
-# ============================================================
-TEST_START=$SECONDS
-set +e
-./gradlew test --no-daemon > /tmp/test_stdout.log 2> /tmp/test_stderr.log
-TEST_EXIT=$?
-set -e
-TEST_DURATION=$(_elapsed $TEST_START)
-TEST_OUTPUT=$(_capture_output /tmp/test_stdout.log)
-TEST_STDERR=$(_capture_output /tmp/test_stderr.log)
-
-# Copy JUnit XML results to artifacts directory
-find . -path "*/build/test-results/test/*.xml" -exec cp {} "$ARTIFACTS_DIR/" \; 2>/dev/null || true
-
-# --- Parse results (stdout = JSON) ---
-PARSER_JSON=$(python3 "$EVAL_DIR/scripts/parser.py" "$ARTIFACTS_DIR" 2>/dev/null || echo '{}')
+TEST_DURATION=0
+if [ "$COMPILE_STATUS" = "pass" ] && [ "$PATCH_STATUS" != "fail" ]; then
+  TEST_START=$SECONDS
+  _run_tests eval
+  TEST_DURATION=$(_elapsed $TEST_START)
+fi
 
 OVERALL_DURATION=$(_elapsed $OVERALL_START)
 
 # --- Write temp files for safe passing to Python emitter ---
 echo "$PATCH_OUTPUT" > /tmp/_patch_output.txt
-echo "$COMPILE_OUTPUT" > /tmp/_compile_output.txt
-printf '%s\n%s' "$COMPILE_STDERR" "" >> /tmp/_compile_output.txt
-echo "$TEST_OUTPUT" > /tmp/_test_output.txt
-printf '%s\n%s' "$TEST_STDERR" "" >> /tmp/_test_output.txt
-echo "$PARSER_JSON" > /tmp/_parser.json
+cat /tmp/compile_stdout.log /tmp/compile_stderr.log > /tmp/_compile_output.txt 2>/dev/null || true
+
+# --- Write expected test lists to file (avoids shell quoting issues) ---
+cat > /tmp/_expected.json << 'EXPECTED_EOF'
+{"fail_to_pass": {{ instance.expected.fail_to_pass | tojson }}, "pass_to_pass": {{ instance.expected.pass_to_pass | tojson }}}
+EXPECTED_EOF
 
 # ============================================================
-# Emit EE-bench JSON v2.0
+# Emit EE-bench JSON v2.0 (6 criteria)
 # ============================================================
 export PATCH_STATUS PATCH_DURATION COMPILE_STATUS COMPILE_DURATION
-export TEST_DURATION OVERALL_DURATION TIMESTAMP
+export TEST_DURATION BASELINE_DURATION OVERALL_DURATION TIMESTAMP
+export HAS_TEST_PATCH
 
-python3 -c "
-import json, sys, os
-
-def read_file(path, limit=51200):
-    try:
-        with open(path) as f:
-            return f.read(limit)
-    except Exception:
-        return ''
-
-patch_status = os.environ.get('PATCH_STATUS', 'pass')
-patch_duration = int(os.environ.get('PATCH_DURATION', '0'))
-compile_status = os.environ.get('COMPILE_STATUS', 'pass')
-compile_duration = int(os.environ.get('COMPILE_DURATION', '0'))
-test_duration = int(os.environ.get('TEST_DURATION', '0'))
-overall_duration = int(os.environ.get('OVERALL_DURATION', '0'))
-timestamp = os.environ.get('TIMESTAMP', '')
-
-patch_output = read_file('/tmp/_patch_output.txt')
-compile_output = read_file('/tmp/_compile_output.txt')
-test_output = read_file('/tmp/_test_output.txt')
-
-try:
-    with open('/tmp/_parser.json') as f:
-        parser_data = json.load(f)
-except Exception:
-    parser_data = {}
-
-summary = parser_data.get('summary', {
-    'total': 0, 'passed': 0, 'failed': 0, 'errors': 0, 'skipped': 0, 'duration_seconds': 0.0,
-})
-passed_tests = parser_data.get('passed_tests', [])
-failed_tests = parser_data.get('failed_tests', [])
-skipped_tests = parser_data.get('skipped_tests', [])
-methods = parser_data.get('methods', [])
-
-has_failures = parser_data.get('failed', 0) > 0
-test_status = 'fail' if has_failures else 'pass'
-
-result = {
-    'schema_version': '2.0',
-    'status': 'success' if patch_status == 'pass' and compile_status == 'pass' else 'failure',
-    'timestamp': timestamp,
-    'duration_seconds': overall_duration,
-    'criteria': [
-        {
-            'criterion': 'patch_applied',
-            'status': patch_status,
-            'duration_seconds': patch_duration,
-            'output': patch_output[:51200],
-        },
-        {
-            'criterion': 'compilation',
-            'status': compile_status,
-            'duration_seconds': compile_duration,
-            'output': compile_output[:51200],
-        },
-        {
-            'criterion': 'tests',
-            'status': test_status,
-            'duration_seconds': test_duration,
-            'output': test_output[:51200],
-            'summary': summary,
-            'passed_tests': passed_tests,
-            'failed_tests': failed_tests,
-            'skipped_tests': skipped_tests,
-            'methods': methods,
-        },
-    ],
-}
-print(json.dumps(result))
-"
+python3 "$EVAL_DIR/scripts/emitter.py"

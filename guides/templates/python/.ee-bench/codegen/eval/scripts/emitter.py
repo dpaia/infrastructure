@@ -114,6 +114,16 @@ def main():
     expected_f2p = _expected.get("fail_to_pass", [])
     expected_p2p = _expected.get("pass_to_pass", [])
 
+    # Expand wildcards: ["*"] means "all discovered tests"
+    all_eval_tests = sorted(
+        {t["name"] for t in eval_data.get("passed_tests", []) if isinstance(t, dict)} |
+        {t["name"] for t in eval_data.get("failed_tests", []) if isinstance(t, dict)}
+    )
+    if expected_f2p == ["*"]:
+        expected_f2p = all_eval_tests
+    if expected_p2p == ["*"]:
+        expected_p2p = all_eval_tests
+
     can_run = compile_status == "pass" and patch_status in ("pass", "skipped")
 
     eval_summary = eval_data.get("summary", {

@@ -55,14 +55,16 @@ The `generate-ee-bench` skill lives in the [infrastructure](https://github.com/d
 # From your dpaia/* repository root
 mkdir -p .claude/skills
 ln -s /path/to/infrastructure/.claude/skills/generate-ee-bench .claude/skills/generate-ee-bench
+ln -s /path/to/infrastructure/.claude/skills/verify-ee-bench .claude/skills/verify-ee-bench
 ```
 
-**Option 2 — Copy the skill directory:**
+**Option 2 — Copy the skill directories:**
 
 ```bash
 # From your dpaia/* repository root
 mkdir -p .claude/skills
 cp -r /path/to/infrastructure/.claude/skills/generate-ee-bench .claude/skills/generate-ee-bench
+cp -r /path/to/infrastructure/.claude/skills/verify-ee-bench .claude/skills/verify-ee-bench
 ```
 
 **Option 3 — Clone infrastructure alongside your repo:**
@@ -71,11 +73,12 @@ cp -r /path/to/infrastructure/.claude/skills/generate-ee-bench .claude/skills/ge
 git clone https://github.com/dpaia/infrastructure.git /tmp/ee-bench-infra
 mkdir -p .claude/skills
 cp -r /tmp/ee-bench-infra/.claude/skills/generate-ee-bench .claude/skills/generate-ee-bench
+cp -r /tmp/ee-bench-infra/.claude/skills/verify-ee-bench .claude/skills/verify-ee-bench
 ```
 
 > **Note:** The `.claude/skills/` directory should be added to `.gitignore` — it is local tooling, not part of the datapoint.
 
-#### Using the Skill
+#### Using the Skills
 
 Once installed, run Claude Code in your target repository:
 
@@ -83,8 +86,10 @@ Once installed, run Claude Code in your target repository:
 2. Run Claude Code
 3. Type `/generate-ee-bench codegen`
 4. The skill analyzes your project, detects the build system (C#, Python, Gradle, or Maven), and generates all required files with project-specific values filled in
-5. Review the generated files and fill in `expected.fail_to_pass` and `expected.pass_to_pass` test names in `metadata.json`
-6. Follow the [Local Testing](#local-testing) steps to verify your setup
+5. Type `/verify-ee-bench codegen` to validate the generated configuration — this builds the Docker image, discovers passing tests, and runs the full evaluation pipeline inside Docker (requires Docker running locally)
+6. Review the generated files and fill in `expected.fail_to_pass` test names in `metadata.json` (per datapoint)
+
+> **Note:** The `verify-ee-bench` skill also lives in the [infrastructure](https://github.com/dpaia/infrastructure) repository. Install it the same way as `generate-ee-bench` (symlink or copy `.claude/skills/verify-ee-bench`).
 
 For unsupported build systems, use the starter templates above as a base.
 
@@ -551,6 +556,10 @@ You can add custom fields by using any `key` value — they will be extracted au
 ## Local Testing
 
 Before creating a PR, verify that your `.ee-bench/codegen/` setup produces a working environment — the Docker image builds, tests execute, and the output conforms to the result schema.
+
+> **Automated verification:** If you have the `verify-ee-bench` skill installed (see [Installing the Skill](#installing-the-skill)), run `/verify-ee-bench codegen` to automate all the steps below. It renders templates, builds the Docker image, discovers passing tests, and runs the full evaluation pipeline — all inside Docker with no host dependencies beyond Docker itself.
+
+The manual steps below are useful for debugging or when the skill is not available.
 
 ### 1. Render Templates
 

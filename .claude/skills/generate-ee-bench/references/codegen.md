@@ -872,25 +872,66 @@ def main():
             empty_means="skipped",
         )
 
+    # --- Overall status ---
+    has_failure = any(
+        s == "fail" for s in [compile_status, patch_status, f2p_status, p2p_status]
+    )
+    overall_status = "failure" if has_failure else "success"
+
+    eval_test_output = _read("/tmp/eval_stdout.log") + _read("/tmp/eval_stderr.log")
+
     result = {
-        "version": "2.0",
+        "schema_version": "2.0",
+        "status": overall_status,
         "timestamp": timestamp,
         "duration_seconds": overall_duration,
-        "criteria": {
-            "compilation": compilation,
-            "baseline_tests": baseline_tests,
-            "patch_applied": patch_applied,
-            "tests": tests,
-            "fail_to_pass": ftp,
-            "pass_to_pass": ptp,
-        },
-        "test_results": {
-            "baseline": baseline_data if has_test_patch else {},
-            "eval": eval_data,
-        },
+        "criteria": [
+            {
+                "criterion": "compilation",
+                "status": compile_status,
+                "duration_seconds": compile_duration,
+                "output": compile_output[:MAX_OUTPUT] if compile_status == "fail" else "",
+            },
+            {
+                "criterion": "baseline_tests",
+                "status": "pass" if has_test_patch and compile_status == "pass" else "skipped",
+                "duration_seconds": baseline_duration,
+                "passed_tests": list(baseline_passed),
+                "failed_tests": baseline_data.get("failed_tests", []),
+            },
+            {
+                "criterion": "patch_applied",
+                "status": patch_status,
+                "duration_seconds": patch_duration,
+                "output": patch_output[:MAX_OUTPUT] if patch_status == "fail" else "",
+            },
+            {
+                "criterion": "tests",
+                "status": tests.get("status", "skipped"),
+                "duration_seconds": test_duration,
+                "output": eval_test_output,
+                "summary": eval_data.get("summary", {}),
+                "passed_tests": eval_data.get("passed_tests", []),
+                "failed_tests": eval_data.get("failed_tests", []),
+                "skipped_tests": eval_data.get("skipped_tests", []),
+                "methods": eval_data.get("methods", []),
+            },
+            {
+                "criterion": "fail_to_pass",
+                "status": ftp.get("status", "skipped"),
+                "expected": fail_to_pass_names,
+                "detail": ftp.get("detail", ""),
+            },
+            {
+                "criterion": "pass_to_pass",
+                "status": ptp.get("status", "skipped"),
+                "expected": pass_to_pass_names,
+                "detail": ptp.get("detail", ""),
+            },
+        ],
     }
 
-    print(json.dumps(result, indent=2))
+    print(json.dumps(result))
 
 
 if __name__ == "__main__":

@@ -637,6 +637,17 @@ After generating all files, report to the user:
 2. **What to fill in later** (per datapoint, not at generation time):
    - `expected.fail_to_pass` in `metadata.json` — fully qualified names of tests that should fail before the fix and pass after (left empty by default)
    - `expected.pass_to_pass` in `metadata.json` — fully qualified names of tests that should always pass (left empty by default)
-3. **How to verify locally**: Point user to the Local Testing section of the contribution guide — render templates, build Docker image, run tests, check JSON output
-4. **Dockerfile customization**: If the project has unusual dependencies, the user may need to add extra `RUN` commands to the Dockerfile
-5. **Verify**: Run `/verify-ee-bench codegen` to validate that the Docker image builds and tests pass. This renders templates, builds the image, discovers passing tests, and runs the full evaluation pipeline.
+3. **Dockerfile customization**: If the project has unusual dependencies, the user may need to add extra `RUN` commands to the Dockerfile
+
+## Step 6: Verify and Fix
+
+After reporting what was generated, automatically run verification if the `verify-ee-bench` skill is available:
+
+1. **Invoke `/verify-ee-bench codegen`** — this renders templates in Docker, builds the image, discovers passing tests, and runs the full evaluation pipeline
+2. **If verification fails**, analyze the error output and fix the generated files:
+   - Dockerfile build failure → fix the Dockerfile (missing dependencies, wrong base image, etc.)
+   - Test compilation failure → check compile commands match the project's build system
+   - run.sh failure → fix script errors (wrong paths, missing tools, template rendering issues)
+   - Output validation failure → fix JSON output format or criteria logic
+3. **Re-run `/verify-ee-bench codegen`** after each fix until verification passes
+4. If the `verify-ee-bench` skill is not installed, skip this step and point the user to the [Local Testing](../../guides/contribution-guide.md#local-testing) section of the contribution guide instead

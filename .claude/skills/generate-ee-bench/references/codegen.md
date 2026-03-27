@@ -11,11 +11,18 @@ Generate `.ee-bench/codegen/` configuration that builds a Docker image, runs tes
 │   └── Dockerfile               # Required: builds the test environment
 └── eval/
     ├── run.sh                   # Required: evaluation entry point
-    └── scripts/                 # Optional: helper scripts used by run.sh
-        └── ...
+    └── scripts/                 # Shared utility scripts
+        ├── ee_bench_eval.py     # Language-independent emitter (from templates/shared/)
+        └── ee_bench_parser_*.py # Language-specific parser (from templates/shared/)
 ```
 
-Only `metadata.json`, `Dockerfile`, and `run.sh` are required. The `eval/scripts/` directory is optional — `run.sh` can use helper scripts (e.g., `parser.py`, `emitter.py`) but can also be fully self-contained. The templates below include `parser.py` and `emitter.py` as reusable helpers for parsing test results and emitting the JSON output, but these are a convenience, not a requirement.
+`metadata.json`, `Dockerfile`, and `run.sh` are required. The `eval/scripts/` directory contains shared utility scripts that are copied from `guides/templates/shared/scripts/` in the infrastructure repository:
+
+- **`ee_bench_eval.py`** — language-independent emitter that builds schema v2.0 JSON output with all 6 criteria (compilation, baseline_tests, patch_applied, tests, fail_to_pass, pass_to_pass). Used by all languages.
+- **`ee_bench_parser_junit.py`** — JUnit XML parser for Java/Maven/Gradle/Python projects.
+- **`ee_bench_parser_trx.py`** — TRX parser for C#/.NET projects.
+
+**The skill must copy these shared scripts** into `.ee-bench/codegen/eval/scripts/` when generating configuration. Select the parser based on the detected build system.
 
 ## Step 1: Detect Build System
 
@@ -351,7 +358,7 @@ _run_tests() {
   # Copy test reports to ARTIFACTS_DIR for parser
   <COPY_REPORTS_COMMAND>
 
-  python3 "$EVAL_DIR/scripts/parser.py" "$ARTIFACTS_DIR" > "/tmp/${label}_parser.json" 2>/dev/null || echo '{}' > "/tmp/${label}_parser.json"
+  python3 "$EVAL_DIR/scripts/<PARSER_SCRIPT>" "$ARTIFACTS_DIR" > "/tmp/${label}_parser.json" 2>/dev/null || echo '{}' > "/tmp/${label}_parser.json"
 
   export ARTIFACTS_DIR="$orig_artifacts"
 }
@@ -365,16 +372,7 @@ if [ -n "${EE_BENCH_RESET:-}" ]; then
 fi
 
 # ============================================================
-# Apply test patch (setup — not a criterion)
-# ============================================================
-HAS_TEST_PATCH="false"
-if [ -f "$EVAL_DIR/test_patch.diff" ]; then
-  git apply -v "$EVAL_DIR/test_patch.diff" 2>/dev/null || true
-  HAS_TEST_PATCH="true"
-fi
-
-# ============================================================
-# Criterion: compilation (initial build)
+# Criterion: compilation (clean base, before test_patch)
 # ============================================================
 COMPILE_START=$SECONDS
 COMPILE_STATUS="pass"
@@ -384,13 +382,26 @@ COMPILE_STATUS="pass"
 COMPILE_DURATION=$(_elapsed $COMPILE_START)
 
 # ============================================================
-# Run baseline tests (only if test_patch exists)
+# Run baseline tests (clean base, before test_patch)
+# Establishes pass_to_pass baseline and fail_to_pass baseline.
 # ============================================================
+HAS_TEST_PATCH="false"
+if [ -f "$EVAL_DIR/test_patch.diff" ]; then
+  HAS_TEST_PATCH="true"
+fi
+
 BASELINE_DURATION=0
-if [ "$COMPILE_STATUS" = "pass" ] && [ "$HAS_TEST_PATCH" = "true" ]; then
+if [ "$COMPILE_STATUS" = "pass" ]; then
   BASELINE_START=$SECONDS
   _run_tests baseline
   BASELINE_DURATION=$(_elapsed $BASELINE_START)
+fi
+
+# ============================================================
+# Apply test patch (after baseline, before gold patch)
+# ============================================================
+if [ "$HAS_TEST_PATCH" = "true" ]; then
+  git apply -v "$EVAL_DIR/test_patch.diff" 2>/dev/null || true
 fi
 
 # ============================================================
@@ -413,21 +424,21 @@ PATCH_DURATION=$(_elapsed $PATCH_START)
 # Rebuild after submission patch
 # ============================================================
 REBUILD_STATUS="skipped"
-if [ "$COMPILE_STATUS" = "pass" ] && [ "$PATCH_STATUS" = "pass" ]; then
+if [ "$PATCH_STATUS" = "pass" ]; then
   <COMPILE_COMMAND> > /tmp/rebuild_stdout.log 2> /tmp/rebuild_stderr.log || {
     REBUILD_STATUS="fail"
-    COMPILE_STATUS="fail"
   }
   if [ "$REBUILD_STATUS" != "fail" ]; then
     REBUILD_STATUS="pass"
+    COMPILE_STATUS="pass"
   fi
 fi
 
 # ============================================================
-# Run eval tests (only if compilation OK and patch not failed)
+# Run eval tests (only if rebuild/compilation OK and patch not failed)
 # ============================================================
 TEST_DURATION=0
-if [ "$COMPILE_STATUS" = "pass" ] && [ "$PATCH_STATUS" != "fail" ]; then
+if [ "$REBUILD_STATUS" = "pass" ] || ([ "$COMPILE_STATUS" = "pass" ] && [ "$PATCH_STATUS" != "fail" ]); then
   TEST_START=$SECONDS
   _run_tests eval
   TEST_DURATION=$(_elapsed $TEST_START)
@@ -451,492 +462,57 @@ export PATCH_STATUS PATCH_DURATION COMPILE_STATUS COMPILE_DURATION
 export TEST_DURATION BASELINE_DURATION OVERALL_DURATION TIMESTAMP
 export HAS_TEST_PATCH
 
-python3 "$EVAL_DIR/scripts/emitter.py"
+python3 "$EVAL_DIR/scripts/ee_bench_eval.py"
 ```
 
 **Language-specific substitutions:**
 
-| Language | `<default_project_root>` | `<COMPILE_COMMAND>` | `<TEST_COMMAND>` | `<COPY_REPORTS_COMMAND>` |
-|----------|-------------------------|---------------------|------------------|--------------------------|
-| C# | `/app` | `bash "$EVAL_DIR/scripts/install.sh"` | `dotnet test --no-build {{ instance.test_framework_flag }} "{{ instance.test_project }}" --logger "{{ instance.test_logger }}"` | *(empty — dotnet writes to ARTIFACTS_DIR via logger)* |
-| Python | `/app` | `pip install -e .` | `python -m pytest --junitxml="$ARTIFACTS_DIR/results.xml" -v` | *(empty — pytest writes to ARTIFACTS_DIR via --junitxml)* |
-| Gradle | `/repo` | `./gradlew classes testClasses --no-daemon -q` | `./gradlew test --no-daemon` | `cp "$PROJECT_ROOT"/build/test-results/test/*.xml "$ARTIFACTS_DIR/" 2>/dev/null \|\| true` |
-| Maven | `/repo` | `./mvnw compile test-compile -q` | `./mvnw test -q` | `cp "$PROJECT_ROOT"/target/surefire-reports/*.xml "$ARTIFACTS_DIR/" 2>/dev/null \|\| true` |
+| Language | `<default_project_root>` | `<COMPILE_COMMAND>` | `<TEST_COMMAND>` | `<COPY_REPORTS_COMMAND>` | `<PARSER_SCRIPT>` |
+|----------|-------------------------|---------------------|------------------|--------------------------|-------------------|
+| C# | `/app` | `bash "$EVAL_DIR/scripts/install.sh"` | `dotnet test --no-build {{ instance.test_framework_flag }} "{{ instance.test_project }}" --logger "{{ instance.test_logger }}"` | *(empty — dotnet writes to ARTIFACTS_DIR via logger)* | `ee_bench_parser_trx.py` |
+| Python | `/app` | `pip install -e .` | `python -m pytest --junitxml="$ARTIFACTS_DIR/results.xml" -v` | *(empty — pytest writes to ARTIFACTS_DIR via --junitxml)* | `ee_bench_parser_junit.py` |
+| Gradle | `/repo` | `./gradlew classes testClasses --no-daemon -q` | `./gradlew test --no-daemon` | `cp "$PROJECT_ROOT"/build/test-results/test/*.xml "$ARTIFACTS_DIR/" 2>/dev/null \|\| true` | `ee_bench_parser_junit.py` |
+| Maven | `/repo` | `./mvnw compile test-compile -q` | `./mvnw test -q` | `cp "$PROJECT_ROOT"/target/surefire-reports/*.xml "$ARTIFACTS_DIR/" 2>/dev/null \|\| true` | `ee_bench_parser_junit.py` |
 
-### eval/scripts/parser.py (optional helper)
+### eval/scripts/ — Shared utility scripts
 
-The templates include a reusable parser that handles both JUnit XML and TRX formats. This is an optional helper script called by `run.sh` — not a required file. If the project uses a different test output format, `run.sh` can parse results directly or use a different helper.
+The skill must copy shared utility scripts from `guides/templates/shared/scripts/` into `.ee-bench/codegen/eval/scripts/`. Select the correct parser based on detected build system:
 
-Key design points:
-- `parse_junit_xml()` and `parse_trx()` accept a pre-parsed `ET.Element` root (not a file path) -- `detect_and_parse()` parses the XML once and dispatches by root tag
-- `aggregate()` uses a single-pass loop to collect names and count errors simultaneously
-- Output schema has top-level `summary`, `passed_tests`, `failed_tests`, `skipped_tests`, `methods` (no top-level `total`/`passed`/`failed`)
+| Build system | Scripts to copy |
+|-------------|----------------|
+| Maven, Gradle, Python | `ee_bench_eval.py` + `ee_bench_parser_junit.py` |
+| C# | `ee_bench_eval.py` + `ee_bench_parser_trx.py` |
 
-```python
-#!/usr/bin/env python3
-"""Parse test result logs (JUnit XML or TRX) into EE-bench JSON."""
-import json
-import os
-import sys
-import xml.etree.ElementTree as ET
+These shared scripts are the source of truth for evaluation logic. Do NOT generate parser or emitter scripts from scratch — always copy from the shared templates.
 
-MAX_STACKTRACE = 4096
+The parser scripts are located at `guides/templates/shared/scripts/` in the infrastructure repository. Copy the appropriate one for the detected build system. Do NOT generate parser code from scratch.
 
+- **`ee_bench_parser_junit.py`**: Parses JUnit XML (`<testsuites>/<testsuite>/<testcase>`). For Maven, Gradle, Python (pytest).
+- **`ee_bench_parser_trx.py`**: Parses Visual Studio TRX format. For C#/.NET.
 
-def _truncate(text: str, limit: int = MAX_STACKTRACE) -> str:
-    if text and len(text) > limit:
-        return text[:limit] + "\n... [truncated]"
-    return text
+Both parsers expose the same interface: `detect_and_parse(artifacts_dir)` → `list[dict]`, `aggregate(methods)` → `dict`, and `main()` CLI entry point.
 
-
-def parse_junit_xml(root: ET.Element) -> list[dict]:
-    """Parse JUnit XML format (<testsuites><testsuite><testcase>)."""
-    methods = []
-
-    if root.tag == "testsuite":
-        suites = [root]
-    elif root.tag == "testsuites":
-        suites = root.findall("testsuite")
-    else:
-        suites = root.findall(".//testsuite")
-
-    for suite in suites:
-        for tc in suite.findall("testcase"):
-            name = tc.get("name", "unknown")
-            classname = tc.get("classname", "")
-            if classname and not name.startswith(classname):
-                full_name = f"{classname}.{name}"
-            else:
-                full_name = name
-
-            duration = 0.0
-            try:
-                duration = float(tc.get("time", "0"))
-            except (ValueError, TypeError):
-                pass
-
-            entry = {"name": full_name, "duration_seconds": duration}
-
-            failure = tc.find("failure")
-            error = tc.find("error")
-            skipped = tc.find("skipped")
-
-            if failure is not None:
-                entry["status"] = "failed"
-                entry["type"] = "assertion"
-                entry["message"] = failure.get("message", "")
-                entry["stacktrace"] = _truncate(failure.text or "")
-            elif error is not None:
-                entry["status"] = "failed"
-                entry["type"] = "error"
-                entry["message"] = error.get("message", "")
-                entry["stacktrace"] = _truncate(error.text or "")
-            elif skipped is not None:
-                entry["status"] = "skipped"
-                msg = skipped.get("message", "") or (skipped.text or "")
-                if msg:
-                    entry["message"] = msg
-            else:
-                entry["status"] = "passed"
-
-            methods.append(entry)
-    return methods
-
-
-def parse_trx(root: ET.Element) -> list[dict]:
-    """Parse Visual Studio TRX format."""
-    ns = {"t": "http://microsoft.com/schemas/VisualStudio/TeamTest/2010"}
-    methods = []
-
-    for result in root.findall(".//t:UnitTestResult", ns):
-        name = result.get("testName", "unknown")
-        outcome = result.get("outcome", "").lower()
-
-        duration = 0.0
-        dur_str = result.get("duration", "")
-        if dur_str:
-            try:
-                parts = dur_str.split(":")
-                if len(parts) == 3:
-                    h, m = int(parts[0]), int(parts[1])
-                    s = float(parts[2])
-                    duration = h * 3600 + m * 60 + s
-            except (ValueError, IndexError):
-                pass
-
-        entry = {"name": name, "duration_seconds": duration}
-
-        if outcome == "passed":
-            entry["status"] = "passed"
-        elif outcome in ("failed", "error"):
-            entry["status"] = "failed"
-            entry["type"] = "error" if outcome == "error" else "assertion"
-            error_info = result.find("t:Output/t:ErrorInfo", ns)
-            if error_info is not None:
-                msg_el = error_info.find("t:Message", ns)
-                st_el = error_info.find("t:StackTrace", ns)
-                if msg_el is not None and msg_el.text:
-                    entry["message"] = msg_el.text
-                if st_el is not None and st_el.text:
-                    entry["stacktrace"] = _truncate(st_el.text)
-        elif outcome in ("notexecuted", "inconclusive"):
-            entry["status"] = "skipped"
-        else:
-            entry["status"] = "failed"
-
-        methods.append(entry)
-    return methods
-
-
-def detect_and_parse(artifacts_dir: str) -> list[dict]:
-    """Scan artifacts dir for XML/TRX files and parse them."""
-    methods = []
-    for fname in sorted(os.listdir(artifacts_dir)):
-        fpath = os.path.join(artifacts_dir, fname)
-        if not os.path.isfile(fpath):
-            continue
-        try:
-            tree = ET.parse(fpath)
-            root = tree.getroot()
-        except ET.ParseError:
-            continue
-
-        ns_tag = root.tag
-        if "TestRun" in ns_tag or "VisualStudio" in ns_tag:
-            methods.extend(parse_trx(root))
-        elif root.tag in ("testsuites", "testsuite"):
-            methods.extend(parse_junit_xml(root))
-        else:
-            if root.findall(".//testcase"):
-                methods.extend(parse_junit_xml(root))
-
-    return methods
-
-
-def aggregate(methods: list[dict]) -> dict:
-    """Build method-level aggregation and summary from parsed results."""
-    passed_names = []
-    failed_names = []
-    skipped_names = []
-    total_duration = 0.0
-    n_errors = 0
-
-    for m in methods:
-        total_duration += m.get("duration_seconds", 0.0)
-        status = m["status"]
-        if status == "passed":
-            passed_names.append(m["name"])
-        elif status == "failed":
-            failed_names.append(m["name"])
-            if m.get("type") == "error":
-                n_errors += 1
-        elif status == "skipped":
-            skipped_names.append(m["name"])
-
-    n_passed = len(passed_names)
-    n_failed = len(failed_names)
-    n_skipped = len(skipped_names)
-
-    return {
-        "summary": {
-            "total": len(methods),
-            "passed": n_passed,
-            "failed": n_failed - n_errors,
-            "errors": n_errors,
-            "skipped": n_skipped,
-            "duration_seconds": round(total_duration, 3),
-        },
-        "passed_tests": [{"name": n} for n in sorted(set(passed_names))],
-        "failed_tests": [{"name": n} for n in sorted(set(failed_names))],
-        "skipped_tests": [{"name": n} for n in sorted(set(skipped_names))],
-        "methods": methods,
-    }
-
-
-def main():
-    if len(sys.argv) < 2:
-        print(f"Usage: {sys.argv[0]} <artifacts_dir>", file=sys.stderr)
-        sys.exit(1)
-
-    artifacts_dir = sys.argv[1]
-    methods = detect_and_parse(artifacts_dir)
-    result = aggregate(methods)
-    print(json.dumps(result))
-
-
-if __name__ == "__main__":
-    main()
+Output schema:
+```json
+{
+  "summary": {"total": N, "passed": N, "failed": N, "errors": N, "skipped": N, "duration_seconds": N},
+  "passed_tests": [{"name": "..."}],
+  "failed_tests": [{"name": "..."}],
+  "skipped_tests": [{"name": "..."}],
+  "methods": [{"name": "...", "status": "passed|failed|skipped", "duration_seconds": N}]
+}
 ```
 
-### eval/scripts/emitter.py (optional helper)
+#### ee_bench_eval.py (language-independent emitter)
 
-The emitter is a separate, language-agnostic Python script that reads environment variables (set by `run.sh`) and parser JSON files from `/tmp`, then prints the final EE-bench JSON v2.0 to stdout. This is an optional helper — `run.sh` could emit the JSON directly if preferred.
+The emitter is located at `guides/templates/shared/scripts/ee_bench_eval.py`. Copy it to `.ee-bench/codegen/eval/scripts/ee_bench_eval.py`. Do NOT generate emitter code from scratch.
 
-Key design points:
-- **`_prefix(name)`** strips parameterized suffixes: `Foo.Bar(x: 1)` becomes `Foo.Bar`
-- **`_test_in(name, name_set)`** matches by exact name first, then by prefix (handles parameterized test methods)
-- **`_evaluate_criterion()`** is a shared helper for both `fail_to_pass` and `pass_to_pass` criteria -- it checks eval pass status and baseline consistency in one call
-- Reads `HAS_TEST_PATCH` env var to decide whether baseline checks apply
-- `tests` and `pass_to_pass` evaluate when `patch_status` is `"pass"` OR `"skipped"` (no submission)
-- `fail_to_pass` only evaluates when `patch_status` is `"pass"` (needs actual submission)
-- Empty `fail_to_pass` list results in `"fail"` status; empty `pass_to_pass` results in `"skipped"`
-
-```python
-#!/usr/bin/env python3
-"""Emit EE-bench JSON v2.0 evaluation output (6 criteria)."""
-import json
-import os
-import re
-import sys
-
-MAX_OUTPUT = 8192
-
-
-def _read(path: str, limit: int = MAX_OUTPUT) -> str:
-    try:
-        with open(path) as f:
-            text = f.read(limit)
-        return text
-    except FileNotFoundError:
-        return ""
-
-
-def _load_json(path: str) -> dict:
-    try:
-        with open(path) as f:
-            return json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError):
-        return {}
-
-
-def _prefix(name: str) -> str:
-    """Strip parameterized suffixes: Foo.Bar(x: 1) -> Foo.Bar"""
-    return re.sub(r"\(.*\)$", "", name)
-
-
-def _test_in(name: str, name_set: set) -> bool:
-    """Match by exact name first, then by prefix."""
-    if name in name_set:
-        return True
-    return _prefix(name) in name_set
-
-
-def _evaluate_criterion(
-    expected_names: list[str],
-    eval_passed: set[str],
-    eval_failed: set[str],
-    baseline_passed: set[str],
-    baseline_failed: set[str],
-    should_fail_baseline: bool,
-    has_test_patch: bool,
-    empty_means: str,
-) -> dict:
-    """Shared evaluator for fail_to_pass and pass_to_pass criteria.
-
-    Args:
-        expected_names: list of expected test names
-        eval_passed: set of tests that passed in eval run
-        eval_failed: set of tests that failed in eval run
-        baseline_passed: set of tests that passed in baseline run
-        baseline_failed: set of tests that failed in baseline run
-        should_fail_baseline: if True, tests must fail in baseline (fail_to_pass)
-        has_test_patch: whether a test patch was applied
-        empty_means: "fail" or "skipped" — what to return if expected list is empty
-    """
-    if not expected_names:
-        return {
-            "status": empty_means,
-            "detail": {"expected": [], "actual_pass": [], "actual_fail": []},
-        }
-
-    expected_set = set(expected_names)
-    actual_pass = [n for n in expected_names if _test_in(n, eval_passed)]
-    actual_fail = [n for n in expected_names if _test_in(n, eval_failed)]
-
-    # Check baseline consistency
-    baseline_ok = True
-    if has_test_patch:
-        for n in expected_names:
-            if should_fail_baseline:
-                if not _test_in(n, baseline_failed):
-                    baseline_ok = False
-                    break
-            else:
-                if not _test_in(n, baseline_passed):
-                    baseline_ok = False
-                    break
-
-    if should_fail_baseline:
-        all_now_pass = all(_test_in(n, eval_passed) for n in expected_names)
-        status = "pass" if (all_now_pass and baseline_ok) else "fail"
-    else:
-        all_still_pass = all(_test_in(n, eval_passed) for n in expected_names)
-        status = "pass" if (all_still_pass and baseline_ok) else "fail"
-
-    return {
-        "status": status,
-        "detail": {
-            "expected": expected_names,
-            "actual_pass": actual_pass,
-            "actual_fail": actual_fail,
-        },
-    }
-
-
-def main():
-    compile_status = os.environ.get("COMPILE_STATUS", "fail")
-    compile_duration = int(os.environ.get("COMPILE_DURATION", "0"))
-    patch_status = os.environ.get("PATCH_STATUS", "skipped")
-    patch_duration = int(os.environ.get("PATCH_DURATION", "0"))
-    test_duration = int(os.environ.get("TEST_DURATION", "0"))
-    baseline_duration = int(os.environ.get("BASELINE_DURATION", "0"))
-    overall_duration = int(os.environ.get("OVERALL_DURATION", "0"))
-    timestamp = os.environ.get("TIMESTAMP", "")
-    has_test_patch = os.environ.get("HAS_TEST_PATCH", "false") == "true"
-
-    compile_output = _read("/tmp/_compile_output.txt")
-    patch_output = _read("/tmp/_patch_output.txt")
-
-    expected = _load_json("/tmp/_expected.json")
-    fail_to_pass_names = expected.get("fail_to_pass", [])
-    pass_to_pass_names = expected.get("pass_to_pass", [])
-
-    eval_data = _load_json("/tmp/eval_parser.json")
-    baseline_data = _load_json("/tmp/baseline_parser.json")
-
-    eval_passed = {m["name"] for m in eval_data.get("methods", []) if m.get("status") == "passed"}
-    eval_failed = {m["name"] for m in eval_data.get("methods", []) if m.get("status") == "failed"}
-    baseline_passed = {m["name"] for m in baseline_data.get("methods", []) if m.get("status") == "passed"}
-    baseline_failed = {m["name"] for m in baseline_data.get("methods", []) if m.get("status") == "failed"}
-
-    # Expand wildcards: ["*"] means "all discovered tests"
-    all_eval_tests = sorted(eval_passed | eval_failed)
-    if fail_to_pass_names == ["*"]:
-        fail_to_pass_names = all_eval_tests
-    if pass_to_pass_names == ["*"]:
-        pass_to_pass_names = all_eval_tests
-
-    # --- Compilation criterion ---
-    compilation = {
-        "status": compile_status,
-        "duration_seconds": compile_duration,
-        "output": compile_output[:MAX_OUTPUT] if compile_status == "fail" else "",
-    }
-
-    # --- Baseline tests criterion ---
-    if compile_status != "pass" or not has_test_patch:
-        baseline_tests = {"status": "skipped", "duration_seconds": 0}
-    else:
-        baseline_tests = {
-            "status": "pass" if baseline_data.get("summary") else "fail",
-            "duration_seconds": baseline_duration,
-            "summary": baseline_data.get("summary", {}),
-        }
-
-    # --- Patch applied criterion ---
-    patch_applied = {
-        "status": patch_status,
-        "duration_seconds": patch_duration,
-        "output": patch_output[:MAX_OUTPUT] if patch_status == "fail" else "",
-    }
-
-    # --- Tests criterion ---
-    if compile_status != "pass" or patch_status not in ("pass", "skipped"):
-        tests = {"status": "skipped", "duration_seconds": 0}
-    else:
-        tests = {
-            "status": "pass" if eval_data.get("summary") else "fail",
-            "duration_seconds": test_duration,
-            "summary": eval_data.get("summary", {}),
-        }
-
-    # --- fail_to_pass criterion (only with actual submission) ---
-    if compile_status != "pass" or patch_status not in ("pass",):
-        ftp = {"status": "skipped", "detail": {"expected": fail_to_pass_names, "actual_pass": [], "actual_fail": []}}
-    else:
-        ftp = _evaluate_criterion(
-            fail_to_pass_names, eval_passed, eval_failed,
-            baseline_passed, baseline_failed,
-            should_fail_baseline=True, has_test_patch=has_test_patch,
-            empty_means="fail",
-        )
-
-    # --- pass_to_pass criterion (with or without submission) ---
-    if compile_status != "pass" or patch_status not in ("pass", "skipped"):
-        ptp = {"status": "skipped", "detail": {"expected": pass_to_pass_names, "actual_pass": [], "actual_fail": []}}
-    else:
-        ptp = _evaluate_criterion(
-            pass_to_pass_names, eval_passed, eval_failed,
-            baseline_passed, baseline_failed,
-            should_fail_baseline=False, has_test_patch=has_test_patch,
-            empty_means="skipped",
-        )
-
-    # --- Overall status ---
-    has_failure = any(
-        s == "fail" for s in [compile_status, patch_status, f2p_status, p2p_status]
-    )
-    overall_status = "failure" if has_failure else "success"
-
-    eval_test_output = _read("/tmp/eval_stdout.log") + _read("/tmp/eval_stderr.log")
-
-    result = {
-        "schema_version": "2.0",
-        "status": overall_status,
-        "timestamp": timestamp,
-        "duration_seconds": overall_duration,
-        "criteria": [
-            {
-                "criterion": "compilation",
-                "status": compile_status,
-                "duration_seconds": compile_duration,
-                "output": compile_output[:MAX_OUTPUT] if compile_status == "fail" else "",
-            },
-            {
-                "criterion": "baseline_tests",
-                "status": "pass" if has_test_patch and compile_status == "pass" else "skipped",
-                "duration_seconds": baseline_duration,
-                "passed_tests": list(baseline_passed),
-                "failed_tests": baseline_data.get("failed_tests", []),
-            },
-            {
-                "criterion": "patch_applied",
-                "status": patch_status,
-                "duration_seconds": patch_duration,
-                "output": patch_output[:MAX_OUTPUT] if patch_status == "fail" else "",
-            },
-            {
-                "criterion": "tests",
-                "status": tests.get("status", "skipped"),
-                "duration_seconds": test_duration,
-                "output": eval_test_output,
-                "summary": eval_data.get("summary", {}),
-                "passed_tests": eval_data.get("passed_tests", []),
-                "failed_tests": eval_data.get("failed_tests", []),
-                "skipped_tests": eval_data.get("skipped_tests", []),
-                "methods": eval_data.get("methods", []),
-            },
-            {
-                "criterion": "fail_to_pass",
-                "status": ftp.get("status", "skipped"),
-                "expected": fail_to_pass_names,
-                "detail": ftp.get("detail", ""),
-            },
-            {
-                "criterion": "pass_to_pass",
-                "status": ptp.get("status", "skipped"),
-                "expected": pass_to_pass_names,
-                "detail": ptp.get("detail", ""),
-            },
-        ],
-    }
-
-    print(json.dumps(result))
-
-
-if __name__ == "__main__":
-    main()
-```
+Key behavior:
+- Reads env vars from `run.sh`: `COMPILE_STATUS`, `PATCH_STATUS`, `TEST_DURATION`, `HAS_TEST_PATCH`, etc.
+- Reads temp files: `/tmp/_compile_output.txt`, `/tmp/_patch_output.txt`, `/tmp/_expected.json`, `/tmp/*_parser.json`
+- Builds all 6 criteria (compilation, baseline_tests, patch_applied, tests, fail_to_pass, pass_to_pass)
+- Handles wildcard expansion (`["*"]` means all discovered tests)
+- Prints schema v2.0 JSON to stdout
 
 ## Step 5: Post-Generation
 

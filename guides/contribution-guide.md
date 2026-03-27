@@ -39,7 +39,7 @@ Complete starter templates are available in [`guides/templates/`](templates/) fo
 | [`gradle/`](templates/gradle/) | Java/Kotlin | `./gradlew` | `./gradlew test` (JUnit XML) | `eclipse-temurin:21` |
 | [`maven/`](templates/maven/) | Java | `./mvnw` | `./mvnw test` (Surefire XML) | `eclipse-temurin:21` |
 
-Each template contains a complete `.ee-bench/codegen/` directory (`metadata.json`, `Dockerfile`, `run.sh`, and optional helper scripts) ready to copy and customize. Replace placeholder values (test project paths, test names, SDK versions) with your project's specifics.
+Each template contains a complete `.ee-bench/codegen/` directory (`metadata.json`, `Dockerfile`, `run.sh`, and shared eval scripts) ready to copy and customize. Replace placeholder values (test project paths, test names, SDK versions) with your project's specifics. The shared eval scripts (`ee_bench_eval.py` + language-specific parser) are copied from [`guides/templates/shared/scripts/`](templates/shared/scripts/).
 
 ### Generating Configuration with Agents
 
@@ -104,9 +104,22 @@ Your repository main branch or PR must include a `.ee-bench/codegen/` directory 
 │   └── Dockerfile               # Required: builds the test environment
 └── eval/
     ├── run.sh                   # Required: evaluation entry point
-    └── scripts/                 # Optional: helper scripts used by run.sh
-        └── ...
+    └── scripts/                 # Shared utility scripts
+        ├── ee_bench_eval.py     # Language-independent emitter (from templates/shared/)
+        └── ee_bench_parser_*.py # Language-specific parser (from templates/shared/)
 ```
+
+### Shared Eval Scripts
+
+The `eval/scripts/` directory contains shared utility scripts from [`guides/templates/shared/scripts/`](templates/shared/scripts/). These are the source of truth for evaluation logic:
+
+| Script | Description | Used by |
+|--------|-------------|---------|
+| `ee_bench_eval.py` | Language-independent emitter — builds schema v2.0 JSON with all 6 criteria | All languages |
+| `ee_bench_parser_junit.py` | JUnit XML test result parser | Java (Maven, Gradle), Python (pytest) |
+| `ee_bench_parser_trx.py` | Visual Studio TRX test result parser | C#/.NET |
+
+Copy the appropriate scripts for your build system. The `generate-ee-bench` skill does this automatically.
 
 ### Default-Branch vs PR-Branch Resolution
 
@@ -726,7 +739,7 @@ If you push new commits while the PR is in "Review", "Verified", or "Rejected" s
 |--------------------------------------------|--------------------------------------------------------------------------------------|------------------------------------------------------------------------------------------------------------------------|
 | Docker build fails                         | Missing dependencies, incorrect base image, or template variable errors              | Test locally: `docker build --platform linux/amd64 -t test .ee-bench/codegen/environment/`                             |
 | No JSON output from run.sh                 | `run.sh` doesn't print a JSON object containing `"schema_version"` to stdout         | Ensure exactly one line of stdout contains `"schema_version"`. Redirect other output to stderr.                        |
-| `fail_to_pass` mismatch                    | Test names in `metadata.json` don't match actual test names in `passed_tests` output | Check fully qualified test names. run.sh self-evaluates these — check the `fail_to_pass` criterion in the JSON output. |
+| `fail_to_pass` mismatch                    | Test names in `metadata.json` don't match actual test names in `passed_tests` output | Use fully qualified class names (e.g. `com.example.FooTest`) or method names (e.g. `com.example.FooTest.shouldBar`). Class-level names match all methods in that class. |
 | Patch doesn't apply                        | The gold patch (PR diff) doesn't apply cleanly to `base_commit`                      | Verify `base_commit` in `metadata.json` matches the actual merge base of your PR                                       |
 | Verification comment shows failures        | One or more criteria in the result JSON have non-pass status                         | Check the "Failed criteria" and "Failed tests" sections in the bot comment. Click the workflow run link for full logs. |
 | Tests fail with Testcontainers errors      | Tests need Docker-in-Docker access to spin up containers                             | See [Testcontainers](#testcontainers) section below                                                                    |

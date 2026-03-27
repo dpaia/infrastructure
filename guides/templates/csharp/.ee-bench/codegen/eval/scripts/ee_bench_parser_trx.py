@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Parse test result logs (JUnit XML or TRX) into EE-bench JSON."""
+"""Parse Visual Studio TRX test results into EE-bench JSON.
+
+For C#/.NET projects using dotnet test with TRX logger.
+
+Usage: python3 ee_bench_parser_trx.py <artifacts_dir>
+"""
 import json
 import os
 import sys
@@ -8,70 +13,13 @@ import xml.etree.ElementTree as ET
 MAX_STACKTRACE = 4096
 
 
-def _truncate(text: str, limit: int = MAX_STACKTRACE) -> str:
+def _truncate(text, limit=MAX_STACKTRACE):
     if text and len(text) > limit:
         return text[:limit] + "\n... [truncated]"
     return text
 
 
-def parse_junit_xml(root: ET.Element) -> list[dict]:
-    """Parse JUnit XML format (<testsuites><testsuite><testcase>)."""
-    methods = []
-
-    if root.tag == "testsuite":
-        suites = [root]
-    elif root.tag == "testsuites":
-        suites = root.findall("testsuite")
-    else:
-        suites = root.findall(".//testsuite")
-
-    for suite in suites:
-        for tc in suite.findall("testcase"):
-            name = tc.get("name", "unknown")
-            classname = tc.get("classname", "")
-            if classname and not name.startswith(classname):
-                full_name = f"{classname}.{name}"
-            else:
-                full_name = name
-
-            duration = 0.0
-            try:
-                duration = float(tc.get("time", "0"))
-            except (ValueError, TypeError):
-                pass
-
-            entry = {
-                "name": full_name,
-                "duration_seconds": duration,
-            }
-
-            failure = tc.find("failure")
-            error = tc.find("error")
-            skipped = tc.find("skipped")
-
-            if failure is not None:
-                entry["status"] = "failed"
-                entry["type"] = "assertion"
-                entry["message"] = failure.get("message", "")
-                entry["stacktrace"] = _truncate(failure.text or "")
-            elif error is not None:
-                entry["status"] = "failed"
-                entry["type"] = "error"
-                entry["message"] = error.get("message", "")
-                entry["stacktrace"] = _truncate(error.text or "")
-            elif skipped is not None:
-                entry["status"] = "skipped"
-                msg = skipped.get("message", "") or (skipped.text or "")
-                if msg:
-                    entry["message"] = msg
-            else:
-                entry["status"] = "passed"
-
-            methods.append(entry)
-    return methods
-
-
-def parse_trx(root: ET.Element) -> list[dict]:
+def parse_trx(root):
     """Parse Visual Studio TRX format."""
     ns = {"t": "http://microsoft.com/schemas/VisualStudio/TeamTest/2010"}
     methods = []
@@ -93,17 +41,13 @@ def parse_trx(root: ET.Element) -> list[dict]:
             except (ValueError, IndexError):
                 pass
 
-        entry = {
-            "name": name,
-            "duration_seconds": duration,
-        }
+        entry = {"name": name, "duration_seconds": duration}
 
         if outcome == "passed":
             entry["status"] = "passed"
         elif outcome in ("failed", "error"):
             entry["status"] = "failed"
             entry["type"] = "error" if outcome == "error" else "assertion"
-            # Extract message and stacktrace from <Output><ErrorInfo>
             error_info = result.find("t:Output/t:ErrorInfo", ns)
             if error_info is not None:
                 msg_el = error_info.find("t:Message", ns)
@@ -121,8 +65,8 @@ def parse_trx(root: ET.Element) -> list[dict]:
     return methods
 
 
-def detect_and_parse(artifacts_dir: str) -> list[dict]:
-    """Scan artifacts dir for XML/TRX files and parse them."""
+def detect_and_parse(artifacts_dir):
+    """Scan artifacts dir for TRX/XML files and parse them."""
     methods = []
     for fname in sorted(os.listdir(artifacts_dir)):
         fpath = os.path.join(artifacts_dir, fname)
@@ -137,17 +81,12 @@ def detect_and_parse(artifacts_dir: str) -> list[dict]:
         ns_tag = root.tag
         if "TestRun" in ns_tag or "VisualStudio" in ns_tag:
             methods.extend(parse_trx(root))
-        elif root.tag in ("testsuites", "testsuite"):
-            methods.extend(parse_junit_xml(root))
-        else:
-            if root.findall(".//testcase"):
-                methods.extend(parse_junit_xml(root))
 
     return methods
 
 
-def aggregate(methods: list[dict]) -> dict:
-    """Build method-level aggregation and summary from parsed results."""
+def aggregate(methods):
+    """Build summary and test lists from parsed method results."""
     passed_names = []
     failed_names = []
     skipped_names = []
@@ -166,17 +105,13 @@ def aggregate(methods: list[dict]) -> dict:
         elif status == "skipped":
             skipped_names.append(m["name"])
 
-    n_passed = len(passed_names)
-    n_failed = len(failed_names)
-    n_skipped = len(skipped_names)
-
     return {
         "summary": {
             "total": len(methods),
-            "passed": n_passed,
-            "failed": n_failed - n_errors,
+            "passed": len(passed_names),
+            "failed": len(failed_names) - n_errors,
             "errors": n_errors,
-            "skipped": n_skipped,
+            "skipped": len(skipped_names),
             "duration_seconds": round(total_duration, 3),
         },
         "passed_tests": [{"name": n} for n in sorted(set(passed_names))],

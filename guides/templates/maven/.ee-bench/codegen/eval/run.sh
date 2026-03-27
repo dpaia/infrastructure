@@ -28,7 +28,7 @@ _run_tests() {
   # Copy Surefire XML results to ARTIFACTS_DIR for parser
   cp "$PROJECT_ROOT"/target/surefire-reports/*.xml "$ARTIFACTS_DIR/" 2>/dev/null || true
 
-  python3 "$EVAL_DIR/scripts/parser.py" "$ARTIFACTS_DIR" > "/tmp/${label}_parser.json" 2>/dev/null || echo '{}' > "/tmp/${label}_parser.json"
+  python3 "$EVAL_DIR/scripts/ee_bench_parser_junit.py" "$ARTIFACTS_DIR" > "/tmp/${label}_parser.json" 2>/dev/null || echo '{}' > "/tmp/${label}_parser.json"
 
   export ARTIFACTS_DIR="$orig_artifacts"
 }
@@ -42,16 +42,7 @@ if [ -n "${EE_BENCH_RESET:-}" ]; then
 fi
 
 # ============================================================
-# Apply test patch (setup — not a criterion)
-# ============================================================
-HAS_TEST_PATCH="false"
-if [ -f "$EVAL_DIR/test_patch.diff" ]; then
-  git apply -v "$EVAL_DIR/test_patch.diff" 2>/dev/null || true
-  HAS_TEST_PATCH="true"
-fi
-
-# ============================================================
-# Criterion: compilation (initial build)
+# Criterion: compilation (clean base, before test_patch)
 # ============================================================
 COMPILE_START=$SECONDS
 COMPILE_STATUS="pass"
@@ -61,13 +52,26 @@ COMPILE_STATUS="pass"
 COMPILE_DURATION=$(_elapsed $COMPILE_START)
 
 # ============================================================
-# Run baseline tests (only if test_patch exists)
+# Run baseline tests (clean base, before test_patch)
+# Establishes pass_to_pass baseline and fail_to_pass baseline.
 # ============================================================
+HAS_TEST_PATCH="false"
+if [ -f "$EVAL_DIR/test_patch.diff" ]; then
+  HAS_TEST_PATCH="true"
+fi
+
 BASELINE_DURATION=0
-if [ "$COMPILE_STATUS" = "pass" ] && [ "$HAS_TEST_PATCH" = "true" ]; then
+if [ "$COMPILE_STATUS" = "pass" ]; then
   BASELINE_START=$SECONDS
   _run_tests baseline
   BASELINE_DURATION=$(_elapsed $BASELINE_START)
+fi
+
+# ============================================================
+# Apply test patch (after baseline, before gold patch)
+# ============================================================
+if [ "$HAS_TEST_PATCH" = "true" ]; then
+  git apply -v "$EVAL_DIR/test_patch.diff" 2>/dev/null || true
 fi
 
 # ============================================================
@@ -90,21 +94,21 @@ PATCH_DURATION=$(_elapsed $PATCH_START)
 # Rebuild after submission patch
 # ============================================================
 REBUILD_STATUS="skipped"
-if [ "$COMPILE_STATUS" = "pass" ] && [ "$PATCH_STATUS" = "pass" ]; then
+if [ "$PATCH_STATUS" = "pass" ]; then
   ./mvnw compile test-compile -q > /tmp/rebuild_stdout.log 2> /tmp/rebuild_stderr.log || {
     REBUILD_STATUS="fail"
-    COMPILE_STATUS="fail"
   }
   if [ "$REBUILD_STATUS" != "fail" ]; then
     REBUILD_STATUS="pass"
+    COMPILE_STATUS="pass"
   fi
 fi
 
 # ============================================================
-# Run eval tests (only if compilation OK and patch not failed)
+# Run eval tests (only if rebuild/compilation OK and patch not failed)
 # ============================================================
 TEST_DURATION=0
-if [ "$COMPILE_STATUS" = "pass" ] && [ "$PATCH_STATUS" != "fail" ]; then
+if [ "$REBUILD_STATUS" = "pass" ] || ([ "$COMPILE_STATUS" = "pass" ] && [ "$PATCH_STATUS" != "fail" ]); then
   TEST_START=$SECONDS
   _run_tests eval
   TEST_DURATION=$(_elapsed $TEST_START)
@@ -128,4 +132,4 @@ export PATCH_STATUS PATCH_DURATION COMPILE_STATUS COMPILE_DURATION
 export TEST_DURATION BASELINE_DURATION OVERALL_DURATION TIMESTAMP
 export HAS_TEST_PATCH
 
-python3 "$EVAL_DIR/scripts/emitter.py"
+python3 "$EVAL_DIR/scripts/ee_bench_eval.py"

@@ -32,6 +32,8 @@ If no type is provided, detect from the `.ee-bench/` directory structure (look f
 
 ## Prerequisites
 
-- Docker must be running on the host machine
+- **Docker must be installed and running** on the host machine — verify with `docker info`. This skill runs all template rendering, image builds, and test execution inside Docker containers. Without Docker, nothing works.
 - The current directory must contain `.ee-bench/codegen/` (or the relevant eval type directory)
 - The current directory must be a git repository
+
+Before proceeding, check that Docker is available. If `docker info` fails, tell the user to install and start Docker first.

@@ -649,5 +649,6 @@ After reporting what was generated, automatically run verification if the `verif
    - Test compilation failure → check compile commands match the project's build system
    - run.sh failure → fix script errors (wrong paths, missing tools, template rendering issues)
    - Output validation failure → fix JSON output format or criteria logic
+   - Testcontainers errors → tests need Docker-in-Docker; add `"--privileged --network bridge -v /var/run/docker.sock:/var/run/docker.sock"` to `metadata.json` at `environment.docker.run_params`, and add env vars to the Dockerfile: `ENV TESTCONTAINERS_RYUK_DISABLED=true`, `ENV TESTCONTAINERS_CHECKS_DISABLE=true`, `ENV DOCKER_HOST=unix:///var/run/docker.sock`
 3. **Re-run `/verify-ee-bench codegen`** after each fix until verification passes
 4. If the `verify-ee-bench` skill is not installed, skip this step and point the user to the [Local Testing](../../guides/contribution-guide.md#local-testing) section of the contribution guide instead

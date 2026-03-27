@@ -729,4 +729,35 @@ If you push new commits while the PR is in "Review", "Verified", or "Rejected" s
 | `fail_to_pass` mismatch                    | Test names in `metadata.json` don't match actual test names in `passed_tests` output | Check fully qualified test names. run.sh self-evaluates these — check the `fail_to_pass` criterion in the JSON output. |
 | Patch doesn't apply                        | The gold patch (PR diff) doesn't apply cleanly to `base_commit`                      | Verify `base_commit` in `metadata.json` matches the actual merge base of your PR                                       |
 | Verification comment shows failures        | One or more criteria in the result JSON have non-pass status                         | Check the "Failed criteria" and "Failed tests" sections in the bot comment. Click the workflow run link for full logs. |
+| Tests fail with Testcontainers errors      | Tests need Docker-in-Docker access to spin up containers                             | See [Testcontainers](#testcontainers) section below                                                                    |
 | Status reset to "In progress" unexpectedly | New commits were pushed to the PR                                                    | This is expected behavior — the bot invalidates previous verification when the code changes                            |
+
+### Testcontainers
+
+If your project's tests use [Testcontainers](https://www.testcontainers.org/) (or similar libraries that spin up Docker containers during tests), the evaluation container needs Docker-in-Docker access.
+
+**1. Add Docker run parameters to `metadata.json`:**
+
+```json
+{
+  "environment": {
+    "docker": {
+      "run_params": "--privileged --network bridge -v /var/run/docker.sock:/var/run/docker.sock"
+    }
+  }
+}
+```
+
+**2. Add environment variables to the Dockerfile:**
+
+```dockerfile
+ENV TESTCONTAINERS_RYUK_DISABLED=true
+ENV TESTCONTAINERS_CHECKS_DISABLE=true
+ENV DOCKER_HOST=unix:///var/run/docker.sock
+```
+
+- `TESTCONTAINERS_RYUK_DISABLED` — disables the Ryuk container that cleans up resources (not needed in ephemeral CI containers)
+- `TESTCONTAINERS_CHECKS_DISABLE` — skips Testcontainers' startup checks that may fail in Docker-in-Docker
+- `DOCKER_HOST` — tells Testcontainers where the Docker socket is
+
+The `--privileged` flag and Docker socket mount give the evaluation container access to the host's Docker daemon. The `--network bridge` ensures containers created by Testcontainers can communicate with the test process.

@@ -261,6 +261,35 @@ Otherwise:
 VERIFICATION FAILED
 ```
 
+## Docker Run Parameters
+
+If `metadata.json` contains `environment.docker.run_params`, append those flags to every `docker run` command (Steps 4, 6). For example, if `run_params` is `"--privileged --network bridge -v /var/run/docker.sock:/var/run/docker.sock"`, the docker run in Step 4 becomes:
+
+```bash
+docker run --rm --platform linux/amd64 \
+  --privileged --network bridge -v /var/run/docker.sock:/var/run/docker.sock \
+  -v "$WORK_DIR/eval/scripts:/ee-bench/scripts:ro" \
+  "ee-bench-verify:$REPO_NAME" \
+  bash -c '...'
+```
+
+Also set any required environment variables inside the container. For example, if tests use **Testcontainers**, add these env vars to the `docker run` commands:
+
+```bash
+-e TESTCONTAINERS_RYUK_DISABLED=true \
+-e TESTCONTAINERS_CHECKS_DISABLE=true \
+-e DOCKER_HOST=unix:///var/run/docker.sock
+```
+
+## Troubleshooting
+
+| Problem | Cause | Fix |
+|---------|-------|-----|
+| Tests fail with Testcontainers errors | Tests need Docker-in-Docker access | Add `"--privileged --network bridge -v /var/run/docker.sock:/var/run/docker.sock"` to `metadata.json` at `environment.docker.run_params`, and set `TESTCONTAINERS_RYUK_DISABLED=true`, `TESTCONTAINERS_CHECKS_DISABLE=true`, `DOCKER_HOST=unix:///var/run/docker.sock` as env vars in the Dockerfile |
+| Unrendered `{{ }}` in Dockerfile | Template variable not in context.json | Check metadata.json has all fields referenced in templates |
+| Build fails with dependency errors | Missing system packages | Add extra `RUN apt-get install` commands to the Dockerfile |
+| Parser returns empty results | Test results not in expected location | Verify the results directory matches the build system (surefire-reports for Maven, build/test-results for Gradle, etc.) |
+
 ## Error Handling
 
 At each step, if a failure occurs:

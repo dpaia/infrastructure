@@ -111,7 +111,7 @@ All top-level scalar fields from `metadata.json` are merged into the template co
 
 ### metadata.json
 
-Generate with detected values. Use placeholders for test names:
+Generate with detected values. Leave `expected` arrays empty — they are filled in later per datapoint, not at generation time:
 
 ```json
 {
@@ -120,12 +120,8 @@ Generate with detected values. Use placeholders for test names:
   "language": "<detected>",
   "<language-specific fields>": "<detected values>",
   "expected": {
-    "fail_to_pass": [
-      "TODO: Add fully qualified test names that should fail before fix and pass after"
-    ],
-    "pass_to_pass": [
-      "TODO: Add fully qualified test names that should always pass"
-    ]
+    "fail_to_pass": [],
+    "pass_to_pass": []
   },
   "environment": {
     "project_root": "<detected default>"
@@ -133,7 +129,7 @@ Generate with detected values. Use placeholders for test names:
 }
 ```
 
-**Note:** `expected.fail_to_pass` and `expected.pass_to_pass` are consumed by `run.sh` at **template render time**. They are baked into the script as JSON literals via `{{ instance.expected.fail_to_pass | tojson }}` and `{{ instance.expected.pass_to_pass | tojson }}`, so the running container does not need access to `metadata.json`.
+**Note:** `expected.fail_to_pass` and `expected.pass_to_pass` are consumed by `run.sh` at **template render time**. They are baked into the script as JSON literals via `{{ instance.expected.fail_to_pass | tojson }}` and `{{ instance.expected.pass_to_pass | tojson }}`, so the running container does not need access to `metadata.json`. These lists are populated per datapoint during the export pipeline — leave them empty when generating the config.
 
 Language-specific fields to include:
 
@@ -147,16 +143,17 @@ Language-specific fields to include:
 ### environment/Dockerfile
 
 Generate a Dockerfile following these specifications. **All Dockerfiles must:**
-- Use `{{ instance.owner }}`, `{{ instance.repo_name }}`, `{{ instance.base_commit }}`, `{{ instance.project_root }}` Jinja2 variables
+- **Hardcode** the repository owner, repository name, base image version (with language version), and project root with actual detected values — do NOT use Jinja2 variables for these
+- Use `{{ instance.base_commit }}` as the only Jinja2 template variable (it changes per datapoint)
 - Install `git` and any tools needed by `run.sh` and its helper scripts (e.g., `python3` if using the parser/emitter helpers)
 - Clone the repo and checkout base commit
 - Pre-fetch/cache dependencies
 - Include labels: `LABEL ee-bench.type="codegen"` and `LABEL ee-bench.version="1.0"`
 - End with: `RUN rm -rf <project_root>/.ee-bench/ 2>/dev/null || true`
 
-**C# Dockerfile:**
+**C# Dockerfile** (replace `<detected_dotnet_sdk>`, `<detected_owner>`, `<detected_repo>` with actual values):
 ```dockerfile
-FROM mcr.microsoft.com/dotnet/sdk:{{ instance.dotnet_sdk }}-noble
+FROM mcr.microsoft.com/dotnet/sdk:<detected_dotnet_sdk>-noble
 
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -168,7 +165,7 @@ RUN apt-get update && \
     apt-get install -y build-essential git curl wget sudo python3 python3-pip && \
     rm -rf /var/lib/apt/lists/*
 
-RUN git clone https://github.com/{{ instance.owner }}/{{ instance.repo_name }}.git /app
+RUN git clone https://github.com/<detected_owner>/<detected_repo>.git /app
 WORKDIR /app
 RUN git checkout {{ instance.base_commit }}
 
@@ -181,9 +178,9 @@ RUN rm -rf /app/.ee-bench/ 2>/dev/null || true
 
 If the project needs additional dotnet SDK versions (e.g., tests target multiple frameworks), add `dotnet-install.sh` lines.
 
-**Python Dockerfile:**
+**Python Dockerfile** (replace `<detected_python_version>`, `<detected_owner>`, `<detected_repo>` with actual values):
 ```dockerfile
-FROM python:{{ instance.python_version }}-slim
+FROM python:<detected_python_version>-slim
 
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -191,7 +188,7 @@ RUN apt-get update && \
     apt-get install -y build-essential git curl && \
     rm -rf /var/lib/apt/lists/*
 
-RUN git clone https://github.com/{{ instance.owner }}/{{ instance.repo_name }}.git /app
+RUN git clone https://github.com/<detected_owner>/<detected_repo>.git /app
 WORKDIR /app
 RUN git checkout {{ instance.base_commit }}
 
@@ -207,9 +204,9 @@ LABEL ee-bench.version="1.0"
 RUN rm -rf /app/.ee-bench/ 2>/dev/null || true
 ```
 
-**Gradle Dockerfile:**
+**Gradle Dockerfile** (replace `<detected_jvm_version>`, `<detected_owner>`, `<detected_repo>` with actual values):
 ```dockerfile
-FROM eclipse-temurin:{{ instance.jvm_version }}
+FROM eclipse-temurin:<detected_jvm_version>
 
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -217,8 +214,8 @@ RUN apt-get update && \
     apt-get install -y build-essential git curl wget python3 python3-pip && \
     rm -rf /var/lib/apt/lists/*
 
-RUN git clone https://github.com/{{ instance.owner }}/{{ instance.repo_name }}.git {{ instance.project_root }}
-WORKDIR {{ instance.project_root }}
+RUN git clone https://github.com/<detected_owner>/<detected_repo>.git /repo
+WORKDIR /repo
 RUN git checkout {{ instance.base_commit }}
 
 RUN chmod +x ./gradlew && \
@@ -226,12 +223,12 @@ RUN chmod +x ./gradlew && \
 
 LABEL ee-bench.type="codegen"
 LABEL ee-bench.version="1.0"
-RUN rm -rf {{ instance.project_root }}/.ee-bench/ 2>/dev/null || true
+RUN rm -rf /repo/.ee-bench/ 2>/dev/null || true
 ```
 
-**Maven Dockerfile:**
+**Maven Dockerfile** (replace `<detected_jvm_version>`, `<detected_owner>`, `<detected_repo>` with actual values):
 ```dockerfile
-FROM eclipse-temurin:{{ instance.jvm_version }}
+FROM eclipse-temurin:<detected_jvm_version>
 
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -239,8 +236,8 @@ RUN apt-get update && \
     apt-get install -y build-essential git curl wget python3 python3-pip && \
     rm -rf /var/lib/apt/lists/*
 
-RUN git clone https://github.com/{{ instance.owner }}/{{ instance.repo_name }}.git {{ instance.project_root }}
-WORKDIR {{ instance.project_root }}
+RUN git clone https://github.com/<detected_owner>/<detected_repo>.git /repo
+WORKDIR /repo
 RUN git checkout {{ instance.base_commit }}
 
 RUN chmod +x ./mvnw && \
@@ -248,7 +245,7 @@ RUN chmod +x ./mvnw && \
 
 LABEL ee-bench.type="codegen"
 LABEL ee-bench.version="1.0"
-RUN rm -rf {{ instance.project_root }}/.ee-bench/ 2>/dev/null || true
+RUN rm -rf /repo/.ee-bench/ 2>/dev/null || true
 ```
 
 ### eval/run.sh
@@ -637,8 +634,9 @@ Key features:
 After generating all files, report to the user:
 
 1. **What was generated**: List all created files with their paths
-2. **What to fill in manually**:
-   - `expected.fail_to_pass` in `metadata.json` — fully qualified names of tests that should fail before the fix and pass after
-   - `expected.pass_to_pass` in `metadata.json` — fully qualified names of tests that should always pass
+2. **What to fill in later** (per datapoint, not at generation time):
+   - `expected.fail_to_pass` in `metadata.json` — fully qualified names of tests that should fail before the fix and pass after (left empty by default)
+   - `expected.pass_to_pass` in `metadata.json` — fully qualified names of tests that should always pass (left empty by default)
 3. **How to verify locally**: Point user to the Local Testing section of the contribution guide — render templates, build Docker image, run tests, check JSON output
 4. **Dockerfile customization**: If the project has unusual dependencies, the user may need to add extra `RUN` commands to the Dockerfile
+5. **Verify**: Run `/verify-ee-bench codegen` to validate that the Docker image builds and tests pass. This renders templates, builds the image, discovers passing tests, and runs the full evaluation pipeline.

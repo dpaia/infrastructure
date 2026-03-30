@@ -160,7 +160,7 @@ Determine the test command and results location from `metadata.json` `language` 
 | Language | Detect build tool | Compile | Test | Results dir |
 |----------|-------------------|---------|------|-------------|
 | `java` | `mvnw` in Dockerfile → Maven | `./mvnw compile test-compile -q` | `./mvnw test -q` | `/repo/target/surefire-reports/` |
-| `java` | `gradlew` in Dockerfile → Gradle | `./gradlew classes testClasses --no-daemon -q` | `./gradlew test --no-daemon` | `/repo/build/test-results/` |
+| `java` | `gradlew` in Dockerfile → Gradle | `./gradlew classes testClasses --no-daemon -q` | `./gradlew test --no-daemon --continue` | `/repo/build/test-results/` |
 | `python` | — | `pip install -e .` | `python -m pytest --junitxml=/tmp/test-results/results.xml -v` | `/tmp/test-results/` |
 | `csharp` | — | `dotnet restore && dotnet build` | `dotnet test --no-build --logger "trx;LogFileName=results.trx"` | `TestResults/` |
 

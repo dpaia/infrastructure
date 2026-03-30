@@ -401,7 +401,7 @@ The `criteria` array contains 6 criterion objects, evaluated in order. `run.sh` 
 | `pass_to_pass` | Expected-passing tests passed in baseline, still pass after submission | `pass`, `fail`, `skipped` |
 
 **When criteria are skipped:**
-- `baseline_tests`: no test_patch file or compilation failed
+- `baseline_tests`: compilation failed
 - `patch_applied`: no submission patch provided
 - `tests`: compilation or patch application failed
 - `fail_to_pass`: expected list empty or upstream criteria failed

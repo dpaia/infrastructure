@@ -43,12 +43,25 @@ def _prefix(name):
     return re.sub(r"\(.*\)$", "", name)
 
 
+def _normalize_name(name):
+    """Normalize test name: strip module prefix (before ':'), replace '#' with '.'.
+
+    Supports formats like 'module:com.example.FooTest#testMethod' →
+    'com.example.FooTest.testMethod'.
+    """
+    if ":" in name:
+        name = name.split(":", 1)[1]
+    return name.replace("#", ".")
+
+
 def _test_in(name, name_set):
     """Match by exact name, prefix (parameterized tests), or class-level prefix.
 
     Supports class-level expected names like 'com.example.FooTest' matching
     method-level actual names like 'com.example.FooTest.shouldDoSomething'.
+    Also supports 'module:class#method' format via normalization.
     """
+    name = _normalize_name(name)
     if name in name_set:
         return True
     pname = _prefix(name)
@@ -87,8 +100,9 @@ def _evaluate_criterion(expected, eval_passed, baseline_passed, baseline_failed,
     if has_test_patch:
         for t in expected:
             # Skip tests not present in baseline (likely added by test_patch)
-            if t not in baseline_passed and t not in baseline_failed:
-                pfx = _prefix(t)
+            nt = _normalize_name(t)
+            if nt not in baseline_passed and nt not in baseline_failed:
+                pfx = _prefix(nt)
                 baseline_names = {_prefix(n) for n in baseline_passed | baseline_failed}
                 if pfx not in baseline_names:
                     continue

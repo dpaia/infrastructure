@@ -153,6 +153,12 @@ Generate with detected values. Leave `expected` arrays empty — they are filled
 
 **Note:** `expected.fail_to_pass` and `expected.pass_to_pass` are consumed by `run.sh` at **template render time**. They are baked into the script as JSON literals via `{{ instance.expected.fail_to_pass | tojson }}` and `{{ instance.expected.pass_to_pass | tojson }}`, so the running container does not need access to `metadata.json`. These lists are populated per datapoint during the export pipeline — leave them empty when generating the config.
 
+**Test name formats:** Expected test names support three formats:
+- **Dot-separated** (default): `com.example.FooTest.testMethod`
+- **Hash delimiter**: `com.example.FooTest#testMethod` — `#` separates class from method
+- **Module prefix**: `my-module:com.example.FooTest#testMethod` — module before `:` is stripped for matching (JUnit XML does not include module names)
+- **Class-level**: `com.example.FooTest` or `my-module:com.example.FooTest` — matches all methods in the class
+
 Language-specific fields to include:
 
 | Language | Fields |
@@ -320,7 +326,7 @@ All run.sh scripts follow the same 6-criterion structure. Only the compile and t
 **When criteria are skipped:**
 
 - `patch_applied` — no submission patch provided
-- `baseline_tests` — no test_patch file or compilation failed
+- `baseline_tests` — compilation failed
 - `tests` — compilation or patch application failed
 - `fail_to_pass` — expected list empty or upstream criteria failed
 - `pass_to_pass` — expected list empty or upstream criteria failed
@@ -355,7 +361,7 @@ _run_tests() {
   <TEST_COMMAND> > "/tmp/${label}_stdout.log" 2> "/tmp/${label}_stderr.log"
   set -e
 
-  # Copy test reports to ARTIFACTS_DIR for parser
+  # Copy test reports to ARTIFACTS_DIR for parser (use find for multi-module support)
   <COPY_REPORTS_COMMAND>
 
   python3 "$EVAL_DIR/scripts/<PARSER_SCRIPT>" "$ARTIFACTS_DIR" > "/tmp/${label}_parser.json" 2>/dev/null || echo '{}' > "/tmp/${label}_parser.json"
@@ -471,8 +477,8 @@ python3 "$EVAL_DIR/scripts/ee_bench_eval.py"
 |----------|-------------------------|---------------------|------------------|--------------------------|-------------------|
 | C# | `/app` | `bash "$EVAL_DIR/scripts/install.sh"` | `dotnet test --no-build {{ instance.test_framework_flag }} "{{ instance.test_project }}" --logger "{{ instance.test_logger }}"` | *(empty — dotnet writes to ARTIFACTS_DIR via logger)* | `ee_bench_parser_trx.py` |
 | Python | `/app` | `pip install -e .` | `python -m pytest --junitxml="$ARTIFACTS_DIR/results.xml" -v` | *(empty — pytest writes to ARTIFACTS_DIR via --junitxml)* | `ee_bench_parser_junit.py` |
-| Gradle | `/repo` | `./gradlew classes testClasses --no-daemon -q` | `./gradlew test --no-daemon` | `cp "$PROJECT_ROOT"/build/test-results/test/*.xml "$ARTIFACTS_DIR/" 2>/dev/null \|\| true` | `ee_bench_parser_junit.py` |
-| Maven | `/repo` | `./mvnw compile test-compile -q` | `./mvnw test -q` | `cp "$PROJECT_ROOT"/target/surefire-reports/*.xml "$ARTIFACTS_DIR/" 2>/dev/null \|\| true` | `ee_bench_parser_junit.py` |
+| Gradle | `/repo` | `./gradlew classes testClasses --no-daemon -q` | `./gradlew test --no-daemon --continue` | `find "$PROJECT_ROOT" -path "*/build/test-results/test/*.xml" -exec cp {} "$ARTIFACTS_DIR/" \; 2>/dev/null \|\| true` | `ee_bench_parser_junit.py` |
+| Maven | `/repo` | `./mvnw compile test-compile -q` | `./mvnw test -q` | `find "$PROJECT_ROOT" -path "*/target/surefire-reports/*.xml" -exec cp {} "$ARTIFACTS_DIR/" \; 2>/dev/null \|\| true` | `ee_bench_parser_junit.py` |
 
 ### eval/scripts/ — Shared utility scripts
 

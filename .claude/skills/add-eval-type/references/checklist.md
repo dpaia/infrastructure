@@ -29,5 +29,5 @@ Exact paths for all files that must be created or modified when adding a new eva
 | System | Change |
 |--------|--------|
 | GitHub Projects | Create project board in `dpaia` org with status + verification fields |
-| `issue-validator-bot/config/eval-projects.yml` | Add eval_type entry with project_number, dataset_repo, export_script |
+| `issue-validator-bot/issue-validator-bot/config/eval-projects.yml` | Add eval_type entry with project_number, dataset_repo, export_script |
 | Bot deployment | Redeploy after config change |

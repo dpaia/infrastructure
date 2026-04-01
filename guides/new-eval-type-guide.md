@@ -37,7 +37,7 @@ Each `dpaia/*` source repository contains evaluation configuration under `.ee-be
 |-----------|------|---------|
 | Export script | `.github/scripts/export/<eval_type>/export_unified.py` | Converts source PRs into portable datapoint records |
 | Workflow config | `.github/config/eval-projects.json` | Single source of truth mapping eval_type to project_number |
-| Bot config | `issue-validator-bot/config/eval-projects.yml` | Maps eval_type to full pipeline metadata (project, dataset repo, export script) |
+| Bot config | `issue-validator-bot/issue-validator-bot/config/eval-projects.yml` | Maps eval_type to full pipeline metadata (project, dataset repo, export script) |
 | GitHub project board | _(manual, in dpaia org)_ | Tracks datapoint lifecycle: Todo, In progress, Review, Verified, Rejected, Done |
 
 ### Tooling Layer (infrastructure repo)
@@ -144,7 +144,7 @@ Add a row to both `SKILL.md` files so the skills can dispatch to the new referen
 
 Add the new evaluation type to the bot's configuration file.
 
-**File:** `issue-validator-bot/config/eval-projects.yml`
+**File:** `issue-validator-bot/issue-validator-bot/config/eval-projects.yml`
 
 **What to add:**
 
@@ -342,7 +342,7 @@ DURATION=$((END_TIME - START_TIME))
 FAILED_COUNT=$(jq '[.criteria[] | select(.status == "fail")] | length' "$RESULTS_FILE")
 tmp=$(mktemp)
 if [ "$FAILED_COUNT" -gt 0 ]; then
-  jq --argjson d "$DURATION" '.duration_seconds = $d' "$RESULTS_FILE" > "$tmp" && mv "$tmp" "$RESULTS_FILE"
+  jq --argjson d "$DURATION" '.status = "failure" | .duration_seconds = $d' "$RESULTS_FILE" > "$tmp" && mv "$tmp" "$RESULTS_FILE"
 else
   jq --argjson d "$DURATION" '.duration_seconds = $d' "$RESULTS_FILE" > "$tmp" && mv "$tmp" "$RESULTS_FILE"
 fi

@@ -10,33 +10,53 @@ on:
         type: boolean
         default: false
       eval_projects:
-        description: 'JSON map of eval_type -> project_number (e.g. {"codegen":"13"})'
+        description: 'JSON override: eval_type -> project_number (leave empty to use .github/config/eval-projects.json)'
         required: false
         type: string
-        default: '{"codegen":"13"}'
+        default: ''
       dataset_project_number:
-        description: 'Dataset Metadata project number'
+        description: 'Dataset Metadata project number override (leave empty to use config)'
         required: false
         type: string
-        default: '3'
+        default: ''
       organization:
-        description: 'GitHub organization'
+        description: 'GitHub organization override (leave empty to use config)'
         required: false
         type: string
-        default: 'dpaia'
+        default: ''
   schedule:
     - cron: '0 */6 * * *'  # Every 6 hours
 
 jobs:
   sweep:
     runs-on: ubuntu-latest
-    env:
-      EVAL_PROJECTS: ${{ inputs.eval_projects || '{"codegen":"13"}' }}
-      DATASET_PROJECT: ${{ inputs.dataset_project_number || '3' }}
-      ORG: ${{ inputs.organization || 'dpaia' }}
     steps:
       - name: Checkout infrastructure
         uses: actions/checkout@v5
+
+      - name: Load eval-projects config
+        id: config
+        shell: bash
+        run: |
+          CONFIG=$(cat .github/config/eval-projects.json)
+          echo "eval_projects=$(echo "$CONFIG" | jq -c '.eval_projects')" >> $GITHUB_OUTPUT
+          echo "dataset_project=$(echo "$CONFIG" | jq -r '.dataset_metadata_project')" >> $GITHUB_OUTPUT
+          echo "organization=$(echo "$CONFIG" | jq -r '.organization')" >> $GITHUB_OUTPUT
+
+      - name: Resolve configuration
+        id: resolve
+        shell: bash
+        run: |
+          # Input overrides config file; empty input falls back to config
+          EVAL_PROJECTS="${{ inputs.eval_projects }}"
+          EVAL_PROJECTS="${EVAL_PROJECTS:-${{ steps.config.outputs.eval_projects }}}"
+          DATASET_PROJECT="${{ inputs.dataset_project_number }}"
+          DATASET_PROJECT="${DATASET_PROJECT:-${{ steps.config.outputs.dataset_project }}}"
+          ORG="${{ inputs.organization }}"
+          ORG="${ORG:-${{ steps.config.outputs.organization }}}"
+          echo "EVAL_PROJECTS=$EVAL_PROJECTS" >> $GITHUB_ENV
+          echo "DATASET_PROJECT=$DATASET_PROJECT" >> $GITHUB_ENV
+          echo "ORG=$ORG" >> $GITHUB_ENV
 
       - name: Query eval project items
         id: query-eval

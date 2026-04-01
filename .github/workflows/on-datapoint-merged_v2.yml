@@ -24,15 +24,15 @@ on:
         type: string
         default: 'manual'
       eval_project_map:
-        description: 'JSON map of eval_type to project number'
+        description: 'JSON override: eval_type -> project number (leave empty to use .github/config/eval-projects.json)'
         required: false
         type: string
-        default: '{"codegen":"13"}'
+        default: ''
       dataset_project_number:
-        description: 'Dataset Metadata project number'
+        description: 'Dataset Metadata project number override (leave empty to use config)'
         required: false
         type: string
-        default: '3'
+        default: ''
 
 jobs:
   post-merge:
@@ -40,6 +40,15 @@ jobs:
     steps:
       - name: Checkout infrastructure
         uses: actions/checkout@v5
+
+      - name: Load eval-projects config
+        id: config
+        shell: bash
+        run: |
+          CONFIG=$(cat .github/config/eval-projects.json)
+          echo "eval_project_map=$(echo "$CONFIG" | jq -c '.eval_projects')" >> $GITHUB_OUTPUT
+          echo "dataset_project=$(echo "$CONFIG" | jq -r '.dataset_metadata_project')" >> $GITHUB_OUTPUT
+          echo "organization=$(echo "$CONFIG" | jq -r '.organization')" >> $GITHUB_OUTPUT
 
       - name: Read merged PR metadata
         id: metadata
@@ -84,7 +93,7 @@ jobs:
         id: eval-project
         shell: bash
         run: |
-          EVAL_MAP='${{ inputs.eval_project_map }}'
+          EVAL_MAP='${{ inputs.eval_project_map || steps.config.outputs.eval_project_map }}'
           EVAL_TYPE='${{ steps.metadata.outputs.eval_type }}'
           PROJECT_NUM=$(echo "$EVAL_MAP" | jq -r --arg et "$EVAL_TYPE" '.[$et] // empty')
           echo "project_number=$PROJECT_NUM" >> $GITHUB_OUTPUT
@@ -112,7 +121,7 @@ jobs:
         uses: ./.github/actions/get-project-id
         with:
           organization: ${{ inputs.organization }}
-          project_number: ${{ inputs.dataset_project_number }}
+          project_number: ${{ inputs.dataset_project_number || steps.config.outputs.dataset_project }}
           github_token: ${{ secrets.PROJECT_TOKEN }}
 
       - name: Find source PR in Dataset Metadata project
@@ -129,7 +138,7 @@ jobs:
         uses: ./.github/actions/update-project-field
         with:
           organization: ${{ inputs.organization }}
-          project_number: ${{ inputs.dataset_project_number }}
+          project_number: ${{ inputs.dataset_project_number || steps.config.outputs.dataset_project }}
           item_id: ${{ steps.find-item.outputs.item_id }}
           field_name: 'Data'
           value: ${{ steps.metadata.outputs.data_permalink }}
@@ -141,7 +150,7 @@ jobs:
         uses: ./.github/actions/set-project-status
         with:
           organization: ${{ inputs.organization }}
-          project_number: ${{ inputs.dataset_project_number }}
+          project_number: ${{ inputs.dataset_project_number || steps.config.outputs.dataset_project }}
           item_id: ${{ steps.find-item.outputs.item_id }}
           value: 'Done'
           github_token: ${{ secrets.PROJECT_TOKEN }}

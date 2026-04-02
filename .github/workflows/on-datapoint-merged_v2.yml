@@ -23,11 +23,6 @@ on:
         required: false
         type: string
         default: 'manual'
-      eval_project_map:
-        description: 'JSON override: eval_type -> project number (leave empty to use .github/config/eval-projects.json)'
-        required: false
-        type: string
-        default: ''
       dataset_project_number:
         description: 'Dataset Metadata project number override (leave empty to use config)'
         required: false
@@ -93,7 +88,7 @@ jobs:
         id: eval-project
         shell: bash
         run: |
-          EVAL_MAP='${{ inputs.eval_project_map || steps.config.outputs.eval_project_map }}'
+          EVAL_MAP='${{ steps.config.outputs.eval_project_map }}'
           EVAL_TYPE='${{ steps.metadata.outputs.eval_type }}'
           PROJECT_NUM=$(echo "$EVAL_MAP" | jq -r --arg et "$EVAL_TYPE" '.[$et] // empty')
           echo "project_number=$PROJECT_NUM" >> $GITHUB_OUTPUT

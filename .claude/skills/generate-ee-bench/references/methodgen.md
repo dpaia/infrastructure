@@ -82,13 +82,15 @@ Files use **Jinja2 templates** rendered before use.
   "version": "1.0",
   "benchmark_type": "methodgen",
   "language": "<detected: java|python>",
+  "jvm_version": "<detected: 21>",
   "target": {
     "file": "<relative path to target file>",
     "method_signature": "<canonical method signature>",
     "stub": "<optional display text>",
     "validations": [
       {"type": "contains", "scope": "method_text", "pattern": "<regex>"},
-      {"type": "not_contains", "scope": "body_text", "pattern": "<regex>"}
+      {"type": "not_contains", "scope": "body_text", "pattern": "<regex>"},
+      {"type": "test", "test_class": "com.example.SomeServiceTest"}
     ]
   },
   "environment": {
@@ -100,93 +102,65 @@ Files use **Jinja2 templates** rendered before use.
 **Validation rule types:**
 - `contains` — scoped text must match the regex
 - `not_contains` — scoped text must NOT match the regex
+- `test` — compile and run a test class to verify correctness (optional)
 
-**Validation scopes:**
+**Validation scopes** (for `contains`/`not_contains` only):
 - `method_text` — full extracted method declaration + body
 - `body_text` — statements inside the method body only
 - `file_text` — full patched target file contents
 
+**Test validation:**
+- `test_class` — fully-qualified test class to run (e.g. `com.example.SomeServiceTest`)
+- The test class source comes from `test_patch.diff` (applied before compilation)
+- When a `test` validation is present, the Dockerfile must include build tools (JVM + Maven)
+- `run.sh` handles compilation and test execution; `ee_bench_parser_junit.py` must be in `eval/scripts/`
+
 ### environment/Dockerfile
 
-Methodgen uses a lightweight Python image — no build tools needed:
+Methodgen uses a JVM base image with Python + tree-sitter installed on top. This supports both AST-only validation and optional test execution:
 
 ```dockerfile
-FROM python:3.12-slim
+FROM eclipse-temurin:<detected_jvm_version>
 
 ENV DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update && \
-    apt-get install -y build-essential git curl && \
+    apt-get install -y build-essential git curl wget python3 python3-pip && \
     rm -rf /var/lib/apt/lists/*
 
-RUN pip install --no-cache-dir tree-sitter tree-sitter-<language>
+RUN pip install --no-cache-dir --break-system-packages tree-sitter tree-sitter-<language>
 
 RUN git clone https://github.com/<detected_owner>/<detected_repo>.git /repo
 WORKDIR /repo
 RUN git checkout {{ instance.base_commit }}
+
+RUN chmod +x ./mvnw && \
+    ./mvnw dependency:go-offline -q
 
 LABEL ee-bench.type="methodgen"
 LABEL ee-bench.version="1.0"
 RUN rm -rf /repo/.ee-bench/ 2>/dev/null || true
 ```
 
-**Language grammar packages:**
-- Java: `tree-sitter-java`
-- Python: `tree-sitter-python`
-
-**Hardcode** owner, repo name, and language grammar in the Dockerfile. Only `{{ instance.base_commit }}` is a Jinja2 variable.
+**Hardcode** owner, repo name, JVM version, and language grammar. Only `{{ instance.base_commit }}` is a Jinja2 variable.
 
 ### eval/run.sh
 
-Thin shell wrapper — all logic is in the Python evaluator. Target config from `metadata.json` is baked into a single `--target` JSON arg via Jinja2 at export time:
+Shell wrapper that applies patches, optionally runs tests, and calls the Python evaluator. Uses Jinja2 conditionals to include test execution when a `test` validation is configured:
 
-```bash
-#!/usr/bin/env bash
-set -euo pipefail
+- `run.sh` applies the submission patch and test_patch (shell handles all `git apply`)
+- When `test` validation present: compiles, runs tests via Maven, parses JUnit XML with `ee_bench_parser_junit.py`
+- Calls `ee_bench_methodgen.py` with `--patch-status` and `--test-result-json`
 
-PROJECT_ROOT="${EE_BENCH_PROJECT_ROOT:-/repo}"
-EVAL_DIR="/ee-bench/eval"
-SUBMISSION_DIR="/ee-bench/submission"
-TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-OVERALL_START=$SECONDS
+See the template at `guides/templates/maven/.ee-bench/methodgen/eval/run.sh` for the full implementation.
 
-cd "$PROJECT_ROOT"
+### eval/scripts/ — Shared scripts
 
-CUSTOM_VALIDATOR=""
-if [ -f "$EVAL_DIR/scripts/validate_method.py" ]; then
-  CUSTOM_VALIDATOR="$EVAL_DIR/scripts/validate_method.py"
-fi
+Copy from `guides/templates/shared/scripts/` into `.ee-bench/methodgen/eval/scripts/`:
+- **`ee_bench_methodgen.py`** — required, evaluation logic
+- **`ee_bench_parser_junit.py`** — required when `test` validation is used
 
-python3 "$EVAL_DIR/scripts/ee_bench_methodgen.py" \
-  --project-root "$PROJECT_ROOT" \
-  --patch "$SUBMISSION_DIR/patch.diff" \
-  --target '{"language": {{ instance.language | tojson }}, "target": {"file": {{ instance.target.file | tojson }}, "method_signature": {{ instance.target.method_signature | tojson }}, "validations": {{ instance.target.validations | tojson }}}}' \
-  --custom-validator "$CUSTOM_VALIDATOR" \
-  --timestamp "$TIMESTAMP" \
-  --duration-seconds "$((SECONDS - OVERALL_START))"
-```
-
-### eval/scripts/ — Shared evaluator
-
-Copy `ee_bench_methodgen.py` from `guides/templates/shared/scripts/` into `.ee-bench/methodgen/eval/scripts/`. This is the source of truth for evaluation logic. Do NOT generate evaluator code from scratch.
-
-### eval/scripts/validate_method.py (optional)
-
-If the user wants custom validation beyond regex patterns, create a script that:
-
-**Input arguments:**
-- `--method-text <path>` — path to temp file with extracted full method text
-- `--body-text <path>` — path to temp file with extracted method body text
-- `--file <path>` — path to the full patched target file
-- `--config <path>` — path to rendered runtime config
-
-**Output:** JSON array to stdout:
-```json
-[
-  {"name": "check_name", "pass": true},
-  {"name": "other_check", "pass": false, "detail": "reason"}
-]
-```
+Do NOT generate these scripts from scratch — always copy from shared templates.
 
 ## Step 5: Post-Generation
 

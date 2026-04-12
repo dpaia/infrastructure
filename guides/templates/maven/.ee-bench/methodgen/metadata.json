@@ -2,6 +2,7 @@
   "version": "1.0",
   "benchmark_type": "methodgen",
   "language": "java",
+  "jvm_version": "21",
   "target": {
     "file": "src/main/java/com/example/service/SomeService.java",
     "method_signature": "someMethod(String,int)",

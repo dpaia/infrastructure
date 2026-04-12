@@ -1,4 +1,4 @@
-FROM python:3.12-slim
+FROM eclipse-temurin:{{ instance.jvm_version }}
 
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -7,13 +7,20 @@ RUN apt-get update && \
     build-essential \
     git \
     curl \
+    wget \
+    python3 \
+    python3-pip \
     && rm -rf /var/lib/apt/lists/*
 
-RUN pip install --no-cache-dir tree-sitter tree-sitter-java
+RUN pip install --no-cache-dir --break-system-packages tree-sitter tree-sitter-java
 
 RUN git clone https://github.com/{{ instance.owner }}/{{ instance.repo_name }}.git {{ instance.project_root }}
 WORKDIR {{ instance.project_root }}
 RUN git checkout {{ instance.base_commit }}
+
+# Make mvnw executable and pre-fetch dependencies
+RUN chmod +x ./mvnw && \
+    ./mvnw dependency:go-offline -q
 
 LABEL ee-bench.type="methodgen"
 LABEL ee-bench.version="1.0"

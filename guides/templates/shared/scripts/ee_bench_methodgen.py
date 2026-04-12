@@ -1,18 +1,20 @@
 #!/usr/bin/env python3
-"""EE-bench methodgen evaluator — 4 criteria.
+"""EE-bench methodgen evaluator — pure evaluation logic, no subprocess calls.
 
-Applies a submission patch, validates syntax via tree-sitter,
-resolves the target method from the AST, runs scoped pattern checks,
-and optionally invokes a custom validation script.
+Validates a method implementation using tree-sitter AST parsing,
+scoped regex pattern checks, and optional test result evaluation.
+
+Patch application, compilation, and test execution are handled by run.sh.
+This script only reads results and evaluates criteria.
 
 Prints v2.0 JSON result to stdout.
 
 Usage:
     python3 ee_bench_methodgen.py \
         --project-root /repo \
-        --patch /ee-bench/submission/patch.diff \
+        --patch-status pass \
         --target '{"language":"java","target":{"file":"src/...","method_signature":"m(String)","validations":[]}}' \
-        [--custom-validator /ee-bench/eval/scripts/validate_method.py] \
+        [--test-result-json /tmp/test_parser.json] \
         [--timestamp 2026-04-09T12:00:00Z] \
         [--duration-seconds 3]
 """
@@ -20,9 +22,7 @@ import argparse
 import json
 import os
 import re
-import subprocess
 import sys
-import tempfile
 
 
 # ---------------------------------------------------------------------------
@@ -137,7 +137,6 @@ def _extract_body_text(node, source_bytes: bytes, language: str) -> str:
     if language == "java":
         body = node.child_by_field_name("body")
         if body is not None:
-            # Strip the outer braces
             inner = source_bytes[body.start_byte + 1 : body.end_byte - 1]
             return inner.decode().strip()
     elif language == "python":
@@ -150,26 +149,6 @@ def _extract_body_text(node, source_bytes: bytes, language: str) -> str:
 # ---------------------------------------------------------------------------
 # Criterion helpers
 # ---------------------------------------------------------------------------
-
-def apply_patch(project_root: str, patch_path: str) -> dict:
-    """Criterion 1: patch_applied."""
-    if not os.path.isfile(patch_path):
-        return {"criterion": "patch_applied", "status": "skipped", "detail": "patch.diff missing"}
-
-    result = subprocess.run(
-        ["git", "apply", patch_path],
-        cwd=project_root,
-        capture_output=True,
-        text=True,
-    )
-    if result.returncode == 0:
-        return {"criterion": "patch_applied", "status": "pass"}
-    return {
-        "criterion": "patch_applied",
-        "status": "fail",
-        "detail": (result.stdout + result.stderr).strip()[:2048],
-    }
-
 
 def validate_syntax_and_resolve(
     project_root: str, config: dict
@@ -207,7 +186,6 @@ def validate_syntax_and_resolve(
 
     tree = parser.parse(source_bytes)
 
-    # Check for parse errors
     if tree.root_node.has_error:
         return (
             {"criterion": "syntax_valid", "status": "fail",
@@ -248,11 +226,52 @@ def validate_syntax_and_resolve(
     )
 
 
+def _evaluate_test_check(rule: dict, test_result_json: str) -> dict:
+    """Evaluate a single 'test' validation rule using JUnit parser output."""
+    test_class = rule.get("test_class", "")
+    check = {"type": "test", "test_class": test_class}
+
+    if not test_result_json or not os.path.isfile(test_result_json):
+        check["pass"] = False
+        check["detail"] = "no test results available"
+        return check
+
+    try:
+        with open(test_result_json) as f:
+            test_data = json.load(f)
+    except (json.JSONDecodeError, OSError) as e:
+        check["pass"] = False
+        check["detail"] = f"failed to read test results: {e}"
+        return check
+
+    passed_tests = [t for t in test_data.get("passed_tests", []) if isinstance(t, dict)]
+    failed_tests = [t for t in test_data.get("failed_tests", []) if isinstance(t, dict)]
+    summary = test_data.get("summary", {})
+
+    total = summary.get("total", len(passed_tests) + len(failed_tests))
+    passed = summary.get("passed", len(passed_tests))
+    failed = summary.get("failed", len(failed_tests))
+
+    if failed > 0:
+        check["pass"] = False
+        failed_names = [t.get("name", "?") for t in failed_tests[:5]]
+        check["detail"] = f"{passed}/{total} passed, {failed} failed: {', '.join(failed_names)}"
+    elif total == 0:
+        check["pass"] = False
+        check["detail"] = "no tests found (compilation may have failed)"
+    else:
+        check["pass"] = True
+        check["detail"] = f"{passed}/{total} passed"
+
+    return check
+
+
 def evaluate_patterns(
     config: dict,
     method_text: str | None,
     body_text: str | None,
     file_text: str | None,
+    test_result_json: str = "",
 ) -> dict:
     """Criterion 3: pattern_checks."""
     validations = config.get("target", {}).get("validations", [])
@@ -275,101 +294,35 @@ def evaluate_patterns(
 
     for rule in validations:
         rule_type = rule["type"]
-        scope = rule["scope"]
-        pattern = rule["pattern"]
-        text = scope_map.get(scope, "")
 
-        match = re.search(pattern, text, re.DOTALL)
+        if rule_type == "test":
+            check = _evaluate_test_check(rule, test_result_json)
+        elif rule_type in ("contains", "not_contains"):
+            scope = rule["scope"]
+            pattern = rule["pattern"]
+            text = scope_map.get(scope, "")
+            match = re.search(pattern, text, re.DOTALL)
 
-        if rule_type == "contains":
-            passed = match is not None
-        elif rule_type == "not_contains":
-            passed = match is None
+            if rule_type == "contains":
+                passed = match is not None
+            else:
+                passed = match is None
+
+            check = {
+                "pattern": pattern,
+                "scope": scope,
+                "type": rule_type,
+                "pass": passed,
+            }
         else:
-            passed = False
+            check = {"type": rule_type, "pass": False, "detail": f"unknown rule type: {rule_type}"}
 
-        if not passed:
+        if not check.get("pass", False):
             all_pass = False
-
-        checks.append({
-            "pattern": pattern,
-            "scope": scope,
-            "type": rule_type,
-            "pass": passed,
-        })
+        checks.append(check)
 
     return {
         "criterion": "pattern_checks",
-        "status": "pass" if all_pass else "fail",
-        "checks": checks,
-    }
-
-
-def run_custom_validation(
-    project_root: str,
-    target_file: str,
-    validator_path: str,
-    method_text: str | None,
-    body_text: str | None,
-    file_text: str | None,
-) -> dict:
-    """Criterion 4: custom_validation."""
-    if not os.path.isfile(validator_path):
-        return {"criterion": "custom_validation", "status": "skipped",
-                "detail": "validate_method.py not provided"}
-
-    if method_text is None:
-        return {"criterion": "custom_validation", "status": "skipped",
-                "detail": "skipped — syntax invalid or patch not applied"}
-
-    target_file_abs = os.path.join(project_root, target_file)
-
-    # Write method_text and body_text to temp files
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as mt:
-        mt.write(method_text or "")
-        mt_path = mt.name
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as bt:
-        bt.write(body_text or "")
-        bt_path = bt.name
-
-    try:
-        result = subprocess.run(
-            [
-                "python3", validator_path,
-                "--method-text", mt_path,
-                "--body-text", bt_path,
-                "--file", target_file_abs,
-            ],
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
-    except subprocess.TimeoutExpired:
-        return {"criterion": "custom_validation", "status": "fail",
-                "detail": "custom validator timed out (30s)"}
-    finally:
-        os.unlink(mt_path)
-        os.unlink(bt_path)
-
-    if result.returncode != 0:
-        return {
-            "criterion": "custom_validation",
-            "status": "fail",
-            "detail": f"script exit code {result.returncode}: {(result.stdout + result.stderr).strip()[:2048]}",
-        }
-
-    try:
-        checks = json.loads(result.stdout)
-    except json.JSONDecodeError:
-        return {
-            "criterion": "custom_validation",
-            "status": "fail",
-            "detail": f"invalid JSON output: {result.stdout.strip()[:1024]}",
-        }
-
-    all_pass = all(c.get("pass", False) for c in checks)
-    return {
-        "criterion": "custom_validation",
         "status": "pass" if all_pass else "fail",
         "checks": checks,
     }
@@ -382,10 +335,12 @@ def run_custom_validation(
 def main():
     parser = argparse.ArgumentParser(description="EE-bench methodgen evaluator")
     parser.add_argument("--project-root", required=True)
-    parser.add_argument("--patch", required=True)
+    parser.add_argument("--patch-status", required=True,
+                        help="Patch application result from run.sh: pass, fail, or skipped")
     parser.add_argument("--target", required=True,
                         help="JSON string with language, target.file, target.method_signature, target.validations")
-    parser.add_argument("--custom-validator", default="")
+    parser.add_argument("--test-result-json", default="",
+                        help="Path to JUnit parser JSON output (from ee_bench_parser_junit.py)")
     parser.add_argument("--timestamp", default="")
     parser.add_argument("--duration-seconds", type=int, default=0)
     args = parser.parse_args()
@@ -395,9 +350,10 @@ def main():
     criteria = []
 
     # --- Criterion 1: patch_applied ---
-    patch_result = apply_patch(args.project_root, args.patch)
+    patch_status = args.patch_status
+    patch_result = {"criterion": "patch_applied", "status": patch_status}
     criteria.append(patch_result)
-    patch_ok = patch_result["status"] == "pass"
+    patch_ok = patch_status == "pass"
 
     # --- Criterion 2: syntax_valid ---
     if patch_ok:
@@ -413,25 +369,14 @@ def main():
 
     # --- Criterion 3: pattern_checks ---
     if patch_ok and syntax_ok:
-        pattern_result = evaluate_patterns(config, method_text, body_text, file_text)
+        pattern_result = evaluate_patterns(
+            config, method_text, body_text, file_text,
+            test_result_json=args.test_result_json,
+        )
     else:
         pattern_result = {"criterion": "pattern_checks", "status": "skipped",
                           "detail": "skipped — patch not applied or syntax invalid"}
     criteria.append(pattern_result)
-
-    # --- Criterion 4: custom_validation ---
-    if patch_ok and syntax_ok and args.custom_validator:
-        custom_result = run_custom_validation(
-            args.project_root, config["target"]["file"], args.custom_validator,
-            method_text, body_text, file_text,
-        )
-    elif not (patch_ok and syntax_ok):
-        custom_result = {"criterion": "custom_validation", "status": "skipped",
-                         "detail": "skipped — patch not applied or syntax invalid"}
-    else:
-        custom_result = {"criterion": "custom_validation", "status": "skipped",
-                         "detail": "validate_method.py not provided"}
-    criteria.append(custom_result)
 
     # --- Overall status ---
     has_failure = any(c["status"] == "fail" for c in criteria)

@@ -22,6 +22,7 @@ If no type is provided, show the available types and ask the user to pick one.
 | Type | Description | Reference |
 |------|-------------|-----------|
 | `codegen` | Code generation — Dockerfile, run.sh, metadata.json | [codegen.md](references/codegen.md) |
+| `methodgen` | Method generation — stub-to-implementation with AST validation | [methodgen.md](references/methodgen.md) |
 
 ## Workflow
 

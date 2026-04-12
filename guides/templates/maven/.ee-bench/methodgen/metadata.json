@@ -1,0 +1,14 @@
+{
+  "version": "1.0",
+  "benchmark_type": "methodgen",
+  "language": "java",
+  "target": {
+    "file": "src/main/java/com/example/service/SomeService.java",
+    "method_signature": "someMethod(String,int)",
+    "stub": "",
+    "validations": []
+  },
+  "environment": {
+    "project_root": "/repo"
+  }
+}

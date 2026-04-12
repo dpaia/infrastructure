@@ -22,6 +22,7 @@ If no type is provided, detect from the `.ee-bench/` directory structure (look f
 | Type | Description | Reference |
 |------|-------------|-----------|
 | `codegen` | Verify codegen config — build Docker image, discover tests, run evaluation | [codegen.md](references/codegen.md) |
+| `methodgen` | Verify methodgen config — build Docker image, check target method, run evaluator | [methodgen.md](references/methodgen.md) |
 
 ## Workflow
 

@@ -33,7 +33,8 @@ Ask the user for:
 
 - Read the codegen export script first: `.github/scripts/export/codegen/export_unified.py`
 - Create `.github/scripts/export/<eval_type>/export_unified.py`
-- Adapt the codegen structure: change `.ee-bench/codegen/` references to `.ee-bench/<eval_type>/`
+- Copy the codegen structure — the core providers are reusable across eval types
+- Change `benchmark_type="codegen"` to `benchmark_type="<eval_type>"` in the `EEBenchEnvironmentProvider` constructor — this makes it read `.ee-bench/<eval_type>/` automatically
 - Keep the same CLI interface and output format
 
 ### 3. Scaffold Starter Template
@@ -44,7 +45,7 @@ Ask the user for:
   - `metadata.json` — include `benchmark_type: "<eval_type>"` and type-specific fields
   - `environment/Dockerfile` — adapt from closest existing template
   - `eval/run.sh` — implement the criteria from step 1
-  - `eval/scripts/` — write a custom eval emitter if criteria differ from codegen's 6; copy parsers from `guides/templates/shared/scripts/` if the type uses JUnit XML or TRX output
+  - `eval/scripts/` — create a new evaluator in `guides/templates/shared/scripts/ee_bench_<eval_type>.py` if criteria differ from codegen's 6, then copy it into the template; copy parsers (e.g., `ee_bench_parser_junit.py`) from `guides/templates/shared/scripts/` if the type needs JUnit XML or TRX output
 
 ### 4. Create Skill Reference Docs
 

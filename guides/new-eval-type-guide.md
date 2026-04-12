@@ -62,7 +62,7 @@ Each `dpaia/*` source repository contains evaluation configuration under `.ee-be
 | Workflows | `sweep-pipeline-v2.yml` and `on-datapoint-merged_v2.yml` read `eval-projects.json` | Entry in `eval_projects` map |
 | Skill dispatch | `SKILL.md` routing tables map type to reference file | Reference file content |
 
-**Key insight:** The shared evaluation engine `ee_bench_eval.py` (in `guides/templates/shared/scripts/`) hardcodes codegen's 6 criteria (`compilation`, `baseline_tests`, `patch_applied`, `tests`, `fail_to_pass`, `pass_to_pass`). A new evaluation type with different criteria needs its own evaluation emitter — either a fork of `ee_bench_eval.py` or a standalone script that produces conformant v2.0 JSON.
+**Key insight:** Each eval type has its own evaluator script in `guides/templates/shared/scripts/`. Codegen uses `ee_bench_eval.py` (hardcoded 6 criteria). Methodgen uses `ee_bench_methodgen.py` (3 criteria with extensible validation rules). A new eval type should create its own evaluator in `shared/scripts/` (e.g., `ee_bench_<type>.py`) — don't fork `ee_bench_eval.py`, write a standalone script that takes CLI args and emits v2.0 JSON to stdout. The evaluator is then copied into each per-template `eval/scripts/` directory.
 
 ## Step-by-Step Checklist
 
@@ -89,7 +89,7 @@ Create `.github/scripts/export/<eval_type>/export_unified.py`.
 - Produce `datapoint.json` with the standard structure (see [Evaluation Guide: Datapoint Record Structure](evaluation-guide.md#datapoint-record-structure))
 - Preserve the directory layout: `environment/Dockerfile`, `eval/run.sh`, `eval/scripts/`, `verify/patch.diff`
 
-**Reference:** `.github/scripts/export/codegen/export_unified.py` — the codegen export script. Copy its structure and adjust field extraction for your metadata schema.
+**Reference:** `.github/scripts/export/codegen/export_unified.py` — the codegen export script. Copy its structure and adjust field extraction for your metadata schema. The core providers (`EEBenchEnvironmentProvider`, `EEBenchCodegenUnifiedGenerator`, `PatchSplitterProvider`) are reusable — pass `benchmark_type="<eval_type>"` to `EEBenchEnvironmentProvider` so it reads `.ee-bench/<eval_type>/` instead of `.ee-bench/codegen/`.
 
 **Verification:** Run the export script against a test repository and confirm the output `datapoint.json` contains all required fields.
 
@@ -105,7 +105,7 @@ Create templates under `guides/templates/<template>/.ee-bench/<eval_type>/` for 
 
 **Reference:** Existing templates in `guides/templates/csharp/`, `guides/templates/python/`, `guides/templates/gradle/`, `guides/templates/maven/`. Each contains a complete `.ee-bench/codegen/` directory.
 
-**Note:** If your criteria differ from codegen's 6 criteria, you must fork `guides/templates/shared/scripts/ee_bench_eval.py` and place the modified version in your template's `eval/scripts/` directory. The forked version must still emit v2.0 schema JSON.
+**Note:** If your criteria differ from codegen's 6 criteria, create a new evaluator script in `guides/templates/shared/scripts/` (e.g., `ee_bench_<type>.py`). Don't fork `ee_bench_eval.py` — write a standalone script. The evaluator is the source of truth for your type's evaluation logic. Copy it into each per-template `eval/scripts/` directory. Also copy any shared parsers (e.g., `ee_bench_parser_junit.py`) if your type needs JUnit XML or TRX parsing.
 
 **Verification:** Copy a template into a test repository, fill in placeholder values, build the Docker image, and run `run.sh` end-to-end.
 
@@ -149,10 +149,11 @@ Add the new evaluation type to the bot's configuration file.
 **What to add:**
 
 ```yaml
-<eval_type>:
-  project_number: <number>       # GitHub project board number (from Step 7)
-  dataset_repo: "dataset"        # Target dataset repository
-  export_script: ".github/scripts/export/<eval_type>/export_unified.py"
+# Add to the existing projects: list
+  - eval_type: <eval_type>
+    project_number: <number>       # GitHub project board number (from Step 7)
+    dataset_repo: dpaia/dataset    # Target dataset repository (org/repo)
+    export_script: export/<eval_type>/export_unified  # Relative to .github/scripts/, no .py
 ```
 
 **Post-change:** Redeploy the bot so it picks up the new config.
@@ -366,10 +367,11 @@ cat "$RESULTS_FILE"
 ### eval-projects.yml bot config entry (Step 6)
 
 ```yaml
-debugging:
-  project_number: 14
-  dataset_repo: "dataset"
-  export_script: ".github/scripts/export/debugging/export_unified.py"
+# Add to the existing projects: list
+  - eval_type: debugging
+    project_number: 14
+    dataset_repo: dpaia/dataset
+    export_script: export/debugging/export_unified
 ```
 
 ### Skill routing table update (Step 5)

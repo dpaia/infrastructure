@@ -107,6 +107,7 @@ jobs:
           RESULT: ${{ steps.validate.outputs.result }}
           STATUS: ${{ steps.validate.outputs.status }}
           INSTANCE_ID: ${{ steps.generate.outputs.instance_id }}
+          CRITERIA_SUMMARY: ${{ steps.validate.outputs.criteria_summary }}
           TEST_SUMMARY: ${{ steps.validate.outputs.test_summary }}
           FAIL_TO_PASS: ${{ steps.validate.outputs.fail_to_pass }}
           FAILED_CRITERIA: ${{ steps.validate.outputs.failed_criteria }}
@@ -125,7 +126,8 @@ jobs:
           COMMENT_BODY="${ICON} ${MSG}
 
           **Instance:** \`${INSTANCE_ID}\`
-          **Duration:** ${DURATION}s"
+          **Duration:** ${DURATION}s
+          **Criteria:** ${CRITERIA_SUMMARY}"
 
           if [ -n "$TEST_SUMMARY" ]; then
             COMMENT_BODY="${COMMENT_BODY}
@@ -186,7 +188,7 @@ jobs:
           echo "- **Result:** ${{ steps.validate.outputs.result }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Status:** ${{ steps.validate.outputs.status }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Duration:** ${{ steps.validate.outputs.duration }}s" >> $GITHUB_STEP_SUMMARY
-          echo "- **Tests:** ${{ steps.validate.outputs.test_summary }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Criteria:** ${{ steps.validate.outputs.criteria_summary }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Run key:** ${{ inputs.run_key }}" >> $GITHUB_STEP_SUMMARY
           if [ -n "${{ steps.validate.outputs.failed_criteria }}" ]; then
             echo "- **Failed criteria:** ${{ steps.validate.outputs.failed_criteria }}" >> $GITHUB_STEP_SUMMARY

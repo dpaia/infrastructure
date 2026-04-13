@@ -167,7 +167,7 @@ This is a manual step performed in the GitHub UI.
 **What to do:**
 1. Create a new project board in the `dpaia` organization
 2. Add a **Status** field (single select) with values: `Todo`, `In progress`, `Review`, `Verified`, `Rejected`, `Done`
-3. Add a **Verification** field (single select) with values: `Pending`, `Passed`, `Failed`
+3. Add a **Verification** field (single select) with values: `Validating...`, `Valid`, `Invalid`
 4. Note the project number from the URL (e.g., `https://github.com/orgs/dpaia/projects/14` has project number `14`)
 
 **Verification:** Open the project board URL and confirm all fields are present with the correct options.

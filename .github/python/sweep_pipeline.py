@@ -206,7 +206,7 @@ def check_review_without_verification(eval_items: list[dict], result: SweepResul
             continue
 
         verification = item["fields"].get("Verification")
-        if verification and verification not in ("Pending", None):
+        if verification and verification not in ("Validating...", None):
             continue  # has a non-pending verification — likely ok
 
         owner = item["owner"]
@@ -278,7 +278,7 @@ def check_verified_inconsistencies(eval_items: list[dict], dataset_items: list[d
     """
     Comprehensive check for PRs in Verified status.
     Detects:
-    - Verified with Verification != Passed (guard bypass)
+    - Verified with Verification != Valid (guard bypass)
     - Verified with closed/merged source PR (stale board state)
     - Verified without a dataset PR (generation not triggered)
     - Verified with a failed dataset PR (needs re-generation)
@@ -307,10 +307,10 @@ def check_verified_inconsistencies(eval_items: list[dict], dataset_items: list[d
         pr_state = item.get("state")
         source_url = build_source_url(owner, repo, number)
 
-        # 1. Verification must be Passed to be in Verified
-        if verification != "Passed":
+        # 1. Verification must be Valid to be in Verified
+        if verification != "Valid":
             result.issue(
-                f"{owner}/{repo}#{number} in Verified but Verification='{verification or 'not set'}' (expected Passed)"
+                f"{owner}/{repo}#{number} in Verified but Verification='{verification or 'not set'}' (expected Valid)"
             )
             # Don't auto-repair — this needs manual investigation
             continue

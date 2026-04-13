@@ -21,3 +21,4 @@ __pycache__/
 *.so
 /plans/
 /.junie/
+/docs/

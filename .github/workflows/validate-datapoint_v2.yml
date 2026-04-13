@@ -176,7 +176,7 @@ jobs:
           gh pr merge "$PR_NUMBER" --repo "$DATASET_REPO" --squash --delete-branch
           echo "Successfully merged and cleaned up PR #$PR_NUMBER"
 
-      # --- Dataset Metadata: set Status=Failed on validation failure ---
+      # --- Dataset Metadata: set Status=Invalid on validation failure ---
       - name: Find source PR in Dataset Metadata project
         id: find-source-pr
         if: steps.validate.outputs.result != 'success' && inputs.dataset_project_number != '' && inputs.source_pr_number != ''
@@ -188,14 +188,14 @@ jobs:
           project_number: ${{ inputs.dataset_project_number }}
           github_token: ${{ secrets.PROJECT_TOKEN }}
 
-      - name: Set Dataset Metadata Status to Failed
+      - name: Set Dataset Metadata Status to Invalid
         if: steps.validate.outputs.result != 'success' && inputs.dataset_project_number != '' && steps.find-source-pr.outputs.item_id != ''
         uses: ./.github/actions/set-project-status
         with:
           organization: ${{ inputs.source_organization }}
           project_number: ${{ inputs.dataset_project_number }}
           item_id: ${{ steps.find-source-pr.outputs.item_id }}
-          value: Failed
+          value: Invalid
           github_token: ${{ secrets.PROJECT_TOKEN }}
 
       - name: Summary

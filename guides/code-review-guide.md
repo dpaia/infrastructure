@@ -12,10 +12,10 @@ As a code reviewer, you manage source PRs on the [Code Generation project board]
 |--------|--------|------------------|
 | **Todo** | Manual | Nothing — PR is queued for review |
 | **In progress** | Manual or Bot (on new commits) | Nothing — PR is being worked on |
-| **Review** | Reviewer | Bot dispatches verification workflow, creates "Datapoint Verification" check, sets Verification="Pending" |
-| **Verified** | Reviewer (after verification passes) | Bot dispatches generation workflow, creates "Datapoint Generation" check. **Requires Verification="Passed"** — blocked otherwise |
+| **Review** | Reviewer | Bot dispatches verification workflow, creates "Datapoint Verification" check, sets Verification="Validating..." |
+| **Verified** | Reviewer (after verification passes) | Bot dispatches generation workflow, creates "Datapoint Generation" check. **Requires Verification="Valid"** — blocked otherwise |
 | **Rejected** | Reviewer | Nothing — PR is rejected with a reason |
-| **Done** | Bot (after dataset PR merges) | Nothing — pipeline complete. **Requires Verification="Passed"** — blocked otherwise |
+| **Done** | Bot (after dataset PR merges) | Nothing — pipeline complete. **Requires Verification="Valid"** — blocked otherwise |
 
 ## Verification Field
 
@@ -23,11 +23,11 @@ The project board has a **Verification** single-select field that tracks the aut
 
 | Value | Set By | Meaning |
 |-------|--------|---------|
-| **Pending** | Bot (on dispatch or new commits) | Verification is running or hasn't started |
-| **Passed** | Bot (on verification success) | Verification passed — PR can move to Verified/Done |
-| **Failed** | Bot (on verification failure) | Verification failed — PR cannot move to Verified/Done |
+| **Validating...** | Bot (on dispatch or new commits) | Verification is running or hasn't started |
+| **Valid** | Bot (on verification success) | Verification passed — PR can move to Verified/Done |
+| **Invalid** | Bot (on verification failure) | Verification failed — PR cannot move to Verified/Done |
 
-The bot enforces that **Verified** and **Done** statuses require `Verification = "Passed"`. If you move a PR to either status without passing verification, the bot reverts the status and posts a comment explaining why.
+The bot enforces that **Verified** and **Done** statuses require `Verification = "Valid"`. If you move a PR to either status without passing verification, the bot reverts the status and posts a comment explaining why.
 
 ## Review Checklist
 
@@ -103,11 +103,11 @@ Move a PR to "Verified" **only after** verification passes:
 
 1. Confirm the verification comment shows a pass result
 2. Confirm the "Datapoint Verification" check run is green
-3. Confirm the **Verification** field shows "Passed"
+3. Confirm the **Verification** field shows "Valid"
 4. Move the PR to "Verified" on the project board
 
 The bot enforces two gates:
-- **Verification field gate**: If the Verification field is not "Passed", the bot reverts the status to its previous value and posts a comment.
+- **Verification field gate**: If the Verification field is not "Valid", the bot reverts the status to its previous value and posts a comment.
 - **Check run gate**: If there is no passing "Datapoint Verification" check on the current head SHA, the bot blocks dispatch and posts a comment.
 
 **What happens next:** The bot dispatches the generation workflow, which creates a PR in `dpaia/dataset` containing the exported datapoint. A comment is posted on the source PR linking to the dataset PR.
@@ -154,7 +154,7 @@ If any automated step fails, the bot updates the relevant project status. You ca
 When new commits are pushed to a source PR that is in **Review**, **Verified**, or **Rejected** status:
 
 - The bot automatically resets all project statuses to **"In progress"**
-- The bot resets the **Verification** field to **"Pending"**
+- The bot resets the **Verification** field to **"Validating..."**
 - A comment is posted explaining the reset and showing the new head SHA
 - Previous verification results are invalidated
 - The review process must start over from "Review"

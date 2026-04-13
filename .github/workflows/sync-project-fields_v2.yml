@@ -101,7 +101,7 @@ jobs:
           value: 'In progress'
           github_token: ${{ secrets.PROJECT_TOKEN }}
 
-      - name: Set Verification to "Pending"
+      - name: Set Verification to "Validating..."
         if: inputs.operation == 'reset-on-sync'
         uses: ./.github/actions/update-project-field
         with:
@@ -109,7 +109,7 @@ jobs:
           project_number: ${{ inputs.eval_project_number }}
           item_id: ${{ steps.find-pr.outputs.item_id }}
           field_name: Verification
-          value: Pending
+          value: Validating...
           value_type: single_select
           github_token: ${{ secrets.PROJECT_TOKEN }}
 

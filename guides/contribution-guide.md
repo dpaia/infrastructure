@@ -693,12 +693,12 @@ Once your PR is on the project board, here's what happens at each status:
 
 ### Review
 
-The bot sets the **Verification** field to "Pending" and dispatches a verification workflow that:
+The bot sets the **Verification** field to "Validating..." and dispatches a verification workflow that:
 1. Exports a datapoint from your PR using the export script
 2. Builds the Docker image from your Dockerfile
 3. Runs `run.sh` with the gold patch
 4. Posts a comment on your PR with the verification result
-5. Sets the **Verification** field to "Passed" or "Failed" based on the result
+5. Sets the **Verification** field to "Valid" or "Invalid" based on the result
 
 The comment looks like:
 
@@ -718,7 +718,7 @@ A "Datapoint Verification" check run also appears on the PR's Checks tab.
 
 ### Verified
 
-After verification passes (Verification field shows "Passed"), a reviewer moves the PR to "Verified". The bot guards this transition — if Verification is not "Passed", the status is reverted. The bot then:
+After verification passes (Verification field shows "Valid"), a reviewer moves the PR to "Verified". The bot guards this transition — if Verification is not "Valid", the status is reverted. The bot then:
 1. Generates a dataset PR in `dpaia/dataset` with your datapoint
 2. Posts a comment on your PR linking to the dataset PR
 3. The dataset PR is automatically validated and, if it passes, auto-merged
@@ -731,7 +731,7 @@ Once the dataset PR is merged:
 
 ### New Commits
 
-If you push new commits while the PR is in "Review", "Verified", or "Rejected" status, the bot automatically resets the status to "In progress", resets the Verification field to "Pending", and posts an informational comment. Previous verification results are invalidated and the review process must start over.
+If you push new commits while the PR is in "Review", "Verified", or "Rejected" status, the bot automatically resets the status to "In progress", resets the Verification field to "Validating...", and posts an informational comment. Previous verification results are invalidated and the review process must start over.
 
 ## Troubleshooting
 

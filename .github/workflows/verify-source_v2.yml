@@ -38,7 +38,7 @@ jobs:
       - name: Checkout infrastructure
         uses: actions/checkout@v5
 
-      # --- Verification field: set Pending before validation ---
+      # --- Verification field: set Validating... before validation ---
       - name: Find PR in eval project
         id: find-pr
         if: inputs.eval_project_number != ''
@@ -50,7 +50,7 @@ jobs:
           project_number: ${{ inputs.eval_project_number }}
           github_token: ${{ secrets.PROJECT_TOKEN }}
 
-      - name: Set Verification to Pending
+      - name: Set Verification to Validating...
         if: inputs.eval_project_number != ''
         uses: ./.github/actions/update-project-field
         with:
@@ -58,7 +58,7 @@ jobs:
           project_number: ${{ inputs.eval_project_number }}
           item_id: ${{ steps.find-pr.outputs.item_id }}
           field_name: Verification
-          value: Pending
+          value: Validating...
           value_type: single_select
           github_token: ${{ secrets.PROJECT_TOKEN }}
 
@@ -166,7 +166,7 @@ jobs:
             --repo "${{ inputs.organization }}/${{ inputs.repository }}" \
             --body "$COMMENT_BODY" || true
 
-      # --- Verification field: set Passed/Failed after validation ---
+      # --- Verification field: set Valid/Invalid after validation ---
       - name: Set Verification result
         if: always() && inputs.eval_project_number != '' && steps.find-pr.outputs.item_id != ''
         uses: ./.github/actions/update-project-field
@@ -175,7 +175,7 @@ jobs:
           project_number: ${{ inputs.eval_project_number }}
           item_id: ${{ steps.find-pr.outputs.item_id }}
           field_name: Verification
-          value: ${{ steps.validate.outputs.result == 'success' && 'Passed' || 'Failed' }}
+          value: ${{ steps.validate.outputs.result == 'success' && 'Valid' || 'Invalid' }}
           value_type: single_select
           github_token: ${{ secrets.PROJECT_TOKEN }}
 

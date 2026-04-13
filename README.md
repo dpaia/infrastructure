@@ -100,10 +100,10 @@ dpaia/dataset/
 **Inputs:** `organization`, `repository`, `pr_number`, `eval_type`, `run_key`, `eval_project_number`
 
 **What it does:**
-1. If `eval_project_number` is set: finds the PR in the eval project and sets Verification="Pending"
+1. If `eval_project_number` is set: finds the PR in the eval project and sets Verification="Validating..."
 2. Runs the export script to generate a datapoint from the source PR
 3. Runs `validate.sh` against the generated datapoint
-4. If `eval_project_number` is set: sets Verification="Passed" or "Failed" based on the result
+4. If `eval_project_number` is set: sets Verification="Valid" or "Invalid" based on the result
 5. Posts a comment on the source PR with pass/fail result, test summary, and failed test details
 6. Uploads validation logs and result JSON as artifacts
 
@@ -147,7 +147,7 @@ dpaia/dataset/
 2. Detects the instance directory from changed files
 3. Runs `validate.sh` against the datapoint
 4. On success: auto-merges the dataset PR (squash merge with mergeability retry loop)
-5. On failure + `dataset_project_number` set: finds the source PR in the Dataset Metadata project and sets Status="Failed"
+5. On failure + `dataset_project_number` set: finds the source PR in the Dataset Metadata project and sets Status="Invalid"
 6. Posts a comment on the dataset PR with pass/fail result
 7. Uploads validation logs as artifacts
 
@@ -216,7 +216,7 @@ dpaia/dataset/
 |-------|--------------------|--------------|--------|
 | **Missing verification** | Source PR in "Review" with no "Datapoint Verification" check run on HEAD | Query check runs for the PR's head SHA | Dispatch `verify-source_v2.yml` |
 | **Closed PR in active status** | Source PR is closed but project status is "In Progress", "Review", or "Verified" | Compare PR state from GraphQL against project Status field | Reopen the PR via REST API (skip if merged — can't reopen) |
-| **Verified without Verification=Passed** | Source PR in "Verified" but Verification field is not "Passed" | Field value mismatch | Report only — needs manual investigation (possible guard bypass) |
+| **Verified without Verification=Valid** | Source PR in "Verified" but Verification field is not "Valid" | Field value mismatch | Report only — needs manual investigation (possible guard bypass) |
 | **Verified with closed source PR** | Source PR in "Verified" but PR is closed/merged | PR state check | Reopen if closed (not merged); report if merged |
 | **Verified without dataset PR** | Source PR in "Verified" but no dataset PR exists in the Dataset Metadata project | Cross-reference eval items against dataset items by source PR URL | Dispatch `generate-datapoint_v2.yml` |
 | **Verified with all dataset PRs closed** | Source PR in "Verified" but all linked dataset PRs are closed (not merged) | Dataset PR state check — indicates failed generation | Dispatch `generate-datapoint_v2.yml` (re-generation) |
@@ -248,7 +248,7 @@ dpaia/dataset/
 **Operations:**
 - `clear-verification`: Clears the Verification field on the eval project item
 - `reopen-pr`: Reopens the PR if closed (not merged) and clears Verification
-- `reset-on-sync`: Sets Status="In progress", Verification="Pending", and posts an informational comment on the PR
+- `reset-on-sync`: Sets Status="In progress", Verification="Validating...", and posts an informational comment on the PR
 
 ---
 

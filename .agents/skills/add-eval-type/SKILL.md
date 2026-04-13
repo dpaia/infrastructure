@@ -83,7 +83,7 @@ MANUAL STEPS REQUIRED:
 [ ] Create GitHub project board in dpaia organization
     - Note the project number
     - Add status fields: Todo, In progress, Review, Verified, Rejected, Done
-    - Add Verification field: Pending, Passed, Failed
+    - Add Verification field: Validating..., Valid, Invalid
 
 [ ] Add entry to issue-validator-bot config:
     File: issue-validator-bot/issue-validator-bot/config/eval-projects.yml

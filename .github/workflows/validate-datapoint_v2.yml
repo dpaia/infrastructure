@@ -99,6 +99,8 @@ jobs:
         uses: ./.github/actions/run-validation
         with:
           instance_dir: ${{ steps.detect.outputs.instance_dir }}
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
 
       - name: Upload validation logs
         if: always()

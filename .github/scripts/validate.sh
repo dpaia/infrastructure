@@ -163,6 +163,18 @@ fi
 
 # ─── Build Docker image (skip if already present) ──────────────────────
 
+# Inject GitHub token into git clone URLs for private repos
+if [ -n "${GH_TOKEN:-}" ]; then
+  REPO_SLUG=$(jq -r '.repo // empty' "$INSTANCE_DIR/datapoint.json" 2>/dev/null || true)
+  if [ -n "$REPO_SLUG" ]; then
+    REPO_VISIBILITY=$(gh repo view "$REPO_SLUG" --json visibility -q '.visibility' 2>/dev/null || echo "PUBLIC")
+    if [ "$REPO_VISIBILITY" = "PRIVATE" ]; then
+      echo "Private repo detected ($REPO_SLUG), injecting auth token for git clone ..."
+      sed -i "s|git clone https://github.com/|git clone https://x-access-token:${GH_TOKEN}@github.com/|g" "$DOCKERFILE_DIR/Dockerfile"
+    fi
+  fi
+fi
+
 echo "Building image $IMAGE_NAME ..."
 docker rmi "$IMAGE_NAME" &>/dev/null || true
 docker build --platform linux/amd64 -t "$IMAGE_NAME" -f "$DOCKERFILE_DIR/Dockerfile" "$DOCKERFILE_DIR"

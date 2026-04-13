@@ -55,12 +55,12 @@ jobs:
         run: |
           PR_BODY=$(gh pr view "$PR_NUMBER" --repo "$DATASET_REPO" --json body -q '.body')
 
-          # Parse structured metadata from HTML comment
-          INSTANCE_ID=$(echo "$PR_BODY" | grep -oP 'instance_id:\s*\K\S+' || echo "")
-          EVAL_TYPE=$(echo "$PR_BODY" | grep -oP 'eval_type:\s*\K\S+' || echo "")
-          SOURCE_REPO=$(echo "$PR_BODY" | grep -oP 'source_repo:\s*\K\S+' || echo "")
-          SOURCE_PR=$(echo "$PR_BODY" | grep -oP 'source_pr:\s*\K\S+' || echo "")
-          SOURCE_COMMIT=$(echo "$PR_BODY" | grep -oP 'source_commit:\s*\K\S+' || echo "")
+          # Parse structured metadata from HTML comment (take first match only)
+          INSTANCE_ID=$(echo "$PR_BODY" | grep -oP 'instance_id:\s*\K\S+' | head -1 || echo "")
+          EVAL_TYPE=$(echo "$PR_BODY" | grep -oP 'eval_type:\s*\K\S+' | head -1 || echo "")
+          SOURCE_REPO=$(echo "$PR_BODY" | grep -oP 'source_repo:\s*\K\S+' | head -1 || echo "")
+          SOURCE_PR=$(echo "$PR_BODY" | grep -oP 'source_pr:\s*\K\S+' | head -1 || echo "")
+          SOURCE_COMMIT=$(echo "$PR_BODY" | grep -oP 'source_commit:\s*\K\S+' | head -1 || echo "")
 
           if [ -z "$INSTANCE_ID" ] || [ -z "$EVAL_TYPE" ]; then
             echo "Error: could not parse metadata from PR body" >&2

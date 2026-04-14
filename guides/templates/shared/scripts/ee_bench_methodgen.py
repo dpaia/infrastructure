@@ -115,8 +115,137 @@ _SIGNATURE_EXTRACTORS = {
 }
 
 
+# ---------------------------------------------------------------------------
+# Signature normalizers — accept full or short form, return canonical form
+# ---------------------------------------------------------------------------
+
+_JAVA_MODIFIERS = {
+    "public", "private", "protected", "static", "final",
+    "abstract", "synchronized", "native", "default", "strictfp",
+}
+
+
+def _normalize_java_signature(sig: str) -> str:
+    """Normalize a Java method signature to canonical form: ``name(Type1,Type2)``.
+
+    Accepts both short (``parse(String,Locale)``) and full
+    (``public PetType parse(String text, Locale locale) throws ParseException``) forms.
+    Strips annotations, modifiers, return type, parameter names, generics, and throws clause.
+    """
+    sig = sig.strip().rstrip(";")
+
+    # Already in canonical form: name(Type1,Type2)
+    if re.match(r"^\w+\([^)]*\)$", sig) and " " not in sig.split("(")[0]:
+        # Still strip generics from param types
+        name, params_str = sig.split("(", 1)
+        params_str = params_str.rstrip(")")
+        if not params_str:
+            return f"{name}()"
+        params = [re.sub(r"<[^>]*>", "", p.strip()) for p in params_str.split(",")]
+        return f"{name}({','.join(params)})"
+
+    # Strip annotations (e.g. @Override, @Transactional(...))
+    sig = re.sub(r"@\w+(\([^)]*\))?\s*", "", sig)
+
+    # Strip throws clause
+    sig = re.sub(r"\)\s*throws\s+.*", ")", sig)
+
+    # Split into tokens before the parenthesis
+    paren_idx = sig.index("(")
+    prefix = sig[:paren_idx].strip()
+    params_raw = sig[paren_idx + 1:].rstrip(")").strip()
+
+    # prefix is something like: "public static List findAll" or "findAll"
+    # Split into words and discard modifiers + return type, keeping last token as name
+    tokens = prefix.split()
+    # Remove modifiers
+    while tokens and tokens[0] in _JAVA_MODIFIERS:
+        tokens.pop(0)
+    # Remove generic type params on the method itself: <T> or <T, R>
+    while tokens and tokens[0].startswith("<"):
+        tokens.pop(0)
+    # Now tokens = [return_type, method_name] or just [method_name]
+    name = tokens[-1] if tokens else prefix
+
+    # Parse parameter types: "String text, Locale locale" -> ["String", "Locale"]
+    param_types: list[str] = []
+    if params_raw:
+        for param in params_raw.split(","):
+            parts = param.strip().split()
+            if parts:
+                # Strip annotations from params: @Param("x") String x -> String
+                type_parts = [p for p in parts if not p.startswith("@") and not p.startswith('"')]
+                if len(type_parts) >= 2:
+                    raw_type = type_parts[-2]  # second to last is type, last is name
+                elif len(type_parts) == 1:
+                    raw_type = type_parts[0]  # just a type, no name
+                else:
+                    raw_type = parts[0]
+                # Strip generics
+                raw_type = re.sub(r"<[^>]*>", "", raw_type)
+                param_types.append(raw_type)
+
+    return f"{name}({','.join(param_types)})"
+
+
+def _normalize_python_signature(sig: str) -> str:
+    """Normalize a Python function signature to canonical form: ``name(param1,param2)``.
+
+    Accepts both ``func(a,b)`` and ``def func(self, a: int, b: str) -> bool:`` forms.
+    Strips ``def``, type annotations, defaults, return type, ``self``/``cls``.
+    """
+    sig = sig.strip().rstrip(":")
+
+    # Already in canonical form
+    if re.match(r"^\w+\([^)]*\)$", sig) and not sig.startswith("def "):
+        return sig
+
+    # Strip decorators if present
+    sig = re.sub(r"@\w+(\([^)]*\))?\s*", "", sig)
+
+    # Strip 'async def' or 'def'
+    sig = re.sub(r"^(async\s+)?def\s+", "", sig)
+
+    # Strip return annotation
+    sig = re.sub(r"\)\s*->.*", ")", sig)
+
+    paren_idx = sig.index("(")
+    name = sig[:paren_idx].strip()
+    params_raw = sig[paren_idx + 1:].rstrip(")").strip()
+
+    param_names: list[str] = []
+    if params_raw:
+        for param in params_raw.split(","):
+            param = param.strip()
+            # Strip default values
+            param = param.split("=")[0].strip()
+            # Strip type annotations
+            param = param.split(":")[0].strip()
+            # Strip * and **
+            param = param.lstrip("*")
+            if param and param not in ("self", "cls"):
+                param_names.append(param)
+
+    return f"{name}({','.join(param_names)})"
+
+
+_SIGNATURE_NORMALIZERS = {
+    "java": _normalize_java_signature,
+    "python": _normalize_python_signature,
+}
+
+
+def normalize_signature(sig: str, language: str) -> str:
+    """Normalize a method signature to canonical tree-sitter form for the given language."""
+    normalizer = _SIGNATURE_NORMALIZERS.get(language)
+    if normalizer:
+        return normalizer(sig)
+    return sig
+
+
 def _find_method_nodes(root_node, language: str, target_sig: str):
     """Walk the AST and return all nodes whose signature matches *target_sig*."""
+    target_sig = normalize_signature(target_sig, language)
     node_type, extractor = _SIGNATURE_EXTRACTORS[language]
     matches = []
 

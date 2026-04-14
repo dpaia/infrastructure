@@ -62,7 +62,7 @@ def export_folders(instance_id: str, instance_src: Path, output_dir: Path) -> bo
 
 def export_jsonl(instance_id: str, instance_src: Path, jsonl_path: Path) -> bool:
     """Append datapoint.json content to JSONL file."""
-    datapoint = f"{instance_id}.json"
+    datapoint = instance_src.parent / f"{instance_id}.json"
     if not datapoint.is_file():
         print(f"  Warning: no datapoint.json in {instance_src}", file=sys.stderr)
         return False

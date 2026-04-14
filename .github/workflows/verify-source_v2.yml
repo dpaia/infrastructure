@@ -114,6 +114,7 @@ jobs:
           FAIL_TO_PASS: ${{ steps.validate.outputs.fail_to_pass }}
           FAILED_CRITERIA: ${{ steps.validate.outputs.failed_criteria }}
           FAILED_TESTS: ${{ steps.validate.outputs.failed_tests }}
+          FAILURE_DETAILS: ${{ steps.validate.outputs.failure_details }}
           DURATION: ${{ steps.validate.outputs.duration }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
@@ -145,6 +146,17 @@ jobs:
             COMMENT_BODY="${COMMENT_BODY}
 
           **Failed criteria:** ${FAILED_CRITERIA}"
+          fi
+
+          if [ -n "$FAILURE_DETAILS" ]; then
+            COMMENT_BODY="${COMMENT_BODY}
+
+          <details><summary>Error details</summary>
+
+          \`\`\`
+          ${FAILURE_DETAILS}
+          \`\`\`
+          </details>"
           fi
 
           if [ -n "$FAILED_TESTS" ]; then

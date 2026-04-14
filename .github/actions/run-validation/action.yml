@@ -31,6 +31,9 @@ outputs:
   failed_tests:
     description: 'Formatted list of failed test names'
     value: ${{ steps.validate.outputs.failed_tests }}
+  failure_details:
+    description: 'Detail text from failed criteria (criterion: detail, one per line)'
+    value: ${{ steps.validate.outputs.failure_details }}
   result_json_path:
     description: 'Path to the validation result JSON file'
     value: ${{ steps.validate.outputs.result_json_path }}
@@ -87,6 +90,14 @@ runs:
           if [ "$STATUS" != "success" ]; then
             FAILED_CRITERIA=$(jq -r '[.criteria[] | select(.status == "fail")] | map("\(.criterion): \(.status)") | join(", ")' "$RESULT_JSON_FILE" 2>/dev/null || echo "unknown")
             echo "failed_criteria=$FAILED_CRITERIA" >> $GITHUB_OUTPUT
+
+            # Extract detail text from failed criteria for error reporting
+            FAILURE_DETAILS=$(jq -r '[.criteria[] | select(.status == "fail" and .detail != null) | "\(.criterion): \(.detail)"] | join("\n")' "$RESULT_JSON_FILE" 2>/dev/null || echo "")
+            if [ -n "$FAILURE_DETAILS" ]; then
+              echo "failure_details<<FDETAILS_EOF" >> $GITHUB_OUTPUT
+              echo "$FAILURE_DETAILS" >> $GITHUB_OUTPUT
+              echo "FDETAILS_EOF" >> $GITHUB_OUTPUT
+            fi
 
             FAILED_TESTS=$(jq -r '(.criteria // []) | map(select(.criterion == "tests")) | first // null | if . then (.failed_tests // []) | .[0:20] | map("- \(.name)") | join("\n") else "" end' "$RESULT_JSON_FILE" 2>/dev/null || echo "")
             if [ -n "$FAILED_TESTS" ]; then

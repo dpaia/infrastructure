@@ -183,20 +183,33 @@ docker build --platform linux/amd64 -t "$IMAGE_NAME" -f "$DOCKERFILE_DIR/Dockerf
 
 echo "Running validation ..."
 # shellcheck disable=SC2086
+set +e
 OUTPUT=$(docker run --rm --platform linux/amd64 \
   -v "$STAGE_DIR/eval":/ee-bench/eval:ro \
   -v "$STAGE_DIR/submission":/ee-bench/submission:ro \
   $DOCKER_RUN_PARAMS \
   "$IMAGE_NAME" \
   bash /ee-bench/eval/run.sh 2>&1)
+DOCKER_EXIT=$?
+set -e
+
+if [ $DOCKER_EXIT -ne 0 ]; then
+  echo "WARN: docker run exited with code $DOCKER_EXIT"
+  echo "$OUTPUT"
+fi
 
 # ─── Parse JSON output ─────────────────────────────────────────────────
 
 JSON=$(echo "$OUTPUT" | grep '"schema_version"' || true)
 
 if [ -z "$JSON" ]; then
-  echo "FAIL: No JSON output from run.sh"
+  echo "FAIL: No JSON output from run.sh (docker exit code: $DOCKER_EXIT)"
+  echo "--- Container output ---"
   echo "$OUTPUT"
+  echo "--- End container output ---"
+  # Emit a structured failure JSON so the workflow can report details
+  echo "JSON output:"
+  echo "{\"schema_version\":\"2.0\",\"status\":\"failure\",\"timestamp\":\"\",\"duration_seconds\":0,\"criteria\":[{\"criterion\":\"container_execution\",\"status\":\"fail\",\"detail\":\"run.sh failed with exit code $DOCKER_EXIT\"}]}"
   exit 1
 fi
 

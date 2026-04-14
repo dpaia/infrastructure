@@ -52,8 +52,21 @@ mkdir -p "$STAGE_DIR"
 if [ "$MODE" = "folder" ]; then
   DOCKERFILE_DIR="$INSTANCE_DIR/environment"
   mkdir -p "$STAGE_DIR/eval" "$STAGE_DIR/submission"
+
+  # Validate required directories exist
+  for reqdir in environment eval; do
+    if [ ! -d "$INSTANCE_DIR/$reqdir" ]; then
+      echo "FAIL: required directory '$reqdir/' missing in instance"
+      echo "JSON output:"
+      echo "{\"schema_version\":\"2.0\",\"status\":\"failure\",\"timestamp\":\"\",\"duration_seconds\":0,\"criteria\":[{\"criterion\":\"instance_structure\",\"status\":\"fail\",\"detail\":\"required directory '$reqdir/' not found in instance\"}]}"
+      exit 1
+    fi
+  done
+
   cp -r "$INSTANCE_DIR/eval/"* "$STAGE_DIR/eval/"
-  cp -r "$INSTANCE_DIR/verify/"* "$STAGE_DIR/submission/"
+  if [ -d "$INSTANCE_DIR/verify" ]; then
+    cp -r "$INSTANCE_DIR/verify/"* "$STAGE_DIR/submission/" 2>/dev/null || true
+  fi
 
 elif [ "$MODE" = "jsonl" ]; then
   # Extract matching record to a temp file (avoids shell variable escaping issues)

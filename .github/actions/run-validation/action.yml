@@ -109,6 +109,19 @@ runs:
         else
           echo "Warning: could not extract valid JSON from validation output"
           echo "status=unknown" >> $GITHUB_OUTPUT
+
+          # Extract last meaningful error lines from the log so the PR comment is useful
+          if [ -s "$LOG_FILE" ]; then
+            LOG_ERROR=$(grep -iE "error|FAIL|could not find|failed to" "$LOG_FILE" | tail -10 | head -c 2000)
+            if [ -z "$LOG_ERROR" ]; then
+              LOG_ERROR=$(tail -20 "$LOG_FILE" | head -c 2000)
+            fi
+            if [ -n "$LOG_ERROR" ]; then
+              echo "failure_details<<FDETAILS_EOF" >> $GITHUB_OUTPUT
+              echo "$LOG_ERROR" >> $GITHUB_OUTPUT
+              echo "FDETAILS_EOF" >> $GITHUB_OUTPUT
+            fi
+          fi
         fi
 
         if [ $EXIT_CODE -eq 0 ]; then

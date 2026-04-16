@@ -190,7 +190,22 @@ fi
 
 echo "Building image $IMAGE_NAME ..."
 docker rmi "$IMAGE_NAME" &>/dev/null || true
-docker build --platform linux/amd64 -t "$IMAGE_NAME" -f "$DOCKERFILE_DIR/Dockerfile" "$DOCKERFILE_DIR"
+BUILD_LOG="${STAGE_DIR}/build.log"
+set +e
+docker build --platform linux/amd64 -t "$IMAGE_NAME" -f "$DOCKERFILE_DIR/Dockerfile" "$DOCKERFILE_DIR" 2>&1 | tee "$BUILD_LOG"
+BUILD_EXIT=${PIPESTATUS[0]}
+set -e
+
+if [ $BUILD_EXIT -ne 0 ]; then
+  echo "FAIL: Docker build failed with exit code $BUILD_EXIT"
+  # Extract a concise error from build log for the JSON detail field
+  BUILD_ERROR=$(grep -iE "error:|ERROR:|could not find|failed to" "$BUILD_LOG" | tail -3 | tr '\n' ' | ' | head -c 500)
+  [ -z "$BUILD_ERROR" ] && BUILD_ERROR="Docker build failed with exit code $BUILD_EXIT"
+  echo "JSON output:"
+  jq -n --arg detail "$BUILD_ERROR" \
+    '{schema_version:"2.0",status:"failure",timestamp:"",duration_seconds:0,criteria:[{criterion:"docker_build",status:"fail",detail:$detail}]}'
+  exit 1
+fi
 
 # ─── Run container with gold patch ─────────────────────────────────────
 

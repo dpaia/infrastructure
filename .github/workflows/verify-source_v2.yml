@@ -129,8 +129,8 @@ jobs:
           COMMENT_BODY="${ICON} ${MSG}
 
           **Instance:** \`${INSTANCE_ID}\`
-          **Duration:** ${DURATION}s
-          **Criteria:** ${CRITERIA_SUMMARY}"
+          **Duration:** ${DURATION:-(unknown)}s
+          **Criteria:** ${CRITERIA_SUMMARY:-(unavailable)}"
 
           if [ -n "$TEST_SUMMARY" ]; then
             COMMENT_BODY="${COMMENT_BODY}

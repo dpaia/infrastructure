@@ -26,35 +26,43 @@ runs:
         GH_TOKEN: ${{ inputs.github_token }}
         MIN_REMAINING: ${{ inputs.min_remaining }}
       run: |
+        AUTH_FAILURES=0
+
         for attempt in 1 2 3; do
           RESPONSE=$(gh api /rate_limit --include 2>&1) || true
 
+          # Success — got HTTP response
           if echo "$RESPONSE" | grep -q "^HTTP/"; then
             break
           fi
 
-          # Check for rate limit or auth errors (GitHub returns 401 for secondary rate limits)
-          if echo "$RESPONSE" | grep -qi "rate limit\|abuse\|secondary\|bad credentials\|401"; then
+          # Explicit rate limit keywords — always retry with backoff
+          if echo "$RESPONSE" | grep -qi "rate limit\|abuse\|secondary"; then
+            WAIT=$(( 60 * attempt ))
             # Try Retry-After header
-            WAIT=$(echo "$RESPONSE" | grep -oi 'retry-after: [0-9]*' | grep -o '[0-9]*' | head -1)
-            if [ -z "$WAIT" ]; then
-              # Try X-RateLimit-Reset header
-              RESET=$(echo "$RESPONSE" | grep -oi 'x-ratelimit-reset: [0-9]*' | grep -o '[0-9]*' | head -1)
-              if [ -n "$RESET" ]; then
-                NOW=$(date +%s)
-                WAIT=$(( RESET - NOW ))
-                [ "$WAIT" -lt 1 ] && WAIT=1
-                [ "$WAIT" -gt 300 ] && WAIT=300
-              else
-                WAIT=$(( 60 * attempt ))
-              fi
+            RETRY_AFTER=$(echo "$RESPONSE" | grep -oi 'retry-after: [0-9]*' | grep -o '[0-9]*' | head -1)
+            if [ -n "$RETRY_AFTER" ]; then
+              WAIT=$RETRY_AFTER
             fi
             echo "::warning::Rate limited (attempt $attempt/3), waiting ${WAIT}s..."
             sleep "$WAIT"
             continue
           fi
 
-          # Non-rate-limit error — warn but don't block
+          # 401 / Bad credentials — could be rate limit or expired token
+          if echo "$RESPONSE" | grep -qi "bad credentials\|401"; then
+            AUTH_FAILURES=$(( AUTH_FAILURES + 1 ))
+            if [ "$AUTH_FAILURES" -ge 2 ]; then
+              echo "::error::Token appears to be expired or revoked (401 on $AUTH_FAILURES consecutive attempts)"
+              echo "remaining=0" >> $GITHUB_OUTPUT
+              exit 1
+            fi
+            echo "::warning::Got 401 (attempt $attempt/3) — may be secondary rate limit, retrying in 15s..."
+            sleep 15
+            continue
+          fi
+
+          # Other error — warn and retry briefly
           echo "::warning::Rate limit check failed (attempt $attempt/3): $(echo "$RESPONSE" | head -3)"
           if [ "$attempt" -eq 3 ]; then
             echo "remaining=unknown" >> $GITHUB_OUTPUT

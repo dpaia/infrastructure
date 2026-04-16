@@ -33,8 +33,8 @@ runs:
             break
           fi
 
-          # Check for rate limit errors
-          if echo "$RESPONSE" | grep -qi "rate limit\|abuse\|secondary"; then
+          # Check for rate limit or auth errors (GitHub returns 401 for secondary rate limits)
+          if echo "$RESPONSE" | grep -qi "rate limit\|abuse\|secondary\|bad credentials\|401"; then
             # Try Retry-After header
             WAIT=$(echo "$RESPONSE" | grep -oi 'retry-after: [0-9]*' | grep -o '[0-9]*' | head -1)
             if [ -z "$WAIT" ]; then

@@ -1,0 +1,92 @@
+name: 'Check Rate Limit'
+description: 'Checks GitHub API rate limit status and waits if rate-limited or remaining calls are low'
+author: 'JetBrains'
+
+inputs:
+  github_token:
+    description: 'GitHub token to check'
+    required: true
+  min_remaining:
+    description: 'Minimum remaining calls before waiting for reset'
+    required: false
+    default: '10'
+
+outputs:
+  remaining:
+    description: 'Remaining API calls after check'
+    value: ${{ steps.check.outputs.remaining }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Check rate limit
+      id: check
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github_token }}
+        MIN_REMAINING: ${{ inputs.min_remaining }}
+      run: |
+        for attempt in 1 2 3; do
+          RESPONSE=$(gh api /rate_limit --include 2>&1)
+          RC=$?
+
+          if [ $RC -eq 0 ]; then
+            break
+          fi
+
+          # Check for rate limit errors
+          if echo "$RESPONSE" | grep -qi "rate limit\|abuse\|secondary"; then
+            # Try Retry-After header
+            WAIT=$(echo "$RESPONSE" | grep -oi 'retry-after: [0-9]*' | grep -o '[0-9]*' | head -1)
+            if [ -z "$WAIT" ]; then
+              # Try X-RateLimit-Reset header
+              RESET=$(echo "$RESPONSE" | grep -oi 'x-ratelimit-reset: [0-9]*' | grep -o '[0-9]*' | head -1)
+              if [ -n "$RESET" ]; then
+                NOW=$(date +%s)
+                WAIT=$(( RESET - NOW ))
+                [ "$WAIT" -lt 1 ] && WAIT=1
+                [ "$WAIT" -gt 300 ] && WAIT=300
+              else
+                WAIT=$(( 60 * attempt ))
+              fi
+            fi
+            echo "::warning::Rate limited (attempt $attempt/3), waiting ${WAIT}s..."
+            sleep "$WAIT"
+            continue
+          fi
+
+          # Non-rate-limit error — warn but don't block
+          echo "::warning::Rate limit check failed (attempt $attempt/3): $(echo "$RESPONSE" | head -3)"
+          if [ "$attempt" -eq 3 ]; then
+            echo "remaining=unknown" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          sleep $(( 10 * attempt ))
+        done
+
+        # Split headers from body (gh api --include prepends HTTP headers)
+        BODY="$RESPONSE"
+        if echo "$RESPONSE" | grep -q "^HTTP/"; then
+          BODY=$(echo "$RESPONSE" | sed '1,/^\s*$/d')
+        fi
+
+        # Parse core rate limit fields
+        REMAINING=$(echo "$BODY" | grep -o '"remaining":[0-9]*' | head -1 | grep -o '[0-9]*')
+        RESET=$(echo "$BODY" | grep -o '"reset":[0-9]*' | head -1 | grep -o '[0-9]*')
+
+        if [ -n "$REMAINING" ]; then
+          echo "Rate limit: $REMAINING remaining"
+          echo "remaining=$REMAINING" >> $GITHUB_OUTPUT
+
+          if [ "$REMAINING" -lt "$MIN_REMAINING" ] && [ -n "$RESET" ]; then
+            NOW=$(date +%s)
+            WAIT=$(( RESET - NOW ))
+            [ "$WAIT" -lt 1 ] && WAIT=1
+            [ "$WAIT" -gt 300 ] && WAIT=300
+            echo "::warning::Rate limit low ($REMAINING remaining), waiting ${WAIT}s for reset..."
+            sleep "$WAIT"
+          fi
+        else
+          echo "::warning::Could not parse rate limit response"
+          echo "remaining=unknown" >> $GITHUB_OUTPUT
+        fi

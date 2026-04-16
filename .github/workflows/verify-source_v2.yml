@@ -38,6 +38,11 @@ jobs:
       - name: Checkout infrastructure
         uses: actions/checkout@v5
 
+      - name: Check rate limit
+        uses: ./.github/actions/check-rate-limit
+        with:
+          github_token: ${{ secrets.PROJECT_TOKEN }}
+
       # --- Verification field: set Validating... before validation ---
       - name: Find PR in eval project
         id: find-pr

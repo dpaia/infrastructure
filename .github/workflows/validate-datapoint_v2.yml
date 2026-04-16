@@ -55,6 +55,11 @@ jobs:
       - name: Checkout infrastructure
         uses: actions/checkout@v5
 
+      - name: Check rate limit
+        uses: ./.github/actions/check-rate-limit
+        with:
+          github_token: ${{ secrets.PROJECT_TOKEN }}
+
       - name: Checkout dataset PR
         uses: actions/checkout@v5
         with:

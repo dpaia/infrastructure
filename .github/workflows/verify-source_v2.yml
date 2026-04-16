@@ -42,6 +42,7 @@ jobs:
       - name: Find PR in eval project
         id: find-pr
         if: inputs.eval_project_number != ''
+        continue-on-error: true
         uses: ./.github/actions/find-pr-in-project
         with:
           organization: ${{ inputs.organization }}
@@ -51,7 +52,7 @@ jobs:
           github_token: ${{ secrets.PROJECT_TOKEN }}
 
       - name: Set Verification to Validating...
-        if: inputs.eval_project_number != ''
+        if: inputs.eval_project_number != '' && steps.find-pr.outcome == 'success'
         uses: ./.github/actions/update-project-field
         with:
           organization: ${{ inputs.organization }}

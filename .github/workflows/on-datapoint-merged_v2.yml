@@ -168,6 +168,18 @@ jobs:
           issue_node_id: ${{ steps.source-node.outputs.node_id }}
           github_token: ${{ secrets.PROJECT_TOKEN }}
 
+      - name: Set Verification to Generated
+        if: steps.find-eval-item.outputs.item_id != ''
+        uses: ./.github/actions/update-project-field
+        with:
+          organization: ${{ inputs.organization }}
+          project_number: ${{ steps.eval-project.outputs.project_number }}
+          item_id: ${{ steps.find-eval-item.outputs.item_id }}
+          field_name: Verification
+          value: Generated
+          value_type: single_select
+          github_token: ${{ secrets.PROJECT_TOKEN }}
+
       - name: Set Eval Type project status to Done
         if: steps.find-eval-item.outputs.item_id != ''
         uses: ./.github/actions/set-project-status

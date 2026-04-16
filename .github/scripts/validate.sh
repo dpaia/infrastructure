@@ -135,7 +135,7 @@ fi
 
 BASE_COMMIT="$(jq -r '.base_commit // empty' "$INSTANCE_DIR/datapoint.json")"
 COMMIT_SHORT="${BASE_COMMIT:0:12}"
-IMAGE_NAME="${INSTANCE_ID}:${COMMIT_SHORT}"
+IMAGE_NAME="${INSTANCE_ID,,}:${COMMIT_SHORT}"
 
 # ─── Read per-datapoint docker run params ───────────────────────────────
 

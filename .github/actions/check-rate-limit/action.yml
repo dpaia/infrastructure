@@ -27,10 +27,9 @@ runs:
         MIN_REMAINING: ${{ inputs.min_remaining }}
       run: |
         for attempt in 1 2 3; do
-          RESPONSE=$(gh api /rate_limit --include 2>&1)
-          RC=$?
+          RESPONSE=$(gh api /rate_limit --include 2>&1) || true
 
-          if [ $RC -eq 0 ]; then
+          if echo "$RESPONSE" | grep -q "^HTTP/"; then
             break
           fi
 

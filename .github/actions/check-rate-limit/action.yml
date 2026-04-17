@@ -31,16 +31,18 @@ runs:
         for attempt in 1 2 3; do
           RESPONSE=$(gh api /rate_limit --include 2>&1) || true
 
-          # Success — got HTTP response
-          if echo "$RESPONSE" | grep -q "^HTTP/"; then
+          # Extract HTTP status code from response headers
+          HTTP_STATUS=$(echo "$RESPONSE" | grep -o "^HTTP/[^ ]* [0-9]*" | grep -o '[0-9]*$' || true)
+
+          # 200 — success
+          if [ "$HTTP_STATUS" = "200" ]; then
             break
           fi
 
-          # Explicit rate limit keywords — always retry with backoff
-          if echo "$RESPONSE" | grep -qi "rate limit\|abuse\|secondary"; then
+          # Explicit rate limit (403 with rate limit message, or 429)
+          if [ "$HTTP_STATUS" = "429" ] || echo "$RESPONSE" | grep -qi "rate limit\|abuse\|secondary"; then
             WAIT=$(( 60 * attempt ))
-            # Try Retry-After header
-            RETRY_AFTER=$(echo "$RESPONSE" | grep -oi 'retry-after: [0-9]*' | grep -o '[0-9]*' | head -1)
+            RETRY_AFTER=$(echo "$RESPONSE" | grep -oi 'retry-after: [0-9]*' | grep -o '[0-9]*' | head -1 || true)
             if [ -n "$RETRY_AFTER" ]; then
               WAIT=$RETRY_AFTER
             fi
@@ -49,8 +51,8 @@ runs:
             continue
           fi
 
-          # 401 / Bad credentials — could be rate limit or expired token
-          if echo "$RESPONSE" | grep -qi "bad credentials\|401"; then
+          # 401 — could be secondary rate limit or expired token
+          if [ "$HTTP_STATUS" = "401" ] || echo "$RESPONSE" | grep -qi "bad credentials\|401"; then
             AUTH_FAILURES=$(( AUTH_FAILURES + 1 ))
             if [ "$AUTH_FAILURES" -ge 2 ]; then
               echo "::error::Token appears to be expired or revoked (401 on $AUTH_FAILURES consecutive attempts)"
@@ -63,7 +65,7 @@ runs:
           fi
 
           # Other error — warn and retry briefly
-          echo "::warning::Rate limit check failed (attempt $attempt/3): $(echo "$RESPONSE" | head -3)"
+          echo "::warning::Rate limit check failed (attempt $attempt/3, HTTP $HTTP_STATUS): $(echo "$RESPONSE" | tail -1)"
           if [ "$attempt" -eq 3 ]; then
             echo "remaining=unknown" >> $GITHUB_OUTPUT
             exit 0
@@ -71,15 +73,12 @@ runs:
           sleep $(( 10 * attempt ))
         done
 
-        # Split headers from body (gh api --include prepends HTTP headers)
-        BODY="$RESPONSE"
-        if echo "$RESPONSE" | grep -q "^HTTP/"; then
-          BODY=$(echo "$RESPONSE" | sed '1,/^\s*$/d')
-        fi
+        # Split headers from body
+        BODY=$(echo "$RESPONSE" | sed '1,/^\s*$/d')
 
-        # Parse core rate limit fields
-        REMAINING=$(echo "$BODY" | grep -o '"remaining":[0-9]*' | head -1 | grep -o '[0-9]*')
-        RESET=$(echo "$BODY" | grep -o '"reset":[0-9]*' | head -1 | grep -o '[0-9]*')
+        # Parse core rate limit fields (|| true to prevent set -e from killing on no match)
+        REMAINING=$(echo "$BODY" | grep -o '"remaining":[0-9]*' | head -1 | grep -o '[0-9]*' || true)
+        RESET=$(echo "$BODY" | grep -o '"reset":[0-9]*' | head -1 | grep -o '[0-9]*' || true)
 
         if [ -n "$REMAINING" ]; then
           echo "Rate limit: $REMAINING remaining"

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Emit EE-bench JSON v2.0 evaluation output (6 criteria).
+"""Emit EE-bench JSON v2.0 evaluation output (7 criteria).
 
 Language-independent emitter. Reads criteria status from environment
 variables (set by run.sh) and parser JSON files from /tmp.
@@ -134,6 +134,44 @@ def _evaluate_criterion(expected, eval_passed, baseline_passed, baseline_failed,
     return status, "; ".join(detail_parts) if detail_parts else success_msg
 
 
+def _matches_any_expected(actual_name, expected_names):
+    """True if actual_name matches any expected name via _test_in semantics.
+
+    Reuses the same matching semantics used for fail_to_pass/pass_to_pass:
+    exact, parameterized-prefix, class-level prefix, and module-prefix.
+    """
+    return any(_test_in(exp, {actual_name}) for exp in expected_names)
+
+
+def _evaluate_fail_to_fail(expected, eval_passed, baseline_passed,
+                           empty_status="skipped"):
+    """Evaluate fail_to_fail criterion.
+
+    Each listed test must NOT appear in baseline_passed NOR in eval_passed
+    (i.e. it should have failed or been absent in both runs).
+
+    Returns:
+        (status, detail_string) tuple
+    """
+    if not expected:
+        return empty_status, "no expected fail_to_fail tests"
+
+    eval_unexpected = [t for t in expected if _test_in(t, eval_passed)]
+    baseline_unexpected = [t for t in expected if _test_in(t, baseline_passed)]
+
+    detail_parts = []
+    if eval_unexpected:
+        detail_parts.append("eval unexpected pass: " + ", ".join(eval_unexpected[:10]))
+    if baseline_unexpected:
+        detail_parts.append(
+            "baseline unexpected pass: " + ", ".join(baseline_unexpected[:10])
+        )
+
+    if detail_parts:
+        return "fail", "; ".join(detail_parts)
+    return "pass", "all fail_to_fail tests still failing"
+
+
 def main():
     compile_status = os.environ.get("COMPILE_STATUS", "fail")
     compile_duration = int(os.environ.get("COMPILE_DURATION", "0"))
@@ -160,10 +198,15 @@ def main():
     eval_passed = {
         t["name"] for t in eval_data.get("passed_tests", []) if isinstance(t, dict)
     }
+    eval_failed_set = {
+        t["name"] for t in eval_data.get("failed_tests", []) if isinstance(t, dict)
+    }
 
     expected = load_json("/tmp/_expected.json")
     expected_f2p = expected.get("fail_to_pass", [])
     expected_p2p = expected.get("pass_to_pass", [])
+    expected_f2f = expected.get("fail_to_fail", [])
+    fail_to_fail_strict = expected.get("fail_to_fail_strict", True)
 
     # Expand wildcards: ["*"] means "all discovered tests"
     all_eval_tests = sorted(
@@ -182,12 +225,19 @@ def main():
         "errors": 0, "skipped": 0, "duration_seconds": 0.0,
     })
 
+    eval_summary_failed = eval_summary.get("failed", 0)
+    if not fail_to_fail_strict and expected_f2f:
+        excluded = {
+            n for n in eval_failed_set if _matches_any_expected(n, expected_f2f)
+        }
+        eval_summary_failed = max(0, eval_summary_failed - len(excluded))
+
     # --- Criterion: baseline_tests ---
     baseline_status = "pass" if compile_status == "pass" else "skipped"
 
     # --- Criterion: tests (eval run) ---
     tests_status = "skipped" if not can_run else (
-        "fail" if eval_summary.get("failed", 0) > 0 else "pass"
+        "fail" if eval_summary_failed > 0 else "pass"
     )
 
     # --- Criterion: fail_to_pass ---
@@ -212,9 +262,20 @@ def main():
             has_test_patch, should_fail_baseline=False, empty_status="skipped",
         )
 
+    # --- Criterion: fail_to_fail ---
+    if not expected_f2f:
+        f2f_status, f2f_detail = "skipped", "no expected fail_to_fail tests"
+    elif not can_run:
+        f2f_status, f2f_detail = "skipped", "skipped due to compilation or patch failure"
+    else:
+        f2f_status, f2f_detail = _evaluate_fail_to_fail(
+            expected_f2f, eval_passed, baseline_passed, empty_status="skipped",
+        )
+
     # --- Overall status ---
+    # tests_status is intentionally omitted - raw test failures are surfaced via fail_to_pass / fail_to_fail.
     has_failure = any(
-        s == "fail" for s in [compile_status, patch_status, f2p_status, p2p_status]
+        s == "fail" for s in [compile_status, patch_status, f2p_status, p2p_status, f2f_status]
     )
     overall_status = "failure" if has_failure else "success"
 
@@ -267,6 +328,13 @@ def main():
                 "status": p2p_status,
                 "expected": expected_p2p,
                 "detail": p2p_detail,
+            },
+            {
+                "criterion": "fail_to_fail",
+                "status": f2f_status,
+                "expected": expected_f2f,
+                "detail": f2f_detail,
+                "strict": fail_to_fail_strict,
             },
         ],
     }

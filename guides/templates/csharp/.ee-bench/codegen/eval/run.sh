@@ -90,10 +90,12 @@ fi
 PATCH_DURATION=$(_elapsed $PATCH_START)
 
 # ============================================================
-# Rebuild after submission patch
+# Rebuild after test_patch and/or submission patch
 # ============================================================
+# Must also rebuild when test_patch was applied — dotnet test --no-build
+# would otherwise run the pre-test_patch DLL and miss any newly added tests.
 REBUILD_STATUS="skipped"
-if [ "$PATCH_STATUS" = "pass" ]; then
+if [ "$PATCH_STATUS" = "pass" ] || [ "$HAS_TEST_PATCH" = "true" ]; then
   bash "$EVAL_DIR/scripts/install.sh" > /tmp/rebuild_stdout.log 2> /tmp/rebuild_stderr.log || {
     REBUILD_STATUS="fail"
   }

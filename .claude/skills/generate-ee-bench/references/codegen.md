@@ -18,7 +18,7 @@ Generate `.ee-bench/codegen/` configuration that builds a Docker image, runs tes
 
 `metadata.json`, `Dockerfile`, and `run.sh` are required. The `eval/scripts/` directory contains shared utility scripts that are copied from `guides/templates/shared/scripts/` in the infrastructure repository:
 
-- **`ee_bench_eval.py`** — language-independent emitter that builds schema v2.0 JSON output with all 6 criteria (compilation, baseline_tests, patch_applied, tests, fail_to_pass, pass_to_pass). Used by all languages.
+- **`ee_bench_eval.py`** — language-independent emitter that builds schema v2.0 JSON output with all 7 criteria (compilation, baseline_tests, patch_applied, tests, fail_to_pass, pass_to_pass, fail_to_fail). Used by all languages.
 - **`ee_bench_parser_junit.py`** — JUnit XML parser for Java/Maven/Gradle/Python projects.
 - **`ee_bench_parser_trx.py`** — TRX parser for C#/.NET projects.
 
@@ -143,7 +143,9 @@ Generate with detected values. Leave `expected` arrays empty — they are filled
   "<language-specific fields>": "<detected values>",
   "expected": {
     "fail_to_pass": [],
-    "pass_to_pass": []
+    "pass_to_pass": [],
+    "fail_to_fail": [],
+    "fail_to_fail_strict": true
   },
   "environment": {
     "project_root": "<detected default>"
@@ -151,13 +153,19 @@ Generate with detected values. Leave `expected` arrays empty — they are filled
 }
 ```
 
-**Note:** `expected.fail_to_pass` and `expected.pass_to_pass` are consumed by `run.sh` at **template render time**. They are baked into the script as JSON literals via `{{ instance.expected.fail_to_pass | tojson }}` and `{{ instance.expected.pass_to_pass | tojson }}`, so the running container does not need access to `metadata.json`. These lists are populated per datapoint during the export pipeline — leave them empty when generating the config.
+**Note:** `expected.fail_to_pass`, `expected.pass_to_pass`, `expected.fail_to_fail`, and `expected.fail_to_fail_strict` are consumed by `run.sh` at **template render time**. They are baked into the script as JSON literals via `{{ instance.expected.fail_to_pass | tojson }}` and `{{ instance.expected.pass_to_pass | tojson }}`, so the running container does not need access to `metadata.json`. These lists are populated per datapoint during the export pipeline — leave them empty when generating the config.
 
 **Test name formats:** Expected test names support three formats:
 - **Dot-separated** (default): `com.example.FooTest.testMethod`
 - **Hash delimiter**: `com.example.FooTest#testMethod` — `#` separates class from method
 - **Module prefix**: `my-module:com.example.FooTest#testMethod` — module before `:` is stripped for matching (JUnit XML does not include module names)
 - **Class-level**: `com.example.FooTest` or `my-module:com.example.FooTest` — matches all methods in the class
+
+**fail_to_fail semantics:**
+- Every name in `expected.fail_to_fail` must FAIL in both the baseline run AND the eval run. If any listed test passes in either run, the `fail_to_fail` criterion fails.
+- `fail_to_fail_strict` (bool, default `true`) controls the interaction with the `tests` criterion:
+  - `true` (default): failures in `fail_to_fail` tests still count in `tests.failed`. If only fail_to_fail tests fail, `tests` is still `fail`.
+  - `false`: failures in `fail_to_fail` tests are subtracted from `tests.failed` before computing pass/fail. Useful for "known flaky, don't block submission" scenarios.
 
 Language-specific fields to include:
 
@@ -322,6 +330,7 @@ All run.sh scripts follow the same 6-criterion structure. Only the compile and t
 | `tests` | Test run after submission | `pass`, `fail`, `skipped` |
 | `fail_to_pass` | Expected-failing tests failed in baseline, pass after submission | `pass`, `fail`, `skipped` |
 | `pass_to_pass` | Expected-passing tests passed in baseline, still pass after submission | `pass`, `fail`, `skipped` |
+| `fail_to_fail` | Expected-failing tests still failing after submission | `pass`, `fail`, `skipped` |
 
 **When criteria are skipped:**
 
@@ -462,7 +471,7 @@ cat > /tmp/_expected.json << 'EXPECTED_EOF'
 EXPECTED_EOF
 
 # ============================================================
-# Emit EE-bench JSON v2.0 (6 criteria)
+# Emit EE-bench JSON v2.0 (7 criteria)
 # ============================================================
 export PATCH_STATUS PATCH_DURATION COMPILE_STATUS COMPILE_DURATION
 export TEST_DURATION BASELINE_DURATION OVERALL_DURATION TIMESTAMP
@@ -516,7 +525,7 @@ The emitter is located at `guides/templates/shared/scripts/ee_bench_eval.py`. Co
 Key behavior:
 - Reads env vars from `run.sh`: `COMPILE_STATUS`, `PATCH_STATUS`, `TEST_DURATION`, `HAS_TEST_PATCH`, etc.
 - Reads temp files: `/tmp/_compile_output.txt`, `/tmp/_patch_output.txt`, `/tmp/_expected.json`, `/tmp/*_parser.json`
-- Builds all 6 criteria (compilation, baseline_tests, patch_applied, tests, fail_to_pass, pass_to_pass)
+- Builds all 7 criteria (compilation, baseline_tests, patch_applied, tests, fail_to_pass, pass_to_pass, fail_to_fail)
 - Handles wildcard expansion (`["*"]` means all discovered tests)
 - Prints schema v2.0 JSON to stdout
 

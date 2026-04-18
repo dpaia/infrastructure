@@ -216,7 +216,15 @@ def main():
     if expected_f2p == ["*"]:
         expected_f2p = all_eval_tests
     if expected_p2p == ["*"]:
-        expected_p2p = all_eval_tests
+        # Exclude fail_to_fail names from the wildcard — "expected to still fail"
+        # and "expected to still pass" are contradictory on the same test.
+        if expected_f2f:
+            expected_p2p = [
+                n for n in all_eval_tests
+                if not _matches_any_expected(n, expected_f2f)
+            ]
+        else:
+            expected_p2p = all_eval_tests
 
     can_run = compile_status == "pass" and patch_status in ("pass", "skipped")
 

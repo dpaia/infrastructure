@@ -121,11 +121,11 @@ cat /tmp/compile_stdout.log /tmp/compile_stderr.log > /tmp/_compile_output.txt 2
 
 # --- Write expected test lists to file (avoids shell quoting issues) ---
 cat > /tmp/_expected.json << 'EXPECTED_EOF'
-{"fail_to_pass": {{ instance.expected.fail_to_pass | tojson }}, "pass_to_pass": {{ instance.expected.pass_to_pass | tojson }}}
+{"fail_to_pass": {{ instance.expected.fail_to_pass | tojson }}, "pass_to_pass": {{ instance.expected.pass_to_pass | tojson }}, "fail_to_fail": {{ instance.expected.fail_to_fail | default([]) | tojson }}, "fail_to_fail_strict": {{ instance.expected.fail_to_fail_strict | default(true) | tojson }}}
 EXPECTED_EOF
 
 # ============================================================
-# Emit EE-bench JSON v2.0 (6 criteria)
+# Emit EE-bench JSON v2.0 (7 criteria)
 # ============================================================
 export PATCH_STATUS PATCH_DURATION COMPILE_STATUS COMPILE_DURATION
 export TEST_DURATION BASELINE_DURATION OVERALL_DURATION TIMESTAMP

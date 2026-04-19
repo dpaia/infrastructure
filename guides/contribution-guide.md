@@ -321,6 +321,16 @@ Files in the PR diff are classified using the following precedence (highest firs
 
 Files under `.ee-bench/` are excluded from both patches.
 
+> **Non-standard test locations.** If your test files live outside the default heuristic (paths matching `/test/`, `/tests/`, `/spec/`, `_test.`, `Test.`, etc.), classification will misroute them. For example Playwright's `apps/frontend/e2e/**` does not match any default pattern.
+>
+> Set `patch.test_patterns` in `metadata.json` to route them correctly:
+>
+> ```json
+> { "patch": { "test_patterns": ["apps/frontend/e2e/**"] } }
+> ```
+>
+> Verify by regenerating the datapoint locally and inspecting that `eval/test_patch.diff` and `verify/patch.diff` contain the files you expect.
+
 ### Pattern Syntax
 
 Both `test_patterns` and `source_patterns` use Python [`fnmatch`](https://docs.python.org/3/library/fnmatch.html) glob syntax, matched against the full file path from the diff (e.g., `src/main/java/Foo.java`):

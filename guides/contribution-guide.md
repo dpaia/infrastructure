@@ -23,6 +23,22 @@ For a complete example, see [dpaia/spectre.console#2](https://github.com/dpaia/s
 - **Docker**: Required for local testing (`linux/amd64` platform)
 - **jq**: Required by the validation script
 
+## Datapoint Creation Workflow
+
+Keep reusable scaffolding (Dockerfile, run.sh, eval/scripts/, base metadata.json) on the repo's default branch — or on a long-lived "eval" branch if the fork's default tracks upstream. Datapoint PRs should normally contain only the metadata.json override and the gold source/test changes.
+
+Happy path for a new datapoint:
+
+1. Ensure main has `.ee-bench/codegen/` scaffolding. If not, run `generate-ee-bench` once and commit.
+2. Pick a branch model:
+   - **Pair model** (best for reproducibility): create `<prefix>-base/<slug>` pinned to the "problem" state + `<prefix>-solution/<slug>` with the gold fix. PR goes solution → base.
+   - **Direct model** (simpler; matches feature-service precedent): branch `<issue-id>-<slug>` from main with the gold fix. PR goes branch → main.
+3. On the solution/head branch: override `.ee-bench/codegen/metadata.json` to fill the `expected` arrays. Add the source/test changes.
+4. Open the PR. Title + body should describe the task as the agent sees it — no ee-bench boilerplate inside.
+5. The validator runs automatically: `patch_splitter` extracts `test_patch` and `verify/patch.diff` from the PR diff; `validate.sh` runs the eval end-to-end in Docker.
+
+Datapoint PRs SHOULD NOT add `.ee-bench/` scaffolding inline. The scaffolding is inherited from the default branch. PRs that carry scaffolding are harder to review, harder to reproduce, and mix two concerns.
+
 ## Setting Up a Repository
 
 Source PRs must live in a repository under the `dpaia` GitHub organization. If the project you want to create a datapoint for is not already in the org, fork it.

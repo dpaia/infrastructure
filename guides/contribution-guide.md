@@ -209,6 +209,21 @@ All fields in `metadata.json` are **optional**. They are populated in the result
 }
 ```
 
+### Choosing an evaluation methodology
+
+Expected lists are evaluation methodology knobs. Different approaches suit different datapoints. Pick what matches the signal you want to measure.
+
+| Signal you want                                                         | Example config                                          | Notes                                                                                                           |
+|-------------------------------------------------------------------------|---------------------------------------------------------|-----------------------------------------------------------------------------------------------------------------|
+| Agent fixes a bug that made an existing test fail                       | `fail_to_pass: [<failing-test>]`                        | Classic SWE-bench pattern.                                                                                      |
+| Agent adds a new test that must pass                                    | `fail_to_pass: [<new-test>]`                            | Works because the test isn't in baseline — the criterion's baseline-skip branch triggers cleanly.               |
+| Regression guard — existing tests must still pass                       | `pass_to_pass: [...]` or `["*"]`                        | Safe default for most datapoints.                                                                               |
+| Test modified in place via helpers (same spec name, new assertions)     | `pass_to_pass: [<the-modified-test>]`                   | Avoids `fail_to_pass` flagging "baseline unexpected pass" — the test IS in `baseline_passed` under old assertions. |
+| Known-flaky / broken test should stay failing                           | `fail_to_fail: [<flaky>]` + `fail_to_fail_strict`       | `strict: false` also subtracts those failures from `tests.failed`.                                              |
+| Don't care about individual regressions                                 | `pass_to_pass: ["*"]`                                   | Wildcard; the emitter auto-excludes `fail_to_fail` names from the expansion.                                    |
+
+Empty `fail_to_pass` is valid — a datapoint that verifies solely via `pass_to_pass` / `fail_to_fail` is fine. The emitter treats empty lists as `skipped`.
+
 ### Template Variables in .ee-bench Files
 
 All files in `.ee-bench/codegen/` (Dockerfiles, eval scripts, environment files) are rendered as Jinja2 templates before use. The template context is built in two phases:

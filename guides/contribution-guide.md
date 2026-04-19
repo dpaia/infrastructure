@@ -736,6 +736,20 @@ Use this to re-trigger generation if it previously failed or wasn't triggered au
 
 > **Note:** Commands are case-insensitive. If both `validate` and `generate` appear in the same comment, `validate` takes priority.
 
+## Keeping Scaffolding In Sync
+
+When shared assets change — the emitter (`guides/templates/shared/scripts/ee_bench_eval.py`) or a language template under `guides/templates/<lang>/` — each datapoint repo that has its own copy must re-sync, or its eval will run outdated logic.
+
+Quickest check:
+
+```bash
+diff \
+  <repo>/.ee-bench/codegen/eval/scripts/ee_bench_eval.py \
+  guides/templates/shared/scripts/ee_bench_eval.py
+```
+
+Any drift means the datapoint repo will exhibit the old behavior until the file is refreshed on the default branch. Propagate by copying + committing on the default branch, then merging into any in-flight datapoint branches.
+
 ## Pipeline Status Flow
 
 Once your PR is on the project board, here's what happens at each status:

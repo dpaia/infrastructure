@@ -535,6 +535,12 @@ Criteria are skipped when their prerequisites are not met (e.g., `tests` is skip
 - Use helper scripts in `eval/scripts/` for complex logic (parsing test results, installing dependencies)
 - Use template variables for values that change per-datapoint (base commit, project root, expected tests) rather than hardcoding
 
+**Language / runtime gotchas:**
+- **C# — `dotnet test --no-build`:** `run.sh` must rebuild the test project whenever `HAS_TEST_PATCH=true`, not only when a submission patch applied. Without the rebuild, newly-added test source isn't compiled into the DLL and eval reports `fail_to_pass: fail` with detail `eval missing: <test>`.
+- **C# — `dotnet build`:** add `-m:1` to serialize the build. Parallel builds race on `obj/Debug/<tf>/rpswa.dswa.cache.json` (StaticWebAssets task), producing `MSB4018` mid-build.
+- **C# — `dotnet test`:** include `--results-directory "$ARTIFACTS_DIR"`. The TRX logger otherwise writes to the project's `TestResults/` directory and the parser sees 0 tests while stdout still shows `Passed: N`.
+- **Playwright / Next.js:** the `playwright.config` `webServer` block auto-starts the app when tests run. Do NOT launch servers from `run.sh` — it double-starts. Use `--reporter=junit` so the shared parser picks up results.
+
 ### Environment Variables
 
 The following environment variables control `run.sh` behavior at runtime:

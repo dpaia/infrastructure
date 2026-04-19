@@ -216,7 +216,11 @@ for item in github.provide(filters=filters, limit=LIMIT):
 
     # Enrich: split patch into source + test (exclude .ee-bench/ infrastructure files)
     # Use metadata.json patch classification patterns if available.
-    patch_cls = env_data.get("patch") or {}
+    # NOTE: use .pop (not .get) — metadata.json's "patch" key is classification
+    # config, while the EEBenchCodegenUnifiedGenerator looks up "patch" across
+    # sources (env_data BEFORE patches) and would otherwise return the config
+    # dict instead of patch_splitter's actual source-diff string.
+    patch_cls = env_data.pop("patch", None) or {}
     patch_data = patch_splitter.provide(
         patch=item.get("patch", ""),
         exclude_paths=[".ee-bench/"],

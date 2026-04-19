@@ -125,6 +125,8 @@ Your repository main branch or PR must include a `.ee-bench/codegen/` directory 
         └── ee_bench_parser_*.py # Language-specific parser (from templates/shared/)
 ```
 
+> **Ownership:** scaffolding lives on the default branch. Datapoint PRs CAN override any of these files when a specific case needs it (e.g. a custom `run.sh` for a tricky build), but keep the PR minimal — the smaller the override, the easier the datapoint is to review and reproduce. A typical datapoint PR touches only `metadata.json` + the source/test changes.
+
 ### Shared Eval Scripts
 
 The `eval/scripts/` directory contains shared utility scripts from [`guides/templates/shared/scripts/`](templates/shared/scripts/). These are the source of truth for evaluation logic:

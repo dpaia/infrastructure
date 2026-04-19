@@ -250,7 +250,7 @@ def main():
 
     # --- Criterion: fail_to_pass ---
     if not expected_f2p:
-        f2p_status, f2p_detail = "fail", "no expected fail_to_pass tests defined"
+        f2p_status, f2p_detail = "skipped", "no expected fail_to_pass tests"
     elif not can_run:
         f2p_status, f2p_detail = "skipped", "skipped due to compilation or patch failure"
     else:

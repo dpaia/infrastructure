@@ -207,6 +207,11 @@ if [ $BUILD_EXIT -ne 0 ]; then
   exit 1
 fi
 
+# ─── Dump eval folder ─────────────────────────────────────
+
+echo "Dump eval folder"
+ls -alR "$STAGE_DIR/eval"
+
 # ─── Run container with gold patch ─────────────────────────────────────
 
 echo "Running validation ..."

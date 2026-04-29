@@ -209,8 +209,11 @@ fi
 
 # ─── Dump eval folder ─────────────────────────────────────
 
-echo "Dump eval folder"
+echo ""
+echo "--- Dump eval folder ---"
 ls -alR "$STAGE_DIR/eval"
+echo "--- End dump eval folder ---"
+echo ""
 
 # ─── Run container with gold patch ─────────────────────────────────────
 
@@ -230,6 +233,14 @@ if [ $DOCKER_EXIT -ne 0 ]; then
   echo "WARN: docker run exited with code $DOCKER_EXIT"
   echo "$OUTPUT"
 fi
+
+# ─── Print container output ─────────────────────────────────────
+
+echo ""
+echo "--- Container output ---"
+echo "$OUTPUT"
+echo "--- End container output ---"
+echo ""
 
 # ─── Parse JSON output ─────────────────────────────────────────────────
 

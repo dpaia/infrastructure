@@ -38,6 +38,8 @@ else
   usage
 fi
 
+echo "Mode $MODE, instance_id=$INSTANCE_ID"
+
 # ─── Staging directory (macOS Docker mount compatibility) ───────────────
 
 STAGE_DIR="/tmp/ee-bench-validate-${INSTANCE_ID}"
@@ -213,6 +215,18 @@ echo ""
 echo "--- Dump eval folder ---"
 ls -alR "$STAGE_DIR/eval"
 echo "--- End dump eval folder ---"
+echo "--- Dump submission folder ---"
+ls -alR "$STAGE_DIR/submission"
+echo "--- End submission folder ---"
+echo "--- Cat patches ---"
+echo "----- cat eval/test_patch.diff"
+cat "$STAGE_DIR/eval/test_patch.diff" || true
+echo "------------------------------"
+echo "----- cat submission/test_patch.diff"
+cat "$STAGE_DIR/submission/patch.diff" || true
+echo "------------------------------"
+echo "--- End cat patches ---"
+echo ""
 echo ""
 
 # ─── Run container with gold patch ─────────────────────────────────────

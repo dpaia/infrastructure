@@ -215,6 +215,17 @@ echo ""
 echo "--- Dump eval folder ---"
 ls -alR "$STAGE_DIR/eval"
 echo "--- End dump eval folder ---"
+echo "--- Cat patches ---"
+find . -type f -name "test_patch.diff" -print0 | while IFS= read -r -d '' f; do
+  echo "===== test_patch: $f ====="
+  cat "$f"
+done
+find . -type f -name "patch.diff" -print0 | while IFS= read -r -d '' f; do
+  echo "===== patch: $f ====="
+  cat "$f"
+done
+echo "--- End cat patches ---"
+echo ""
 echo ""
 
 # ─── Run container with gold patch ─────────────────────────────────────

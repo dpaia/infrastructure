@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-EE_IMPORT_DIR="/Users/Anton.Spilnyy/work/dpai/ee-bench-import"  #/path/to/ee-bench-import
+EE_IMPORT_DIR=""  #/path/to/ee-bench-import
 INFRA_DIR=$(cd ../.. && pwd) #/path/to/infrastructure
 
 if [ -z "$INFRA_DIR" ]; then

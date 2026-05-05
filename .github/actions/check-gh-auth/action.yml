@@ -1,0 +1,39 @@
+name: 'Check gh auth'
+description: 'Runs `gh auth status` with retry/backoff to tolerate transient 401s from secondary rate limits'
+author: 'JetBrains'
+
+inputs:
+  github_token:
+    description: 'GitHub token to validate'
+    required: true
+  attempts:
+    description: 'Maximum attempts before failing'
+    required: false
+    default: '3'
+  base_wait:
+    description: 'Base wait seconds (multiplied by attempt number for linear backoff)'
+    required: false
+    default: '10'
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Verify gh auth
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github_token }}
+        ATTEMPTS: ${{ inputs.attempts }}
+        BASE_WAIT: ${{ inputs.base_wait }}
+      run: |
+        for attempt in $(seq 1 "$ATTEMPTS"); do
+          if gh auth status; then
+            break
+          fi
+          if [ "$attempt" -eq "$ATTEMPTS" ]; then
+            echo "::error::gh auth status failed after $ATTEMPTS attempts — token may be expired or revoked"
+            exit 1
+          fi
+          WAIT=$(( attempt * BASE_WAIT ))
+          echo "::warning::gh auth status failed (attempt $attempt/$ATTEMPTS), retrying in ${WAIT}s..."
+          sleep "$WAIT"
+        done

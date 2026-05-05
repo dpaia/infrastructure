@@ -21,6 +21,11 @@ outputs:
 runs:
   using: 'composite'
   steps:
+    - name: Check gh auth
+      uses: ./.github/actions/check-gh-auth
+      with:
+        github_token: ${{ inputs.github_token }}
+
     - name: Fetch field ID
       id: fetch-field-id
       shell: bash
@@ -29,8 +34,6 @@ runs:
         PROJECT_ID: ${{ inputs.project_id }}
         FIELD_NAME: ${{ inputs.field_name }}
       run: |
-        gh auth status
-
         echo "Fetching Field ID for field: $FIELD_NAME..."
         fields_query=$(gh api graphql -f query='
         query($project:ID!) {

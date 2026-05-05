@@ -112,9 +112,9 @@ def detect_and_parse(artifacts_dir):
 
 def aggregate(methods):
     """Build summary and test lists from parsed method results."""
-    passed_names = []
-    failed_names = []
-    skipped_names = []
+    passed_entries = []
+    failed_entries = []
+    skipped_entries = []
     total_duration = 0.0
     n_errors = 0
 
@@ -122,26 +122,32 @@ def aggregate(methods):
         total_duration += m.get("duration_seconds", 0.0)
         status = m["status"]
         if status == "passed":
-            passed_names.append(m["name"])
+            passed_entries.append(m)
         elif status == "failed":
-            failed_names.append(m["name"])
+            failed_entries.append(m)
             if m.get("type") == "error":
                 n_errors += 1
         elif status == "skipped":
-            skipped_names.append(m["name"])
+            skipped_entries.append(m)
+
+    def unique_entries(entries):
+        by_name = {}
+        for entry in entries:
+            by_name.setdefault(entry["name"], entry)
+        return [by_name[name] for name in sorted(by_name)]
 
     return {
         "summary": {
             "total": len(methods),
-            "passed": len(passed_names),
-            "failed": len(failed_names) - n_errors,
+            "passed": len(passed_entries),
+            "failed": len(failed_entries) - n_errors,
             "errors": n_errors,
-            "skipped": len(skipped_names),
+            "skipped": len(skipped_entries),
             "duration_seconds": round(total_duration, 3),
         },
-        "passed_tests": [{"name": n} for n in sorted(set(passed_names))],
-        "failed_tests": [{"name": n} for n in sorted(set(failed_names))],
-        "skipped_tests": [{"name": n} for n in sorted(set(skipped_names))],
+        "passed_tests": unique_entries(passed_entries),
+        "failed_tests": unique_entries(failed_entries),
+        "skipped_tests": unique_entries(skipped_entries),
         "methods": methods,
     }
 

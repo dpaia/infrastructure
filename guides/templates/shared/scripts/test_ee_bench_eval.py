@@ -2,6 +2,7 @@
 
 Run: python3 -m pytest guides/templates/shared/scripts/test_ee_bench_eval.py -v
 """
+import json
 import sys
 from pathlib import Path
 
@@ -145,3 +146,51 @@ def test_tests_status_allows_non_zero_exit_for_non_strict_fail_to_fail():
     )
     assert status == "pass"
     assert not exit_failed
+
+
+def test_overall_status_fails_when_tests_criterion_fails(monkeypatch, capsys):
+    monkeypatch.setenv("COMPILE_STATUS", "pass")
+    monkeypatch.setenv("PATCH_STATUS", "skipped")
+    monkeypatch.setenv("EVAL_TEST_EXIT_CODE", "0")
+
+    def fake_load_json(path):
+        if path == "/tmp/_expected.json":
+            return {"pass_to_pass": ["pkg.StableTest.case"]}
+        if path == "/tmp/baseline_parser.json":
+            return {
+                "passed_tests": [{"name": "pkg.StableTest.case"}],
+                "failed_tests": [],
+                "summary": {
+                    "total": 1,
+                    "passed": 1,
+                    "failed": 0,
+                    "errors": 0,
+                    "skipped": 0,
+                    "duration_seconds": 0,
+                },
+            }
+        if path == "/tmp/eval_parser.json":
+            return {
+                "passed_tests": [{"name": "pkg.StableTest.case"}],
+                "failed_tests": [{"name": "pkg.UnexpectedError.case"}],
+                "summary": {
+                    "total": 2,
+                    "passed": 1,
+                    "failed": 0,
+                    "errors": 1,
+                    "skipped": 0,
+                    "duration_seconds": 0,
+                },
+            }
+        return {}
+
+    monkeypatch.setattr(evalmod, "load_json", fake_load_json)
+    monkeypatch.setattr(evalmod, "read_file", lambda path, limit=evalmod.MAX_OUTPUT: "")
+
+    evalmod.main()
+    result = json.loads(capsys.readouterr().out)
+
+    assert result["status"] == "failure"
+    criteria = {item["criterion"]: item for item in result["criteria"]}
+    assert criteria["tests"]["status"] == "fail"
+    assert criteria["pass_to_pass"]["status"] == "pass"

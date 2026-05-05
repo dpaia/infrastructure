@@ -8,7 +8,7 @@ Prints the result JSON to stdout.
 Environment variables consumed:
     COMPILE_STATUS, COMPILE_DURATION, PATCH_STATUS, PATCH_DURATION,
     TEST_DURATION, BASELINE_DURATION, OVERALL_DURATION, TIMESTAMP,
-    HAS_TEST_PATCH
+    HAS_TEST_PATCH, BASELINE_TEST_EXIT_CODE, EVAL_TEST_EXIT_CODE
 
 Temp files consumed:
     /tmp/_compile_output.txt, /tmp/_patch_output.txt, /tmp/_expected.json,
@@ -353,7 +353,7 @@ def main():
         "errors": 0, "skipped": 0, "duration_seconds": 0.0,
     })
 
-    eval_summary_failed = eval_summary.get("failed", 0)
+    eval_summary_failed = eval_summary.get("failed", 0) + eval_summary.get("errors", 0)
     if not fail_to_fail_strict and expected_f2f:
         excluded = [n for n in eval_failed if _matches_any_expected(n, expected_f2f)]
         eval_summary_failed = max(0, eval_summary_failed - len(excluded))
@@ -400,9 +400,9 @@ def main():
         )
 
     # --- Overall status ---
-    # tests_status is intentionally omitted - raw test failures are surfaced via fail_to_pass / fail_to_fail.
     has_failure = any(
-        s == "fail" for s in [compile_status, patch_status, f2p_status, p2p_status, f2f_status]
+        s == "fail"
+        for s in [compile_status, patch_status, tests_status, f2p_status, p2p_status, f2f_status]
     )
     overall_status = "failure" if has_failure else "success"
 

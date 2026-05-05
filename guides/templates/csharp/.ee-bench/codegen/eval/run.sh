@@ -24,8 +24,11 @@ _run_tests() {
   set +e
   dotnet test --no-build {{ instance.test_framework_flag }} "{{ instance.test_project }}" \
     --logger "{{ instance.test_logger }}" \
+    --results-directory "$ARTIFACTS_DIR" \
     > "/tmp/${label}_stdout.log" 2> "/tmp/${label}_stderr.log"
+  local test_exit=$?
   set -e
+  echo "$test_exit" > "/tmp/${label}_exit_code"
 
   python3 "$EVAL_DIR/scripts/ee_bench_parser_trx.py" "$ARTIFACTS_DIR" > "/tmp/${label}_parser.json" 2>/dev/null || echo '{}' > "/tmp/${label}_parser.json"
 
@@ -60,9 +63,11 @@ if [ -f "$EVAL_DIR/test_patch.diff" ]; then
 fi
 
 BASELINE_DURATION=0
+BASELINE_TEST_EXIT_CODE=0
 if [ "$COMPILE_STATUS" = "pass" ]; then
   BASELINE_START=$SECONDS
   _run_tests baseline
+  BASELINE_TEST_EXIT_CODE="$(cat /tmp/baseline_exit_code 2>/dev/null || echo 0)"
   BASELINE_DURATION=$(_elapsed $BASELINE_START)
 fi
 
@@ -109,9 +114,11 @@ fi
 # Run eval tests (only if rebuild/compilation OK and patch not failed)
 # ============================================================
 TEST_DURATION=0
+EVAL_TEST_EXIT_CODE=0
 if [ "$REBUILD_STATUS" = "pass" ] || ([ "$COMPILE_STATUS" = "pass" ] && [ "$PATCH_STATUS" != "fail" ]); then
   TEST_START=$SECONDS
   _run_tests eval
+  EVAL_TEST_EXIT_CODE="$(cat /tmp/eval_exit_code 2>/dev/null || echo 0)"
   TEST_DURATION=$(_elapsed $TEST_START)
 fi
 
@@ -131,6 +138,6 @@ EXPECTED_EOF
 # ============================================================
 export PATCH_STATUS PATCH_DURATION COMPILE_STATUS COMPILE_DURATION
 export TEST_DURATION BASELINE_DURATION OVERALL_DURATION TIMESTAMP
-export HAS_TEST_PATCH
+export HAS_TEST_PATCH BASELINE_TEST_EXIT_CODE EVAL_TEST_EXIT_CODE
 
 python3 "$EVAL_DIR/scripts/ee_bench_eval.py"

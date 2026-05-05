@@ -309,10 +309,16 @@ echo "JSON output:"
 echo "$JSON" | jq .
 
 STATUS=$(echo "$JSON" | jq -r '.status')
-if [ "$STATUS" = "success" ]; then
+FAILED_CRITERIA_COUNT=$(echo "$JSON" | jq -r '[.criteria[]? | select(.status == "fail")] | length')
+
+if [ "$STATUS" = "success" ] && [ "$FAILED_CRITERIA_COUNT" -eq 0 ]; then
   exit 0
 else
-  echo "Validation failed (status=$STATUS)"
+  if [ "$FAILED_CRITERIA_COUNT" -gt 0 ]; then
+    echo "Validation failed ($FAILED_CRITERIA_COUNT failed criteria, status=$STATUS)"
+  else
+    echo "Validation failed (status=$STATUS)"
+  fi
   echo "$JSON" | jq -r '[.criteria[] | select(.status == "fail")] | map("  FAIL: \(.criterion) — \(.detail // .output // "")") | .[]' 2>/dev/null || true
   exit 1
 fi

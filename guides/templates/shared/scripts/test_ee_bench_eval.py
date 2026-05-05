@@ -13,8 +13,72 @@ def test_matches_any_expected_exact():
     assert evalmod._matches_any_expected("pkg.FooTest.testA", ["pkg.FooTest.testA"])
 
 
+def test_matches_any_expected_by_canonical_name():
+    actual = {
+        "name": "raw display name",
+        "canonical_name": "pkg.FooTest.testA",
+    }
+    expected = {
+        "name": "different raw display name",
+        "canonical_name": "pkg.FooTest.testA",
+    }
+    assert evalmod._matches_any_expected(actual, [expected])
+
+
+def test_matches_any_expected_by_match_key():
+    actual = {
+        "name": "raw display name",
+        "match_keys": ["pkg.FooTest.testA", "legacy:FooTest.testA"],
+    }
+    expected = {
+        "name": "different raw display name",
+        "match_keys": ["pkg.FooTest.testA"],
+    }
+    assert evalmod._matches_any_expected(actual, [expected])
+
+
 def test_matches_any_expected_class_level():
     assert evalmod._matches_any_expected("pkg.FooTest.testA", ["pkg.FooTest"])
+
+
+def test_matches_any_expected_nested_class_separator():
+    assert evalmod._matches_any_expected(
+        "pkg.Outer.Inner.testA",
+        ["pkg.Outer+Inner.testA"],
+    )
+
+
+def test_matches_any_expected_nested_class_separator_on_both_sides():
+    assert evalmod._matches_any_expected(
+        "pkg.Outer+Inner.testA",
+        ["pkg.Outer+Inner.testA"],
+    )
+
+
+def test_matches_json_unicode_escape_with_actual_unicode():
+    assert evalmod._matches_any_expected(
+        r'pkg.Outer+Inner.testA(value: "\ud83c\udf0d")',
+        ['pkg.Outer+Inner.testA(value: "🌍")'],
+    )
+
+
+def test_colon_in_parameter_name_is_not_treated_as_module_prefix():
+    actual = 'pkg.Outer+Inner.testA(markup: "::", expected: ":🌍:")'
+    assert evalmod._matches_any_expected(actual, [actual])
+
+
+def test_parameterized_cases_do_not_match_by_method_prefix():
+    assert not evalmod._matches_any_expected(
+        'pkg.Outer+Inner.testA(value: "other")',
+        ['pkg.Outer+Inner.testA(value: "target")'],
+    )
+
+
+def test_unparameterized_expected_can_match_parameterized_actual():
+    assert evalmod._matches_any_expected(
+        'pkg.Outer+Inner.testA(value: "target")',
+        ["pkg.Outer+Inner.testA"],
+    )
 
 
 def test_matches_any_expected_no_match():
@@ -57,3 +121,27 @@ def test_fail_to_fail_baseline_unexpected_pass_fails():
     )
     assert status == "fail"
     assert "baseline unexpected pass" in detail
+
+
+def test_tests_status_fails_on_non_zero_exit_code():
+    status, exit_failed = evalmod._evaluate_tests_status(
+        can_run=True,
+        eval_summary_failed=0,
+        eval_test_exit_code=1,
+        expected_f2f=[],
+        fail_to_fail_strict=True,
+    )
+    assert status == "fail"
+    assert exit_failed
+
+
+def test_tests_status_allows_non_zero_exit_for_non_strict_fail_to_fail():
+    status, exit_failed = evalmod._evaluate_tests_status(
+        can_run=True,
+        eval_summary_failed=0,
+        eval_test_exit_code=1,
+        expected_f2f=["pkg.ExpectedFailure.one"],
+        fail_to_fail_strict=False,
+    )
+    assert status == "pass"
+    assert not exit_failed

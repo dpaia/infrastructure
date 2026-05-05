@@ -56,6 +56,55 @@ def get_local_data(instance_id: str) -> dict:
         return local_data_index.get(instance_id, {})
     return local_data_raw  # plain dict applies to all items
 
+
+def _parse_test_list(value) -> list:
+    """Return a normalized list from JSON string/list/scalar test metadata."""
+    if value in (None, ""):
+        return []
+    if isinstance(value, list):
+        return value
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+            if isinstance(parsed, list):
+                return parsed
+        except (json.JSONDecodeError, ValueError):
+            pass
+        return [part.strip() for part in value.split(",") if part.strip()]
+    return [value]
+
+
+def normalize_expected_fields(data: dict) -> None:
+    """Ensure legacy test-list fields are also available as expected.*."""
+    expected = data.setdefault("expected", {})
+    if not isinstance(expected, dict):
+        expected = {}
+        data["expected"] = expected
+
+    aliases = {
+        "fail_to_pass": ("FAIL_TO_PASS", "fail_to_pass"),
+        "pass_to_pass": ("PASS_TO_PASS", "pass_to_pass"),
+    }
+    for expected_key, source_keys in aliases.items():
+        candidates = []
+        if expected_key in expected:
+            candidates.append(expected[expected_key])
+        candidates.extend(
+            expected[source_key] for source_key in source_keys if source_key in expected
+        )
+        candidates.extend(
+            data[source_key] for source_key in source_keys if source_key in data
+        )
+
+        normalized = []
+        for candidate in candidates:
+            normalized = _parse_test_list(candidate)
+            if normalized:
+                break
+
+        expected[expected_key] = normalized
+
+
 # --- Configuration ---
 GITHUB_TOKEN = os.environ["GITHUB_TOKEN"]
 
@@ -177,6 +226,7 @@ for item in github.provide(filters=filters, limit=LIMIT):
     local_data = get_local_data(preliminary_id)
     if local_data:
         item.update(local_data)
+    normalize_expected_fields(item)
 
     # Enrich: extract markdown sections from PR body
     section_data = sections.provide(text=item["description"])
@@ -252,6 +302,7 @@ for item in github.provide(filters=filters, limit=LIMIT):
         version=VERSION,
         instance_id=instance_id,
     )
+    normalize_expected_fields(record)
     records.append(record)
 
 # --- Write output ---

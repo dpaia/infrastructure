@@ -45,7 +45,12 @@ def parse_junit_xml(root):
             except (ValueError, TypeError):
                 pass
 
-            entry = {"name": full_name, "duration_seconds": duration}
+            entry = {
+                "name": full_name,
+                "canonical_name": full_name,
+                "match_keys": [full_name],
+                "duration_seconds": duration,
+            }
 
             failure = tc.find("failure")
             error = tc.find("error")

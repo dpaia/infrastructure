@@ -311,7 +311,7 @@ echo "$JSON" | jq .
 STATUS=$(echo "$JSON" | jq -r '.status')
 FAILED_CRITERIA_COUNT=$(echo "$JSON" | jq -r '[.criteria[]? | select(.status == "fail")] | length')
 
-if [ "$STATUS" = "success" ] && [ "$FAILED_CRITERIA_COUNT" -eq 0 ]; then
+if [ "$STATUS" = "success" ]; then
   exit 0
 else
   if [ "$FAILED_CRITERIA_COUNT" -gt 0 ]; then

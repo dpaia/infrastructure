@@ -60,14 +60,38 @@ runs:
         bash .github/scripts/validate.sh "$INSTANCE_DIR" 2>&1 | tee "$LOG_FILE"
         EXIT_CODE=$?
 
-        # Extract JSON result from validation output (appears after "JSON output:" line)
+        # Extract exactly one JSON object from validation output. The validator may
+        # print human-readable diagnostics after the JSON when status=failure.
         RESULT_JSON_FILE="${RUNNER_TEMP}/validation-result.json"
-        awk '/^JSON output:$/{found=1; next} found{print}' "$LOG_FILE" > "$RESULT_JSON_FILE"
+        python3 - "$LOG_FILE" "$RESULT_JSON_FILE" <<'PY'
+        import json
+        import sys
+        from pathlib import Path
+
+        log_path = Path(sys.argv[1])
+        result_path = Path(sys.argv[2])
+        marker = "JSON output:"
+        text = log_path.read_text(errors="replace")
+        index = text.rfind(marker)
+        if index == -1:
+            result_path.write_text("")
+            sys.exit(0)
+
+        payload = text[index + len(marker):].lstrip()
+        try:
+            obj, _ = json.JSONDecoder().raw_decode(payload)
+        except json.JSONDecodeError:
+            result_path.write_text("")
+            sys.exit(0)
+
+        result_path.write_text(json.dumps(obj, indent=2) + "\n")
+        PY
 
         # Ensure file exists for artifact upload even if empty
         echo "result_json_path=$RESULT_JSON_FILE" >> $GITHUB_OUTPUT
 
         # Parse structured results from JSON (eval-type-agnostic)
+        STATUS=""
         if [ -s "$RESULT_JSON_FILE" ] && jq empty "$RESULT_JSON_FILE" 2>/dev/null; then
           STATUS=$(jq -r '.status' "$RESULT_JSON_FILE")
           DURATION=$(jq -r '.duration_seconds' "$RESULT_JSON_FILE")
@@ -124,7 +148,13 @@ runs:
           fi
         fi
 
-        if [ $EXIT_CODE -eq 0 ]; then
+        if [ "$STATUS" = "success" ]; then
+          echo "result=success" >> $GITHUB_OUTPUT
+          exit 0
+        elif [ -n "$STATUS" ]; then
+          echo "result=failure" >> $GITHUB_OUTPUT
+          exit 1
+        elif [ $EXIT_CODE -eq 0 ]; then
           echo "result=success" >> $GITHUB_OUTPUT
         else
           echo "result=failure" >> $GITHUB_OUTPUT

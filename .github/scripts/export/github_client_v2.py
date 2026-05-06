@@ -12,12 +12,16 @@ Rate limit handling:
 """
 
 import json
+import logging
 import os
 import subprocess
 import sys
 import time
 from dataclasses import dataclass
 from typing import Optional
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 
 def _get_token() -> str:
@@ -105,6 +109,7 @@ def search_board_items(org: str, project_number: int, query: str) -> list[dict]:
         ])
 
         data = json.loads(result.stdout)
+        logger.info(f"───── search_board_items: page {page} ─────\n{json.dumps(data, indent=2)}\n───── end page {page} ─────")
         for item in data.get("items", []):
             items.append({
                 "node_id": item["node_id"],

@@ -6,12 +6,15 @@ For C#/.NET projects using dotnet test with TRX logger.
 Usage: python3 ee_bench_parser_trx.py <artifacts_dir>
 """
 import json
+import logging
 import os
 import re
 import sys
 import xml.etree.ElementTree as ET
 
 MAX_STACKTRACE = 4096
+
+logger = logging.getLogger(__name__)
 
 
 def _truncate(text, limit=MAX_STACKTRACE):
@@ -98,6 +101,9 @@ def detect_and_parse(artifacts_dir):
         if not os.path.isfile(fpath):
             continue
         try:
+            with open(fpath) as f:
+                content = f.read()
+                logger.info(f"Parsing {fpath} -------------------------\n{content}\n-------------------------")
             tree = ET.parse(fpath)
             root = tree.getroot()
         except ET.ParseError:
@@ -152,7 +158,9 @@ def main():
         sys.exit(1)
 
     artifacts_dir = sys.argv[1]
+    logger.info(f"Parsing artifacts dir: {artifacts_dir}")
     methods = detect_and_parse(artifacts_dir)
+    logger.info(f"Found {len(methods)} methods:\n{json.dumps(methods, indent=2)}")
     result = aggregate(methods)
     print(json.dumps(result))
 

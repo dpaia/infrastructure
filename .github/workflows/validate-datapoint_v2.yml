@@ -106,6 +106,7 @@ jobs:
           instance_dir: ${{ steps.detect.outputs.instance_dir }}
         env:
           GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
+          EE_BENCH_ARTIFACTS_DIR: ${{ runner.temp }}/eval-artifacts
 
       - name: Upload validation logs
         if: always()
@@ -114,6 +115,15 @@ jobs:
           name: "validation-${{ steps.detect.outputs.instance_id }}"
           path: ${{ steps.validate.outputs.log_path }}
           if-no-files-found: warn
+          retention-days: 7
+
+      - name: Upload eval artifacts
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: "eval-artifacts-${{ steps.detect.outputs.instance_id }}"
+          path: ${{ runner.temp }}/eval-artifacts
+          if-no-files-found: ignore
           retention-days: 7
 
       - name: Comment on dataset PR

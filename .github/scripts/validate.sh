@@ -49,6 +49,12 @@ trap cleanup EXIT
 rm -rf "$STAGE_DIR"
 mkdir -p "$STAGE_DIR"
 
+# ─── Artifacts directory (collected from the container) ────────────────
+# When EE_BENCH_ARTIFACTS_DIR is set (e.g. by CI), the directory persists
+# past validate.sh's cleanup so the workflow can upload its contents.
+ARTIFACTS_DIR="${EE_BENCH_ARTIFACTS_DIR:-$STAGE_DIR/artifacts}"
+mkdir -p "$ARTIFACTS_DIR"
+
 # ─── Resolve / materialize instance files ───────────────────────────────
 
 if [ "$MODE" = "folder" ]; then
@@ -236,6 +242,7 @@ set +e
 OUTPUT=$(docker run --rm --platform linux/amd64 \
   -v "$STAGE_DIR/eval":/ee-bench/eval:ro \
   -v "$STAGE_DIR/submission":/ee-bench/submission:ro \
+  -v "$ARTIFACTS_DIR":/eval/artifacts \
   $DOCKER_RUN_PARAMS \
   "$IMAGE_NAME" \
   bash /ee-bench/eval/run.sh 2>&1)

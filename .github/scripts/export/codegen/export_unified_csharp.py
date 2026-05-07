@@ -285,38 +285,39 @@ for item in items:
         target_org=TARGET_ORG,
     )
 
-    # Build metadata.json with eval_files inline
-    metadata_json = metadata_gen.provide(
-        item=item,
-        instance_id=instance_id,
-        base_commit=item["base_commit"],
-        benchmark_type="codegen",
-        expected={
+    # Build metadata.json — repo-level fields are baked into Dockerfile/run.sh on main.
+    # Per-instance fields (test_framework_flag, and varying fields like test_project)
+    # are included here for evaluation-time template rendering.
+    metadata_kwargs: dict = {
+        "instance_id": instance_id,
+        "benchmark_type": "codegen",
+        "expected": {
             "fail_to_pass": parse_list_field(item.get("FAIL_TO_PASS", "")),
             "pass_to_pass": parse_list_field(item.get("PASS_TO_PASS", "")),
         },
-        eval={
+        "eval": {
             "test_framework": item.get("test_framework") or "",
             "env_setup_version": item["env_setup_version"],
             "run_tests_version": item["run_tests_version"],
-            "files": gen_result["eval_files"],
         },
-        environment={
+        "environment": {
             "project_root": "/app",
             "dockerfile_tag": item["dockerfile_tag"],
         },
-        language="csharp",
-        env_setup_version=item["env_setup_version"],
-        run_tests_version=item["run_tests_version"],
-        test_framework=item.get("test_framework") or "",
-        test_framework_flag=f"--framework {item['test_framework']}" if item.get("test_framework") else "",
-        test_project=gen_result["test_project"],
-        test_logger=gen_result["test_logger"],
-        build_flags=gen_result.get("build_flags", ""),
-        execution_flags=item.get("execution_flags") or "",
-        fields=[
-            "repo",
-        ],
+        "language": "csharp",
+        "test_framework_flag": f"--framework {item['test_framework']}" if item.get("test_framework") else "",
+        "execution_flags": item.get("execution_flags") or "",
+    }
+    varying = gen_result["varying_fields"]
+    if "test_project" in varying:
+        metadata_kwargs["test_project"] = gen_result["test_project"]
+    if "test_logger" in varying:
+        metadata_kwargs["test_logger"] = gen_result["test_logger"]
+
+    metadata_json = metadata_gen.provide(
+        item=item,
+        fields=["repo"],
+        **metadata_kwargs,
     )
 
     base_branch = f"{DATASET_LABEL}/{instance_id}/before"
@@ -347,8 +348,7 @@ for item in items:
         )
 
         # C: Write .ee-bench/codegen/metadata.json to worktree
-        #    (Dockerfile, run.sh, parser.py are Jinja2 templates on main;
-        #     install.sh, run_script.sh are inline in metadata.json evaluation.files)
+        #    Dockerfile, run.sh, parser.py, emitter.py are on main (repo-level).
         ee_bench_dir = clone_dir / ".ee-bench" / "codegen"
         write_file(ee_bench_dir / "metadata.json", metadata_json)
 
@@ -409,13 +409,15 @@ for item in items:
         ensure_labels(fork, labels, label_cache)
         pr.add_to_labels(*labels)
 
-        # Add to projects
+        # Add to projects and set status
+        pr_node_id = pr.raw_data.get("node_id", "")
         for proj in [ProjectConfig(name="EE Bench"), ProjectConfig(name="Code Generation")]:
             try:
                 project_id = project_manager.ensure_project(TARGET_ORG, proj.name)
-                pr_node_id = pr.raw_data.get("node_id", "")
                 if pr_node_id:
-                    project_manager.add_pr_to_project(project_id, pr_node_id)
+                    item_id = project_manager.add_pr_to_project(project_id, pr_node_id)
+                    if item_id:
+                        project_manager.set_item_status(project_id, item_id, "Todo")
             except Exception as e:
                 logger.warning("Failed to add PR to project '%s': %s", proj.name, e)
 

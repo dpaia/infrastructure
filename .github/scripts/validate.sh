@@ -254,6 +254,14 @@ if [ $DOCKER_EXIT -ne 0 ]; then
   echo "$OUTPUT"
 fi
 
+# ─── Print artifacts folder ─────────────────────────────────────
+echo ""
+echo "--- Artifacts folder ---"
+ls -alR $ARTIFACTS_DIR
+echo "--- End artifacts folder ---"
+echo ""
+
+
 # ─── Print container output ─────────────────────────────────────
 
 echo ""

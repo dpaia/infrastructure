@@ -54,11 +54,12 @@ bash "$EVAL_DIR/scripts/install.sh" > /tmp/compile_stdout.log 2> /tmp/compile_st
 COMPILE_DURATION=$(_elapsed $COMPILE_START)
 
 # ============================================================
-# Run baseline tests (clean base, before test_patch)
+# Run baseline tests (clean base, before test_patch) -> actually, let's apply test patch
 # Establishes pass_to_pass baseline and fail_to_pass baseline.
 # ============================================================
 HAS_TEST_PATCH="false"
 if [ -f "$EVAL_DIR/test_patch.diff" ]; then
+  git apply -v "$EVAL_DIR/test_patch.diff" 2>/dev/null || true
   HAS_TEST_PATCH="true"
 fi
 
@@ -74,9 +75,9 @@ fi
 # ============================================================
 # Apply test patch (after baseline, before gold patch)
 # ============================================================
-if [ "$HAS_TEST_PATCH" = "true" ]; then
-  git apply -v "$EVAL_DIR/test_patch.diff" 2>/dev/null || true
-fi
+#if [ "$HAS_TEST_PATCH" = "true" ]; then
+#  git apply -v "$EVAL_DIR/test_patch.diff" 2>/dev/null || true
+#fi
 
 # ============================================================
 # Criterion: patch_applied (submission patch)

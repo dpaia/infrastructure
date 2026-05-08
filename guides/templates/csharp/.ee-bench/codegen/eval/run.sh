@@ -140,4 +140,11 @@ export PATCH_STATUS PATCH_DURATION COMPILE_STATUS COMPILE_DURATION
 export TEST_DURATION BASELINE_DURATION OVERALL_DURATION TIMESTAMP
 export HAS_TEST_PATCH BASELINE_TEST_EXIT_CODE EVAL_TEST_EXIT_CODE
 
+# --- Copy all files from $ARTIFACTS_DIR to /eval/artifacts ---
+if [ -d "/eval/artifacts" ]; then
+  cp -r "$ARTIFACTS_DIR"/. /eval/artifacts/
+else
+  echo "WARN: /eval/artifacts does not exist, skipping artifact copy" >&2
+fi
+
 python3 "$EVAL_DIR/scripts/ee_bench_eval.py"

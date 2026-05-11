@@ -21,6 +21,10 @@ _run_tests() {
   export ARTIFACTS_DIR="$orig_artifacts/$label"
   mkdir -p "$ARTIFACTS_DIR"
 
+  # Must rebuild after each patch application — dotnet test --no-build
+  # would otherwise run the pre-test_patch DLL and miss any newly added tests
+  # and execute an older versions of the test which may lead to fail_to_pass
+  # failure during the baseline test run.
   set +e
   dotnet test --no-build {{ instance.test_framework_flag }} "{{ instance.test_project }}" \
     --logger "{{ instance.test_logger }}" \
@@ -44,7 +48,16 @@ if [ -n "${EE_BENCH_RESET:-}" ]; then
 fi
 
 # ============================================================
-# Criterion: compilation (clean base, before test_patch)
+# Apply test patch (setup — not a criterion)
+# ============================================================
+HAS_TEST_PATCH="false"
+if [ -f "$EVAL_DIR/test_patch.diff" ]; then
+  git apply -v "$EVAL_DIR/test_patch.diff" 2>/dev/null || true
+  HAS_TEST_PATCH="true"
+fi
+
+# ============================================================
+# Criterion: compilation (initial build AFTER test_patch)
 # ============================================================
 COMPILE_START=$SECONDS
 COMPILE_STATUS="pass"
@@ -54,15 +67,10 @@ bash "$EVAL_DIR/scripts/install.sh" > /tmp/compile_stdout.log 2> /tmp/compile_st
 COMPILE_DURATION=$(_elapsed $COMPILE_START)
 
 # ============================================================
-# Run baseline tests (clean base, before test_patch) -> actually, let's apply test patch
-# Establishes pass_to_pass baseline and fail_to_pass baseline.
+# Criterion: Run baseline tests (only if test_patch exists)
+# Checks that no fail_to_pass tests unexpectedly passes
+# before the incoming changes from the submission patch.
 # ============================================================
-HAS_TEST_PATCH="false"
-if [ -f "$EVAL_DIR/test_patch.diff" ]; then
-  git apply -v "$EVAL_DIR/test_patch.diff" 2>/dev/null || true
-  HAS_TEST_PATCH="true"
-fi
-
 BASELINE_DURATION=0
 BASELINE_TEST_EXIT_CODE=0
 if [ "$COMPILE_STATUS" = "pass" ]; then
@@ -71,13 +79,6 @@ if [ "$COMPILE_STATUS" = "pass" ]; then
   BASELINE_TEST_EXIT_CODE="$(cat /tmp/baseline_exit_code 2>/dev/null || echo 0)"
   BASELINE_DURATION=$(_elapsed $BASELINE_START)
 fi
-
-# ============================================================
-# Apply test patch (after baseline, before gold patch)
-# ============================================================
-#if [ "$HAS_TEST_PATCH" = "true" ]; then
-#  git apply -v "$EVAL_DIR/test_patch.diff" 2>/dev/null || true
-#fi
 
 # ============================================================
 # Criterion: patch_applied (submission patch)
@@ -98,8 +99,6 @@ PATCH_DURATION=$(_elapsed $PATCH_START)
 # ============================================================
 # Rebuild after test_patch and/or submission patch
 # ============================================================
-# Must also rebuild when test_patch was applied — dotnet test --no-build
-# would otherwise run the pre-test_patch DLL and miss any newly added tests.
 REBUILD_STATUS="skipped"
 if [ "$PATCH_STATUS" = "pass" ] || [ "$HAS_TEST_PATCH" = "true" ]; then
   bash "$EVAL_DIR/scripts/install.sh" > /tmp/rebuild_stdout.log 2> /tmp/rebuild_stderr.log || {

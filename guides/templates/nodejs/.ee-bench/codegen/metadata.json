@@ -1,0 +1,18 @@
+{
+  "version": "1.0",
+  "benchmark_type": "codegen",
+  "language": "javascript",
+  "node_version": "24",
+  "patch": {
+    "test_patterns": ["apps/frontend/e2e/**"]
+  },
+  "expected": {
+    "fail_to_pass": [],
+    "pass_to_pass": [],
+    "fail_to_fail": [],
+    "fail_to_fail_strict": true
+  },
+  "environment": {
+    "project_root": "/app"
+  }
+}

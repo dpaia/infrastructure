@@ -1,11 +1,16 @@
-# DPAIA base pattern: https://jetbrains.team/p/ai-assistant/repositories/aia-docker-images/files/dockerfiles/Dpai-Bench/
-FROM debian:12.11
+FROM node:{{ instance.node_version }}
 
-# Install Node.js 24
-RUN apt-get update && apt-get install -y curl git python3 && \
-    curl -fsSL https://deb.nodesource.com/setup_24.x | bash - && \
-    apt-get install -y nodejs && \
-    apt-get clean && rm -rf /var/lib/apt/lists/*
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && \
+    apt-get install -y \
+    build-essential \
+    git \
+    curl \
+    wget \
+    python3 \
+    python3-pip \
+    && rm -rf /var/lib/apt/lists/*
 
 RUN git clone https://github.com/{{ instance.owner }}/{{ instance.repo_name }}.git /app
 WORKDIR /app

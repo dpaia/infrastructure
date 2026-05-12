@@ -2,6 +2,7 @@ FROM node:{{ instance.node_version }}
 
 ENV DEBIAN_FRONTEND=noninteractive
 
+# Install common packages
 RUN apt-get update && \
     apt-get install -y \
     build-essential \

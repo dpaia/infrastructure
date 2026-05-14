@@ -48,13 +48,13 @@ By default, the main branch should be protected from direct pushes.
 
 Complete starter templates are available in [`guides/templates/`](templates/) for the following build systems:
 
-| Template | Language | Build tool | Test runner | Base image |
-|----------|----------|------------|-------------|------------|
-| [`csharp/`](templates/csharp/) | C# | `dotnet build` | `dotnet test` (TRX) | `mcr.microsoft.com/dotnet/sdk:8.0` |
-| [`python/`](templates/python/) | Python | `pip install` | `pytest` (JUnit XML) | `python:3.11-slim` |
+| Template | Language    | Build tool | Test runner | Base image |
+|----------|-------------|------------|-------------|------------|
+| [`csharp/`](templates/csharp/) | C#          | `dotnet build` | `dotnet test` (TRX) | `mcr.microsoft.com/dotnet/sdk:8.0` |
+| [`python/`](templates/python/) | Python      | `pip install` | `pytest` (JUnit XML) | `python:3.11-slim` |
 | [`gradle/`](templates/gradle/) | Java/Kotlin | `./gradlew` | `./gradlew test` (JUnit XML) | `eclipse-temurin:21` |
-| [`maven/`](templates/maven/) | Java | `./mvnw` | `./mvnw test` (Surefire XML) | `eclipse-temurin:21` |
-| [`nodejs/`](templates/nodejs/) | Node.js | `npm` | `npm -s run test` (JUnit XML) | `node:24` |
+| [`maven/`](templates/maven/) | Java        | `./mvnw` | `./mvnw test` (Surefire XML) | `eclipse-temurin:21` |
+| [`javascript/`](templates/nodejs/) | JavaScript  | `npm` | `npm -s run test` (JUnit XML) | `node:24` |
 
 Each template contains a complete `.ee-bench/codegen/` directory (`metadata.json`, `Dockerfile`, `run.sh`, and shared eval scripts) ready to copy and customize. Replace placeholder values (test project paths, test names, SDK versions) with your project's specifics. The shared eval scripts (`ee_bench_eval.py` + language-specific parser) are copied from [`guides/templates/shared/scripts/`](templates/shared/scripts/).
 

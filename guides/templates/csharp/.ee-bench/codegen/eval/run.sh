@@ -12,6 +12,13 @@ OVERALL_START=$SECONDS
 
 _elapsed() { echo $(( SECONDS - ${1:-$OVERALL_START} )); }
 
+#===========================================
+# prepare runsettings.xml with tests to run
+#===========================================
+python3 "$EVAL_DIR/scripts/ee_bench_runsettings.py" > /tmp/runsettings.xml <<'RS_EOF'
+  {"fail_to_pass": {{ instance.expected.fail_to_pass | tojson }}, "pass_to_pass": {{ instance.expected.pass_to_pass | tojson }}}
+RS_EOF
+
 # --- _run_tests: run dotnet test with isolated ARTIFACTS_DIR ---
 # Usage: _run_tests <label>
 # Writes: /tmp/<label>_stdout.log, /tmp/<label>_stderr.log, /tmp/<label>_parser.json
@@ -27,6 +34,7 @@ _run_tests() {
   # failure during the baseline test run.
   set +e
   dotnet test --no-build {{ instance.test_framework_flag }} "{{ instance.test_project }}" \
+    --settings /tmp/runsettings.xml \
     --logger "{{ instance.test_logger }}" \
     --results-directory "$ARTIFACTS_DIR" \
     > "/tmp/${label}_stdout.log" 2> "/tmp/${label}_stderr.log"

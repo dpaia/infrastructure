@@ -42,7 +42,16 @@ if [ -n "${EE_BENCH_RESET:-}" ]; then
 fi
 
 # ============================================================
-# Criterion: compilation (clean base, before test_patch)
+# Apply test patch (setup — not a criterion)
+# ============================================================
+HAS_TEST_PATCH="false"
+if [ -f "$EVAL_DIR/test_patch.diff" ]; then
+  git apply -v "$EVAL_DIR/test_patch.diff" 2>/dev/null || true
+  HAS_TEST_PATCH="true"
+fi
+
+# ============================================================
+# Criterion: compilation (initial build AFTER test_patch)
 # ============================================================
 COMPILE_START=$SECONDS
 COMPILE_STATUS="pass"
@@ -52,26 +61,15 @@ COMPILE_STATUS="pass"
 COMPILE_DURATION=$(_elapsed $COMPILE_START)
 
 # ============================================================
-# Run baseline tests (clean base, before test_patch)
-# Establishes pass_to_pass baseline and fail_to_pass baseline.
+# Criterion: Run baseline tests (only if test_patch exists)
+# Checks that no fail_to_pass tests unexpectedly passes
+# before the incoming changes from the submission patch.
 # ============================================================
-HAS_TEST_PATCH="false"
-if [ -f "$EVAL_DIR/test_patch.diff" ]; then
-  HAS_TEST_PATCH="true"
-fi
-
 BASELINE_DURATION=0
 if [ "$COMPILE_STATUS" = "pass" ]; then
   BASELINE_START=$SECONDS
   _run_tests baseline
   BASELINE_DURATION=$(_elapsed $BASELINE_START)
-fi
-
-# ============================================================
-# Apply test patch (after baseline, before gold patch)
-# ============================================================
-if [ "$HAS_TEST_PATCH" = "true" ]; then
-  git apply -v "$EVAL_DIR/test_patch.diff" 2>/dev/null || true
 fi
 
 # ============================================================

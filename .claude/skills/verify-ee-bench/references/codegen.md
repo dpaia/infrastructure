@@ -268,6 +268,7 @@ Results:
   patch_applied:  <status>
   tests:          <status>
   fail_to_pass:   <status>
+  fail_to_fail:   <status>
 ```
 
 ## Step 8: Cleanup

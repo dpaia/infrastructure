@@ -318,14 +318,14 @@ RUN rm -rf /repo/.ee-bench/ 2>/dev/null || true
 
 ### eval/run.sh
 
-All run.sh scripts follow the same 6-criterion structure. Only the compile and test commands differ.
+All run.sh scripts follow the same 7-criterion structure. Only the compile and test commands differ.
 
 **Evaluation criteria:**
 
 | Criterion | Description | Status values |
 |-----------|-------------|---------------|
-| `compilation` | Build via install.sh | `pass`, `fail` |
-| `baseline_tests` | Test run before submission (with test_patch, no submission) | `pass`, `fail`, `skipped` |
+| `compilation` | Build via install.sh (after `test_patch` is applied) | `pass`, `fail` |
+| `baseline_tests` | Test run before submission (with `test_patch`, no submission) | `pass`, `fail`, `skipped` |
 | `patch_applied` | Apply submission patch | `pass`, `fail`, `skipped` |
 | `tests` | Test run after submission | `pass`, `fail`, `skipped` |
 | `fail_to_pass` | Expected-failing tests failed in baseline, pass after submission | `pass`, `fail`, `skipped` |
@@ -387,7 +387,16 @@ if [ -n "${EE_BENCH_RESET:-}" ]; then
 fi
 
 # ============================================================
-# Criterion: compilation (clean base, before test_patch)
+# Apply test patch (setup — not a criterion)
+# ============================================================
+HAS_TEST_PATCH="false"
+if [ -f "$EVAL_DIR/test_patch.diff" ]; then
+  git apply -v "$EVAL_DIR/test_patch.diff" 2>/dev/null || true
+  HAS_TEST_PATCH="true"
+fi
+
+# ============================================================
+# Criterion: compilation (initial build AFTER test_patch)
 # ============================================================
 COMPILE_START=$SECONDS
 COMPILE_STATUS="pass"
@@ -397,26 +406,15 @@ COMPILE_STATUS="pass"
 COMPILE_DURATION=$(_elapsed $COMPILE_START)
 
 # ============================================================
-# Run baseline tests (clean base, before test_patch)
-# Establishes pass_to_pass baseline and fail_to_pass baseline.
+# Criterion: Run baseline tests (only if test_patch exists)
+# Checks that no fail_to_pass tests unexpectedly passes
+# before the incoming changes from the submission patch.
 # ============================================================
-HAS_TEST_PATCH="false"
-if [ -f "$EVAL_DIR/test_patch.diff" ]; then
-  HAS_TEST_PATCH="true"
-fi
-
 BASELINE_DURATION=0
 if [ "$COMPILE_STATUS" = "pass" ]; then
   BASELINE_START=$SECONDS
   _run_tests baseline
   BASELINE_DURATION=$(_elapsed $BASELINE_START)
-fi
-
-# ============================================================
-# Apply test patch (after baseline, before gold patch)
-# ============================================================
-if [ "$HAS_TEST_PATCH" = "true" ]; then
-  git apply -v "$EVAL_DIR/test_patch.diff" 2>/dev/null || true
 fi
 
 # ============================================================
@@ -467,7 +465,7 @@ cat /tmp/compile_stdout.log /tmp/compile_stderr.log > /tmp/_compile_output.txt 2
 
 # --- Write expected test lists to file (avoids shell quoting issues) ---
 cat > /tmp/_expected.json << 'EXPECTED_EOF'
-{"fail_to_pass": {{ instance.expected.fail_to_pass | tojson }}, "pass_to_pass": {{ instance.expected.pass_to_pass | tojson }}}
+{"fail_to_pass": {{ instance.expected.fail_to_pass | tojson }}, "pass_to_pass": {{ instance.expected.pass_to_pass | tojson }}, "fail_to_fail": {{ instance.expected.fail_to_fail | default([]) | tojson }}, "fail_to_fail_strict": {{ instance.expected.fail_to_fail_strict | default(true) | tojson }}}
 EXPECTED_EOF
 
 # ============================================================

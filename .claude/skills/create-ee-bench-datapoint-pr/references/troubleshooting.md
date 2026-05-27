@@ -5,6 +5,7 @@
 Likely cause:
 
 - `base` and `solution` were both created from `main`
+- or `reference_patch` was applied as if it were independent of `preflight_patch`
 
 Typical symptom:
 
@@ -15,20 +16,21 @@ Fix:
 1. Recreate `base` from `main`
 2. Apply `preflight_patch` to `base`
 3. Recreate `solution` from `base`
-4. Apply `reference_patch` to `solution`
+4. Apply `reference_patch` to `solution`, resolving overlaps in favor of the reference result
 5. Force-push `solution`
 
 ## Automation Cannot Determine Eval Type
 
 Preferred fix in this workflow:
 
+- make sure the PR was added to the `Code Generation` GitHub project before validator invocation
 - make sure the PR comment `@dpaia-validator validate` was posted after the PR was opened
 
 Current team convention:
 
 - include `[ee-bench]` in the PR title
 
-Do not assume the title alone is sufficient routing metadata.
+Do not add `eval_type: codegen` to the PR body unless the user explicitly asks for that workaround.
 
 ## Verification Workflow Fails Before Validation Starts
 
@@ -45,6 +47,7 @@ Check these first:
 - `patch.source_patterns` contains only source files
 - `patch.test_patterns` contains only test files
 - repo-specific scaffold fields were preserved instead of replaced wholesale
+- the language label and metadata language value match the repository convention even if the datapoint omitted `language`
 
 ## Validator Comment Fails
 

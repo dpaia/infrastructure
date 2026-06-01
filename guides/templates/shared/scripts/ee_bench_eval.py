@@ -79,7 +79,25 @@ def _normalize_legacy_name(name):
     first_dot_index = name.find(".")
     if colon_index >= 0 and (first_dot_index < 0 or colon_index < first_dot_index):
         name = name.split(":", 1)[1]
+    name = name.replace("\\", "/")
+    if "/" in name:
+        name = name.rsplit("/", 1)[-1]
+    if name.endswith(".java"):
+        name = name[:-5]
     return name.replace("#", ".").replace("+", ".")
+
+
+def _legacy_class_key(name):
+    normalized = _legacy_prefix(_normalize_legacy_name(name))
+    parts = normalized.split(".")
+    for index, part in enumerate(parts):
+        if re.search(r"(Test|Tests|IT)$", part):
+            return ".".join(parts[: index + 1])
+    return normalized
+
+
+def _legacy_simple_class_key(name):
+    return _legacy_class_key(name).split(".")[-1]
 
 
 def legacy_matches(expected_name, actual_names):
@@ -101,10 +119,26 @@ def legacy_matches(expected_name, actual_names):
     }:
         return True
 
-    class_prefix = name + "."
-    return (
-        not _legacy_has_parameters(name)
-        and any(n.startswith(class_prefix) for n in normalized_set)
+    if _legacy_has_parameters(name):
+        return False
+
+    # Method-level legacy names may omit the package:
+    # 'FooTest.testA' should match 'pkg.FooTest.testA'.
+    if any(n.endswith("." + name) for n in normalized_set):
+        return True
+
+    class_key = _legacy_class_key(name)
+    is_class_level_expected = _legacy_prefix(name) == class_key
+    if not is_class_level_expected:
+        return False
+
+    class_prefix = class_key + "."
+    if any(n.startswith(class_prefix) for n in normalized_set):
+        return True
+
+    return any(
+        _legacy_simple_class_key(n) == _legacy_simple_class_key(name)
+        for n in normalized_set
     )
 
 

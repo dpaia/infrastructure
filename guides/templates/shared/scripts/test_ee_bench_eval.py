@@ -42,6 +42,30 @@ def test_matches_any_expected_class_level():
     assert evalmod._matches_any_expected("pkg.FooTest.testA", ["pkg.FooTest"])
 
 
+def test_matches_any_expected_hash_method_separator():
+    assert evalmod._matches_any_expected(
+        "pkg.FooTest.testA", ["pkg.FooTest#testA"]
+    )
+
+
+def test_matches_any_expected_java_file_suffix():
+    assert evalmod._matches_any_expected("pkg.FooTest.testA", ["pkg.FooTest.java"])
+
+
+def test_matches_any_expected_bare_class_name():
+    assert evalmod._matches_any_expected("pkg.FooTest.testA", ["FooTest"])
+
+
+def test_matches_any_expected_bare_class_method_name():
+    assert evalmod._matches_any_expected("pkg.FooTest.testA", ["FooTest.testA"])
+
+
+def test_method_level_expected_does_not_match_other_method_in_same_class():
+    assert not evalmod._matches_any_expected(
+        "pkg.FooTest.testA", ["pkg.FooTest.testB"]
+    )
+
+
 def test_matches_any_expected_nested_class_separator():
     assert evalmod._matches_any_expected(
         "pkg.Outer.Inner.testA",

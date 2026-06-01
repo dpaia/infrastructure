@@ -9,9 +9,11 @@ RUN apt-get update && \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-RUN git clone https://github.com/{{ instance.owner }}/{{ instance.repo_name }}.git /app
 WORKDIR /app
-RUN git checkout {{ instance.base_commit }}
+RUN git init && \
+    git remote add origin https://github.com/{{ instance.owner }}/{{ instance.repo_name }}.git && \
+    git fetch origin --depth 1 {{ instance.base_commit }} && \
+    git reset --hard FETCH_HEAD
 
 # Install project dependencies
 # Use whichever applies to your project:

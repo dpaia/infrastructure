@@ -233,9 +233,11 @@ RUN apt-get update && \
     apt-get install -y build-essential git curl wget sudo python3 python3-pip && \
     rm -rf /var/lib/apt/lists/*
 
-RUN git clone https://github.com/<detected_owner>/<detected_repo>.git /app
 WORKDIR /app
-RUN git checkout {{ instance.base_commit }}
+RUN git init && \
+    git remote add origin https://github.com/<detected_owner>/<detected_repo>.git && \
+    git fetch origin --depth 1 {{ instance.base_commit }} && \
+    git reset --hard FETCH_HEAD
 
 RUN dotnet restore
 
@@ -256,9 +258,11 @@ RUN apt-get update && \
     apt-get install -y build-essential git curl && \
     rm -rf /var/lib/apt/lists/*
 
-RUN git clone https://github.com/<detected_owner>/<detected_repo>.git /app
 WORKDIR /app
-RUN git checkout {{ instance.base_commit }}
+RUN git init && \
+    git remote add origin https://github.com/<detected_owner>/<detected_repo>.git && \
+    git fetch origin --depth 1 {{ instance.base_commit }} && \
+    git reset --hard FETCH_HEAD
 
 RUN pip install --no-cache-dir -e ".[dev,test]" 2>/dev/null || \
     pip install --no-cache-dir -e ".[test]" 2>/dev/null || \
@@ -282,9 +286,11 @@ RUN apt-get update && \
     apt-get install -y build-essential git curl wget python3 python3-pip && \
     rm -rf /var/lib/apt/lists/*
 
-RUN git clone https://github.com/<detected_owner>/<detected_repo>.git /repo
 WORKDIR /repo
-RUN git checkout {{ instance.base_commit }}
+RUN git init && \
+    git remote add origin https://github.com/<detected_owner>/<detected_repo>.git && \
+    git fetch origin --depth 1 {{ instance.base_commit }} && \
+    git reset --hard FETCH_HEAD
 
 RUN chmod +x ./gradlew && \
     ./gradlew dependencies --no-daemon -q
@@ -304,9 +310,11 @@ RUN apt-get update && \
     apt-get install -y build-essential git curl wget python3 python3-pip && \
     rm -rf /var/lib/apt/lists/*
 
-RUN git clone https://github.com/<detected_owner>/<detected_repo>.git /repo
 WORKDIR /repo
-RUN git checkout {{ instance.base_commit }}
+RUN git init && \
+    git remote add origin https://github.com/<detected_owner>/<detected_repo>.git && \
+    git fetch origin --depth 1 {{ instance.base_commit }} && \
+    git reset --hard FETCH_HEAD
 
 RUN chmod +x ./mvnw && \
     ./mvnw dependency:go-offline -q
@@ -314,6 +322,40 @@ RUN chmod +x ./mvnw && \
 LABEL ee-bench.type="codegen"
 LABEL ee-bench.version="1.0"
 RUN rm -rf /repo/.ee-bench/ 2>/dev/null || true
+```
+
+**JavaScript Dockerfile** (replace `<detected_node_version>`, `<detected_owner>`, `<detected_repo>` with actual values):
+```dockerfile
+FROM node:<detected_node_version>
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install common packages
+RUN apt-get update && \
+    apt-get install -y \
+    build-essential \
+    git \
+    curl \
+    wget \
+    python3 \
+    python3-pip \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+RUN git init && \
+    git remote add origin https://github.com/<detected_owner>/<detected_repo>.git && \
+    git fetch origin --depth 1 {{ instance.base_commit }} && \
+    git reset --hard FETCH_HEAD
+
+# Install project dependencies (npm workspaces)
+RUN npm ci
+
+# Prepare testing enviroment (install project specific browsers, etc)
+RUN npm run test:setup-environment
+
+LABEL ee-bench.type="codegen"
+LABEL ee-bench.version="1.0"
+RUN rm -rf /app/.ee-bench/ 2>/dev/null || true
 ```
 
 ### eval/run.sh

@@ -130,9 +130,11 @@ RUN apt-get update && \
 
 RUN pip install --no-cache-dir --break-system-packages tree-sitter tree-sitter-<language>
 
-RUN git clone https://github.com/<detected_owner>/<detected_repo>.git /repo
 WORKDIR /repo
-RUN git checkout {{ instance.base_commit }}
+RUN git init && \
+    git remote add origin https://github.com/<detected_owner>/<detected_repo>.git && \
+    git fetch origin --depth 1 {{ instance.base_commit }} && \
+    git reset --hard FETCH_HEAD
 
 RUN chmod +x ./mvnw && \
     ./mvnw dependency:go-offline -q

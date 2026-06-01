@@ -13,9 +13,11 @@ RUN apt-get update && \
     python3-pip \
     && rm -rf /var/lib/apt/lists/*
 
-RUN git clone https://github.com/{{ instance.owner }}/{{ instance.repo_name }}.git /app
 WORKDIR /app
-RUN git checkout {{ instance.base_commit }}
+RUN git init && \
+    git remote add origin https://github.com/{{ instance.owner }}/{{ instance.repo_name }}.git && \
+    git fetch origin --depth 1 {{ instance.base_commit }} && \
+    git reset --hard FETCH_HEAD
 
 # Install project dependencies (npm workspaces)
 RUN npm ci

@@ -25,9 +25,11 @@ RUN apt-get update && \
 #     chmod +x ./dotnet-install.sh && \
 #     ./dotnet-install.sh --version 6.0.428 --install-dir /usr/share/dotnet
 
-RUN git clone https://github.com/{{ instance.owner }}/{{ instance.repo_name }}.git /app
 WORKDIR /app
-RUN git checkout {{ instance.base_commit }}
+RUN git init && \
+    git remote add origin https://github.com/{{ instance.owner }}/{{ instance.repo_name }}.git && \
+    git fetch origin --depth 1 {{ instance.base_commit }} && \
+    git reset --hard FETCH_HEAD
 
 # Pre-restore dependencies for faster eval runs
 RUN dotnet restore

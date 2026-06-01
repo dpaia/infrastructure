@@ -14,9 +14,11 @@ RUN apt-get update && \
 
 RUN pip install --no-cache-dir --break-system-packages tree-sitter tree-sitter-java
 
-RUN git clone https://github.com/{{ instance.owner }}/{{ instance.repo_name }}.git {{ instance.project_root }}
 WORKDIR {{ instance.project_root }}
-RUN git checkout {{ instance.base_commit }}
+RUN git init && \
+    git remote add origin https://github.com/{{ instance.owner }}/{{ instance.repo_name }}.git && \
+    git fetch origin --depth 1 {{ instance.base_commit }} && \
+    git reset --hard FETCH_HEAD
 
 # Make mvnw executable and pre-fetch dependencies
 RUN chmod +x ./mvnw && \

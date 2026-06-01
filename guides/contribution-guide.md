@@ -293,8 +293,10 @@ FROM eclipse-temurin:{{ instance.jvm_version }}
 
 WORKDIR {{ instance.project_root }}
 
-RUN git clone {{ instance.repo_url }} {{ instance.project_root }} && \
-    git checkout {{ instance.base_commit }}
+RUN git init && \
+    git remote add origin {{ instance.repo_url }} && \
+    git fetch origin --depth 1 {{ instance.base_commit }} && \
+    git reset --hard FETCH_HEAD
 
 # Install dependencies
 RUN ./mvnw dependency:go-offline -q

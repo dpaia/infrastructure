@@ -27,6 +27,11 @@ on:
         required: false
         type: string
         default: 'manual'
+      auto_merge:
+        description: 'Whether to auto-merge the dataset PR if validation passes'
+        required: false
+        type: boolean
+        default: false
       source_organization:
         description: 'Source PR owner organization (for Dataset Metadata lookup on failure)'
         required: false
@@ -126,6 +131,87 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
+      # --- Auto-merge on validation success ---
+      - name: Auto-merge dataset PR
+        id: automerge
+        if: steps.validate.outputs.result == 'success' && inputs.auto_merge == true
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
+          DATASET_REPO: "${{ inputs.organization }}/${{ inputs.repository }}"
+          PR_NUMBER: ${{ inputs.pr_number }}
+        run: |
+          set_output() {
+            local name="$1"
+            local value="$2"
+            {
+              echo "$name<<AUTOMERGE_OUTPUT_EOF"
+              echo "$value"
+              echo "AUTOMERGE_OUTPUT_EOF"
+            } >> "$GITHUB_OUTPUT"
+          }
+
+          wait_for_mergeable() {
+            local max_retries=5
+            local retry=0
+            local mergeable=""
+
+            while [ "$retry" -lt "$max_retries" ]; do
+              mergeable=$(gh pr view "$PR_NUMBER" --repo "$DATASET_REPO" --json mergeable --jq '.mergeable' 2>/dev/null || echo "UNKNOWN")
+              if [ "$mergeable" = "MERGEABLE" ] || [ "$mergeable" = "CONFLICTING" ]; then
+                echo "$mergeable"
+                return 0
+              fi
+              retry=$((retry + 1))
+              echo "Mergeability is '$mergeable', retrying ($retry/$max_retries)..." >&2
+              sleep $((retry * 3))
+            done
+
+            echo "$mergeable"
+          }
+
+          MAX_MERGE_ATTEMPTS=5
+          for ATTEMPT in $(seq 1 "$MAX_MERGE_ATTEMPTS"); do
+            echo "Auto-merge attempt $ATTEMPT/$MAX_MERGE_ATTEMPTS..."
+            MERGEABLE=$(wait_for_mergeable)
+
+            if [ "$MERGEABLE" = "CONFLICTING" ]; then
+              DETAILS="PR #$PR_NUMBER has merge conflicts; manual intervention required."
+              echo "::error::$DETAILS"
+              set_output "status" "merge-conflict"
+              set_output "details" "$DETAILS"
+              exit 1
+            fi
+
+            if [ "$MERGEABLE" != "MERGEABLE" ]; then
+              DETAILS="PR #$PR_NUMBER mergeability is '$MERGEABLE' after retries; deferring to sweep."
+              echo "::warning::$DETAILS"
+              set_output "status" "deferred"
+              set_output "details" "$DETAILS"
+              exit 0
+            fi
+
+            if MERGE_OUTPUT=$(gh pr merge "$PR_NUMBER" --repo "$DATASET_REPO" --squash --delete-branch 2>&1); then
+              echo "$MERGE_OUTPUT"
+              set_output "status" "merged"
+              set_output "details" "Successfully merged and cleaned up PR #$PR_NUMBER."
+              exit 0
+            fi
+
+            echo "$MERGE_OUTPUT"
+            if echo "$MERGE_OUTPUT" | grep -qi "Base branch was modified" && [ "$ATTEMPT" -lt "$MAX_MERGE_ATTEMPTS" ]; then
+              echo "Base branch changed during merge; retrying after GitHub recomputes mergeability..."
+              sleep $((ATTEMPT * 5))
+              continue
+            fi
+
+            DETAILS="$MERGE_OUTPUT"
+            set_output "status" "failed"
+            set_output "details" "$DETAILS"
+            echo "::error::Auto-merge failed for PR #$PR_NUMBER"
+            exit 1
+          done
+
       - name: Comment on dataset PR
         if: always()
         shell: bash
@@ -133,11 +219,29 @@ jobs:
           GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
           RESULT: ${{ steps.validate.outputs.result }}
           INSTANCE_ID: ${{ steps.detect.outputs.instance_id }}
+          AUTO_MERGE_REQUESTED: ${{ inputs.auto_merge }}
+          AUTO_MERGE_OUTCOME: ${{ steps.automerge.outcome }}
+          AUTO_MERGE_STATUS: ${{ steps.automerge.outputs.status }}
+          AUTO_MERGE_DETAILS: ${{ steps.automerge.outputs.details }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           if [ "$RESULT" = "success" ]; then
-            ICON="✅"
-            MSG="Datapoint validation **passed**."
+            if [ "$AUTO_MERGE_REQUESTED" != "true" ]; then
+              ICON="✅"
+              MSG="Datapoint validation **passed**. Auto-merge was not requested."
+            elif [ "$AUTO_MERGE_STATUS" = "merged" ]; then
+              ICON="✅"
+              MSG="Datapoint validation **passed** and auto-merge completed."
+            elif [ "$AUTO_MERGE_STATUS" = "deferred" ]; then
+              ICON="✅"
+              MSG="Datapoint validation **passed**; auto-merge was deferred."
+            elif [ "$AUTO_MERGE_OUTCOME" = "failure" ]; then
+              ICON="⚠️"
+              MSG="Datapoint validation **passed**, but auto-merge **failed**."
+            else
+              ICON="✅"
+              MSG="Datapoint validation **passed**."
+            fi
           else
             ICON="❌"
             MSG="Datapoint validation **failed**."
@@ -145,56 +249,24 @@ jobs:
 
           COMMENT_BODY="${ICON} ${MSG}
 
-          **Instance:** \`${INSTANCE_ID}\`
+          **Instance:** \`${INSTANCE_ID}\`"
+
+          if [ -n "$AUTO_MERGE_DETAILS" ]; then
+            COMMENT_BODY="${COMMENT_BODY}
+          **Auto-merge:** ${AUTO_MERGE_DETAILS}"
+          fi
+
+          COMMENT_BODY="${COMMENT_BODY}
           **Details:** [Workflow run](${RUN_URL})"
 
           gh pr comment "${{ inputs.pr_number }}" \
             --repo "${{ inputs.organization }}/${{ inputs.repository }}" \
             --body "$COMMENT_BODY" || true
 
-      # --- Auto-merge on validation success ---
-      - name: Auto-merge dataset PR
-        if: steps.validate.outputs.result == 'success'
-        shell: bash
-        env:
-          GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
-          DATASET_REPO: "${{ inputs.organization }}/${{ inputs.repository }}"
-          PR_NUMBER: ${{ inputs.pr_number }}
-        run: |
-          echo "Waiting for mergeability check..."
-          MAX_RETRIES=3
-          RETRY=0
-          MERGEABLE=""
-
-          while [ $RETRY -lt $MAX_RETRIES ]; do
-            MERGEABLE=$(gh pr view "$PR_NUMBER" --repo "$DATASET_REPO" --json mergeable --jq '.mergeable')
-            if [ "$MERGEABLE" = "MERGEABLE" ] || [ "$MERGEABLE" = "CONFLICTING" ]; then
-              break
-            fi
-            RETRY=$((RETRY + 1))
-            echo "Mergeability is '$MERGEABLE', retrying ($RETRY/$MAX_RETRIES)..."
-            sleep $((RETRY * 3))
-          done
-
-          if [ "$MERGEABLE" = "CONFLICTING" ]; then
-            echo "::error::PR #$PR_NUMBER has merge conflicts — cannot auto-merge"
-            gh pr comment "$PR_NUMBER" --repo "$DATASET_REPO" \
-              --body "❌ Auto-merge failed (merge-conflict). Manual intervention required." || true
-            exit 1
-          fi
-
-          if [ "$MERGEABLE" != "MERGEABLE" ]; then
-            echo "::warning::PR #$PR_NUMBER mergeability is '$MERGEABLE' after $MAX_RETRIES retries — deferring to sweep"
-            exit 0
-          fi
-
-          gh pr merge "$PR_NUMBER" --repo "$DATASET_REPO" --squash --delete-branch
-          echo "Successfully merged and cleaned up PR #$PR_NUMBER"
-
       # --- Dataset Metadata: set Status=Invalid on validation failure ---
       - name: Find source PR in Dataset Metadata project
         id: find-source-pr
-        if: steps.validate.outputs.result != 'success' && inputs.dataset_project_number != '' && inputs.source_pr_number != ''
+        if: always() && steps.validate.outputs.result != 'success' && inputs.dataset_project_number != '' && inputs.source_pr_number != ''
         uses: ./.github/actions/find-pr-in-project
         with:
           organization: ${{ inputs.source_organization }}
@@ -204,7 +276,7 @@ jobs:
           github_token: ${{ secrets.PROJECT_TOKEN }}
 
       - name: Set Dataset Metadata Status to Invalid
-        if: steps.validate.outputs.result != 'success' && inputs.dataset_project_number != '' && steps.find-source-pr.outputs.item_id != ''
+        if: always() && steps.validate.outputs.result != 'success' && inputs.dataset_project_number != '' && steps.find-source-pr.outputs.item_id != ''
         uses: ./.github/actions/set-project-status
         with:
           organization: ${{ inputs.source_organization }}
@@ -222,4 +294,6 @@ jobs:
           echo "- **Instance:** ${{ steps.detect.outputs.instance_id }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Eval type:** ${{ inputs.eval_type }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Result:** ${{ steps.validate.outputs.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Auto-merge requested:** ${{ inputs.auto_merge }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Auto-merge status:** ${{ steps.automerge.outputs.status }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Run key:** ${{ inputs.run_key }}" >> $GITHUB_STEP_SUMMARY

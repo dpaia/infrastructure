@@ -66,7 +66,7 @@ User moves PR to "Verified" in eval project board
 Dataset PR opened in dpaia/dataset
          |  (pull_request webhook -> bot)
          v
-[3] validate-datapoint_v2.yml  -- validates dataset PR, auto-merges on success
+[3] validate-datapoint_v2.yml  -- validates dataset PR, auto-merges on success when requested
          |
          v
 Dataset PR merged
@@ -217,7 +217,7 @@ This metadata is parsed by downstream workflows (`validate-datapoint_v2`, `on-da
 
 ### 3. Validate Datapoint (`validate-datapoint_v2.yml`)
 
-**Purpose:** Validates a dataset PR by checking out the PR's content and running the validation suite. If validation passes, **auto-merges** the dataset PR. If it fails, marks the Dataset Metadata status as `Invalid`.
+**Purpose:** Validates a dataset PR by checking out the PR's content and running the validation suite. If validation passes and `auto_merge=true`, **auto-merges** the dataset PR. If it fails, marks the Dataset Metadata status as `Invalid`.
 
 **Workflow name:** `Validate Datapoint (v2)`
 **Run name:** `[dataset] Validate PR #{pr} (key={run_key})`
@@ -244,6 +244,7 @@ When triggered by the bot:
 | `pr_number` | yes | -- | Dataset PR number to validate |
 | `eval_type` | yes | -- | Evaluation type |
 | `run_key` | no | `manual` | UUID correlation key |
+| `auto_merge` | no | `false` | Whether to auto-merge the dataset PR if validation passes |
 | `source_organization` | no | `''` | Source PR owner (for failure status updates) |
 | `source_repository` | no | `''` | Source PR repo |
 | `source_pr_number` | no | `''` | Source PR number |
@@ -255,7 +256,7 @@ When triggered by the bot:
 2. Detects the instance directory (finds `datapoint.json` in changed files)
 3. Runs `run-validation` on the instance directory
 4. Posts a comment on the dataset PR with pass/fail result
-5. **On success:** Auto-merges the dataset PR (squash merge with branch cleanup)
+5. **On success + `auto_merge=true`:** Auto-merges the dataset PR (squash merge with branch cleanup)
    - Retries mergeability check up to 3 times
    - Handles merge conflicts gracefully (posts error comment)
    - Defers to sweep if mergeability is unknown

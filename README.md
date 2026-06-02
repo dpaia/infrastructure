@@ -140,13 +140,13 @@ dpaia/dataset/
 - **Automatic:** Bot dispatches when a PR is opened/updated in `dpaia/dataset`
 - **Manual:** `workflow_dispatch`
 
-**Inputs:** `organization`, `repository`, `pr_number`, `eval_type`, `run_key`, `source_organization`, `source_repository`, `source_pr_number`, `dataset_project_number`
+**Inputs:** `organization`, `repository`, `pr_number`, `eval_type`, `run_key`, `auto_merge`, `source_organization`, `source_repository`, `source_pr_number`, `dataset_project_number`
 
 **What it does:**
 1. Checks out the dataset PR branch
 2. Detects the instance directory from changed files
 3. Runs `validate.sh` against the datapoint
-4. On success: auto-merges the dataset PR (squash merge with mergeability retry loop)
+4. On success + `auto_merge=true`: auto-merges the dataset PR (squash merge with mergeability retry loop)
 5. On failure + `dataset_project_number` set: finds the source PR in the Dataset Metadata project and sets Status="Invalid"
 6. Posts a comment on the dataset PR with pass/fail result
 7. Uploads validation logs as artifacts

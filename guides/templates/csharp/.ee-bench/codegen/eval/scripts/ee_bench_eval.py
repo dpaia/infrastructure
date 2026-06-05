@@ -224,6 +224,7 @@ def _evaluate_criterion(expected, eval_passed, baseline_passed, baseline_failed,
     if not eval_ok:
         missing = [_entry_name(t) for t in expected if not _matches_entry(t, eval_passed)]
         detail_parts.append("eval missing: " + ", ".join(missing[:10]))
+        detail_parts.append("passed: " + ", ".join(eval_passed[:10]))
     if not baseline_ok:
         label = "baseline unexpected pass" if should_fail_baseline else "baseline missing"
         detail_parts.append(label + ": " + ", ".join(_entry_name(t) for t in baseline_bad[:10]))

@@ -44,6 +44,12 @@ def build_runsettings(tests: list[str]) -> str:
         test_case_filter = ET.SubElement(run_config, "TestCaseFilter")
         test_case_filter.text = filter_expr
 
+    nunit = ET.SubElement(root, "NUnit")
+    ET.SubElement(nunit, "DisplayName").text = "FullName"
+
+    xunit = ET.SubElement(root, "xUnit")
+    ET.SubElement(xunit, "MethodDisplay").text = "classAndMethod"
+
     tree = ET.ElementTree(root)
     ET.indent(tree, space="  ")
     return '<?xml version="1.0" encoding="utf-8"?>\n' + ET.tostring(root, encoding="unicode")

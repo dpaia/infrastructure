@@ -78,7 +78,9 @@ def _normalize_legacy_name(name):
     colon_index = name.find(":")
     first_dot_index = name.find(".")
     if colon_index >= 0 and (first_dot_index < 0 or colon_index < first_dot_index):
-        name = name.split(":", 1)[1]
+        # Gradle module paths are colon-separated (for example
+        # "microservices:review-service:FQN"); JUnit reports only the FQN.
+        name = name.rsplit(":", 1)[-1]
     name = name.replace("\\", "/")
     if "/" in name:
         name = name.rsplit("/", 1)[-1]
@@ -362,6 +364,12 @@ def main():
     expected_f2f = expected.get("fail_to_fail", [])
     fail_to_fail_strict = expected.get("fail_to_fail_strict", True)
 
+    if has_test_patch and baseline_test_exit_code != 0 and expected_f2p:
+        baseline_all = baseline_passed + baseline_failed
+        baseline_failed.extend(
+            t for t in expected_f2p if not _matches_entry(t, baseline_all)
+        )
+
     # Expand wildcards: ["*"] means "all discovered tests"
     all_eval_tests = sorted(
         {_entry_id(t) for t in eval_passed}
@@ -460,7 +468,7 @@ def main():
                 "duration_seconds": baseline_duration,
                 "test_exit_code": baseline_test_exit_code,
                 "passed_tests": sorted(_entry_name(t) for t in baseline_passed),
-                "failed_tests": baseline_data.get("failed_tests", []),
+                "failed_tests": baseline_failed,
             },
             {
                 "criterion": "patch_applied",

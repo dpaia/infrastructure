@@ -18,7 +18,7 @@ Generate `.ee-bench/codegen/` configuration that builds a Docker image, runs tes
 
 `metadata.json`, `Dockerfile`, and `run.sh` are required. The `eval/scripts/` directory contains shared utility scripts that are copied from `guides/templates/shared/scripts/` in the infrastructure repository:
 
-- **`ee_bench_eval.py`** — language-independent emitter that builds schema v2.0 JSON output with all 6 criteria (compilation, baseline_tests, patch_applied, tests, fail_to_pass, pass_to_pass). Used by all languages.
+- **`ee_bench_eval.py`** — language-independent emitter that builds schema v2.0 JSON output with all 7 shared criteria (compilation, baseline_tests, patch_applied, tests, fail_to_pass, pass_to_pass, fail_to_fail). Used by all languages.
 - **`ee_bench_parser_junit.py`** — JUnit XML parser for Java/Maven/Gradle/Python projects.
 - **`ee_bench_parser_trx.py`** — TRX parser for C#/.NET projects.
 
@@ -140,18 +140,25 @@ Generate with detected values. Leave `expected` arrays empty — they are filled
   "version": "1.0",
   "benchmark_type": "codegen",
   "language": "<detected>",
+  "build_system": "<maven|gradle|dotnet|python>",
   "<language-specific fields>": "<detected values>",
   "expected": {
     "fail_to_pass": [],
-    "pass_to_pass": []
+    "pass_to_pass": [],
+    "fail_to_fail": [],
+    "fail_to_fail_strict": true
   },
   "environment": {
-    "project_root": "<detected default>"
+    "project_root": "<detected default>",
+    "resources": { "cpus": 2, "memory_mb": 4096, "storage_mb": 8192 },
+    "network_mode": "public",
+    "allowed_hosts": [],
+    "timeouts": { "agent_seconds": 1800, "verifier_seconds": 600, "build_seconds": 1200 }
   }
 }
 ```
 
-**Note:** `expected.fail_to_pass` and `expected.pass_to_pass` are consumed by `run.sh` at **template render time**. They are baked into the script as JSON literals via `{{ instance.expected.fail_to_pass | tojson }}` and `{{ instance.expected.pass_to_pass | tojson }}`, so the running container does not need access to `metadata.json`. These lists are populated per datapoint during the export pipeline — leave them empty when generating the config.
+**Note:** `expected.fail_to_pass`, `expected.pass_to_pass`, `expected.fail_to_fail`, and `expected.fail_to_fail_strict` are consumed by `run.sh` at **template render time**. They are baked into the script as JSON literals via `{{ instance.expected.fail_to_pass | tojson }}` and `{{ instance.expected.pass_to_pass | tojson }}`, so the running container does not need access to `metadata.json`. These lists are populated per datapoint during the export pipeline — leave them empty when generating the config.
 
 **Test name formats:** Expected test names support three formats:
 - **Dot-separated** (default): `com.example.FooTest.testMethod`
@@ -159,14 +166,20 @@ Generate with detected values. Leave `expected` arrays empty — they are filled
 - **Module prefix**: `my-module:com.example.FooTest#testMethod` — module before `:` is stripped for matching (JUnit XML does not include module names)
 - **Class-level**: `com.example.FooTest` or `my-module:com.example.FooTest` — matches all methods in the class
 
+**fail_to_fail semantics:**
+- Every name in `expected.fail_to_fail` must FAIL in both the baseline run AND the eval run. If any listed test passes in either run, the `fail_to_fail` criterion fails.
+- `fail_to_fail_strict` (bool, default `true`) controls the interaction with the `tests` criterion:
+  - `true` (default): failures in `fail_to_fail` tests still count in `tests.failed`. If only fail_to_fail tests fail, `tests` is still `fail`.
+  - `false`: failures in `fail_to_fail` tests are subtracted from `tests.failed` before computing pass/fail. Useful for "known flaky, don't block submission" scenarios.
+
 Language-specific fields to include:
 
 | Language | Fields |
 |----------|--------|
 | C# | `dotnet_sdk`, `test_project`, `test_framework_flag`, `test_logger` |
 | Python | `python_version` |
-| Gradle | `jvm_version` |
-| Maven | `jvm_version` |
+| Gradle | `jvm_version`, `build_system: "gradle"` |
+| Maven | `jvm_version`, `build_system: "maven"` |
 
 **If `uses_testcontainers` is true**, add to `environment`:
 
@@ -352,18 +365,19 @@ RUN rm -rf /app/.ee-bench/ 2>/dev/null || true
 
 ### eval/run.sh
 
-All run.sh scripts follow the same 6-criterion structure. Only the compile and test commands differ.
+All run.sh scripts follow the same 7-criterion structure. Only the compile and test commands differ. For Maven and Gradle, copy the current templates from `guides/templates/maven/` or `guides/templates/gradle/`; do not hand-roll the Java/Kotlin ordering.
 
 **Evaluation criteria:**
 
 | Criterion | Description | Status values |
 |-----------|-------------|---------------|
-| `compilation` | Build via install.sh (after `test_patch` is applied) | `pass`, `fail` |
+| `compilation` | Clean-base build before `test_patch` for Maven/Gradle; language-specific build gate otherwise | `pass`, `fail` |
 | `baseline_tests` | Test run before submission (with `test_patch`, no submission) | `pass`, `fail`, `skipped` |
 | `patch_applied` | Apply submission patch | `pass`, `fail`, `skipped` |
 | `tests` | Test run after submission | `pass`, `fail`, `skipped` |
 | `fail_to_pass` | Expected-failing tests failed in baseline, pass after submission | `pass`, `fail`, `skipped` |
 | `pass_to_pass` | Expected-passing tests passed in baseline, still pass after submission | `pass`, `fail`, `skipped` |
+| `fail_to_fail` | Expected-failing tests still failing after submission | `pass`, `fail`, `skipped` |
 
 **When criteria are skipped:**
 
@@ -372,6 +386,17 @@ All run.sh scripts follow the same 6-criterion structure. Only the compile and t
 - `tests` — compilation or patch application failed
 - `fail_to_pass` — expected list empty or upstream criteria failed
 - `pass_to_pass` — expected list empty or upstream criteria failed
+- `fail_to_fail` — expected list empty or upstream criteria failed
+
+**Java/Kotlin Maven and Gradle ordering:**
+
+1. Compile the clean base before applying `test_patch`.
+2. Apply `test_patch`.
+3. Run baseline compile/tests against `base + test_patch`.
+4. Tolerate baseline compile/test failure and let `ee_bench_eval.py` record expected `fail_to_pass` tests as baseline failures.
+5. Apply the submission patch, rebuild, run eval tests, and emit JSON.
+
+The `_run_tests` helper must return the test command exit code to the caller without aborting under `errexit`; callers capture `BASELINE_TEST_EXIT_CODE` and `EVAL_TEST_EXIT_CODE`.
 
 **Common structure (all languages):**
 
@@ -396,11 +421,13 @@ _elapsed() { echo $(( SECONDS - ${1:-$OVERALL_START} )); }
 _run_tests() {
   local label="$1"
   local orig_artifacts="$ARTIFACTS_DIR"
+  local exit_code=0
   export ARTIFACTS_DIR="$orig_artifacts/$label"
   mkdir -p "$ARTIFACTS_DIR"
 
   set +e
   <TEST_COMMAND> > "/tmp/${label}_stdout.log" 2> "/tmp/${label}_stderr.log"
+  exit_code=$?
   set -e
 
   # Copy test reports to ARTIFACTS_DIR for parser (use find for multi-module support)
@@ -409,6 +436,7 @@ _run_tests() {
   python3 "$EVAL_DIR/scripts/<PARSER_SCRIPT>" "$ARTIFACTS_DIR" > "/tmp/${label}_parser.json" 2>/dev/null || echo '{}' > "/tmp/${label}_parser.json"
 
   export ARTIFACTS_DIR="$orig_artifacts"
+  return "$exit_code"
 }
 
 cd "$PROJECT_ROOT"
@@ -420,16 +448,7 @@ if [ -n "${EE_BENCH_RESET:-}" ]; then
 fi
 
 # ============================================================
-# Apply test patch (setup — not a criterion)
-# ============================================================
-HAS_TEST_PATCH="false"
-if [ -f "$EVAL_DIR/test_patch.diff" ]; then
-  git apply -v "$EVAL_DIR/test_patch.diff" 2>/dev/null || true
-  HAS_TEST_PATCH="true"
-fi
-
-# ============================================================
-# Criterion: compilation (initial build AFTER test_patch)
+# Criterion: compilation (clean base, before test_patch)
 # ============================================================
 COMPILE_START=$SECONDS
 COMPILE_STATUS="pass"
@@ -439,14 +458,27 @@ COMPILE_STATUS="pass"
 COMPILE_DURATION=$(_elapsed $COMPILE_START)
 
 # ============================================================
-# Criterion: Run baseline tests (only if test_patch exists)
-# Checks that no fail_to_pass tests unexpectedly passes
-# before the incoming changes from the submission patch.
+# Apply test patch after clean-base compilation and before baseline.
+# This lets fail_to_pass prove the test fails without the solution.
+# ============================================================
+HAS_TEST_PATCH="false"
+if [ -f "$EVAL_DIR/test_patch.diff" ]; then
+  git apply -v "$EVAL_DIR/test_patch.diff" 2>/dev/null || true
+  HAS_TEST_PATCH="true"
+fi
+
+# ============================================================
+# Run baseline tests against base+test_patch, tolerating failures.
+# This records fail_to_pass tests as failing before the gold patch.
 # ============================================================
 BASELINE_DURATION=0
+BASELINE_TEST_EXIT_CODE=0
 if [ "$COMPILE_STATUS" = "pass" ]; then
   BASELINE_START=$SECONDS
+  set +e
   _run_tests baseline
+  BASELINE_TEST_EXIT_CODE=$?
+  set -e
   BASELINE_DURATION=$(_elapsed $BASELINE_START)
 fi
 
@@ -484,9 +516,13 @@ fi
 # Run eval tests (only if rebuild/compilation OK and patch not failed)
 # ============================================================
 TEST_DURATION=0
+EVAL_TEST_EXIT_CODE=0
 if [ "$REBUILD_STATUS" = "pass" ] || ([ "$COMPILE_STATUS" = "pass" ] && [ "$PATCH_STATUS" != "fail" ]); then
   TEST_START=$SECONDS
+  set +e
   _run_tests eval
+  EVAL_TEST_EXIT_CODE=$?
+  set -e
   TEST_DURATION=$(_elapsed $TEST_START)
 fi
 
@@ -506,7 +542,7 @@ EXPECTED_EOF
 # ============================================================
 export PATCH_STATUS PATCH_DURATION COMPILE_STATUS COMPILE_DURATION
 export TEST_DURATION BASELINE_DURATION OVERALL_DURATION TIMESTAMP
-export HAS_TEST_PATCH
+export HAS_TEST_PATCH BASELINE_TEST_EXIT_CODE EVAL_TEST_EXIT_CODE
 
 python3 "$EVAL_DIR/scripts/ee_bench_eval.py"
 ```
@@ -556,7 +592,7 @@ The emitter is located at `guides/templates/shared/scripts/ee_bench_eval.py`. Co
 Key behavior:
 - Reads env vars from `run.sh`: `COMPILE_STATUS`, `PATCH_STATUS`, `TEST_DURATION`, `HAS_TEST_PATCH`, etc.
 - Reads temp files: `/tmp/_compile_output.txt`, `/tmp/_patch_output.txt`, `/tmp/_expected.json`, `/tmp/*_parser.json`
-- Builds all 6 criteria (compilation, baseline_tests, patch_applied, tests, fail_to_pass, pass_to_pass)
+- Builds all 7 criteria (compilation, baseline_tests, patch_applied, tests, fail_to_pass, pass_to_pass, fail_to_fail)
 - Handles wildcard expansion (`["*"]` means all discovered tests)
 - Prints schema v2.0 JSON to stdout
 

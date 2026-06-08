@@ -23,6 +23,7 @@ _run_tests() {
 
   set +e
   ./gradlew test --no-daemon --continue > "/tmp/${label}_stdout.log" 2> "/tmp/${label}_stderr.log"
+  local exit_code=$?
   set -e
 
   # Copy JUnit XML results to ARTIFACTS_DIR for parser (supports multi-module)
@@ -31,6 +32,8 @@ _run_tests() {
   python3 "$EVAL_DIR/scripts/ee_bench_parser_junit.py" "$ARTIFACTS_DIR" > "/tmp/${label}_parser.json" 2>/dev/null || echo '{}' > "/tmp/${label}_parser.json"
 
   export ARTIFACTS_DIR="$orig_artifacts"
+  set +e
+  return "$exit_code"
 }
 
 cd "$PROJECT_ROOT"
@@ -42,16 +45,7 @@ if [ -n "${EE_BENCH_RESET:-}" ]; then
 fi
 
 # ============================================================
-# Apply test patch (setup — not a criterion)
-# ============================================================
-HAS_TEST_PATCH="false"
-if [ -f "$EVAL_DIR/test_patch.diff" ]; then
-  git apply -v "$EVAL_DIR/test_patch.diff" 2>/dev/null || true
-  HAS_TEST_PATCH="true"
-fi
-
-# ============================================================
-# Criterion: compilation (initial build AFTER test_patch)
+# Criterion: compilation (clean base, before test_patch)
 # ============================================================
 COMPILE_START=$SECONDS
 COMPILE_STATUS="pass"
@@ -61,14 +55,26 @@ COMPILE_STATUS="pass"
 COMPILE_DURATION=$(_elapsed $COMPILE_START)
 
 # ============================================================
-# Criterion: Run baseline tests (only if test_patch exists)
-# Checks that no fail_to_pass tests unexpectedly passes
-# before the incoming changes from the submission patch.
+# Apply test patch (after clean-base compile, before baseline)
+# ============================================================
+HAS_TEST_PATCH="false"
+if [ -f "$EVAL_DIR/test_patch.diff" ]; then
+  git apply -v "$EVAL_DIR/test_patch.diff" 2>/dev/null || true
+  HAS_TEST_PATCH="true"
+fi
+
+# ============================================================
+# Run baseline tests against base+test_patch, tolerating failures.
+# This records fail_to_pass tests as failing before the gold patch.
 # ============================================================
 BASELINE_DURATION=0
+BASELINE_TEST_EXIT_CODE=0
 if [ "$COMPILE_STATUS" = "pass" ]; then
   BASELINE_START=$SECONDS
+  set +e
   _run_tests baseline
+  BASELINE_TEST_EXIT_CODE=$?
+  set -e
   BASELINE_DURATION=$(_elapsed $BASELINE_START)
 fi
 
@@ -106,9 +112,13 @@ fi
 # Run eval tests (only if rebuild/compilation OK and patch not failed)
 # ============================================================
 TEST_DURATION=0
+EVAL_TEST_EXIT_CODE=0
 if [ "$REBUILD_STATUS" = "pass" ] || ([ "$COMPILE_STATUS" = "pass" ] && [ "$PATCH_STATUS" != "fail" ]); then
   TEST_START=$SECONDS
+  set +e
   _run_tests eval
+  EVAL_TEST_EXIT_CODE=$?
+  set -e
   TEST_DURATION=$(_elapsed $TEST_START)
 fi
 
@@ -128,6 +138,6 @@ EXPECTED_EOF
 # ============================================================
 export PATCH_STATUS PATCH_DURATION COMPILE_STATUS COMPILE_DURATION
 export TEST_DURATION BASELINE_DURATION OVERALL_DURATION TIMESTAMP
-export HAS_TEST_PATCH
+export HAS_TEST_PATCH BASELINE_TEST_EXIT_CODE EVAL_TEST_EXIT_CODE
 
 python3 "$EVAL_DIR/scripts/ee_bench_eval.py"

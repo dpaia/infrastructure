@@ -105,6 +105,29 @@ def normalize_expected_fields(data: dict) -> None:
         expected[expected_key] = normalized
 
 
+def normalize_tag_list(value) -> list[str]:
+    """Return tags as a de-duplicated list of strings, preserving order."""
+    if value in (None, ""):
+        return []
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except (json.JSONDecodeError, ValueError):
+            parsed = [part.strip() for part in value.split(",") if part.strip()]
+        value = parsed
+    if not isinstance(value, list):
+        value = [value]
+
+    tags: list[str] = []
+    seen: set[str] = set()
+    for tag in value:
+        tag = str(tag)
+        if tag and tag not in seen:
+            tags.append(tag)
+            seen.add(tag)
+    return tags
+
+
 # --- Configuration ---
 GITHUB_TOKEN = os.environ["GITHUB_TOKEN"]
 
@@ -303,6 +326,9 @@ for item in github.provide(filters=filters, limit=LIMIT):
         instance_id=instance_id,
     )
     normalize_expected_fields(record)
+    if "tags" not in record:
+        tags = normalize_tag_list(item.get("tags") or item.get("labels"))
+        record["tags"] = tags
     records.append(record)
 
 # --- Write output ---

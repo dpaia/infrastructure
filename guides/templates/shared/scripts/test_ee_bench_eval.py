@@ -92,6 +92,20 @@ def test_colon_in_parameter_name_is_not_treated_as_module_prefix():
     assert evalmod._matches_any_expected(actual, [actual])
 
 
+def test_gradle_multimodule_class_prefix_matches_junit_fqn():
+    assert evalmod._matches_any_expected(
+        "shop.microservices.core.review.PersistenceTests.shouldPersist",
+        ["microservices:review-service:shop.microservices.core.review.PersistenceTests"],
+    )
+
+
+def test_gradle_multimodule_method_prefix_with_hash_matches_junit_fqn():
+    assert evalmod._matches_any_expected(
+        "shop.core.FooTest.shouldWork",
+        ["microservices:review-service:shop.core.FooTest#shouldWork"],
+    )
+
+
 def test_parameterized_cases_do_not_match_by_method_prefix():
     assert not evalmod._matches_any_expected(
         'pkg.Outer+Inner.testA(value: "other")',
@@ -218,3 +232,56 @@ def test_overall_status_fails_when_tests_criterion_fails(monkeypatch, capsys):
     criteria = {item["criterion"]: item for item in result["criteria"]}
     assert criteria["tests"]["status"] == "fail"
     assert criteria["pass_to_pass"]["status"] == "pass"
+
+
+def test_baseline_failure_records_expected_fail_to_pass_as_failed(monkeypatch, capsys):
+    monkeypatch.setenv("COMPILE_STATUS", "pass")
+    monkeypatch.setenv("PATCH_STATUS", "pass")
+    monkeypatch.setenv("HAS_TEST_PATCH", "true")
+    monkeypatch.setenv("BASELINE_TEST_EXIT_CODE", "1")
+    monkeypatch.setenv("EVAL_TEST_EXIT_CODE", "0")
+
+    expected_name = "pkg.NewFeatureTests.exercisesNewApi"
+
+    def fake_load_json(path):
+        if path == "/tmp/_expected.json":
+            return {"fail_to_pass": [expected_name], "pass_to_pass": []}
+        if path == "/tmp/baseline_parser.json":
+            return {
+                "passed_tests": [],
+                "failed_tests": [],
+                "summary": {
+                    "total": 0,
+                    "passed": 0,
+                    "failed": 0,
+                    "errors": 0,
+                    "skipped": 0,
+                    "duration_seconds": 0,
+                },
+            }
+        if path == "/tmp/eval_parser.json":
+            return {
+                "passed_tests": [{"name": expected_name}],
+                "failed_tests": [],
+                "summary": {
+                    "total": 1,
+                    "passed": 1,
+                    "failed": 0,
+                    "errors": 0,
+                    "skipped": 0,
+                    "duration_seconds": 0,
+                },
+            }
+        return {}
+
+    monkeypatch.setattr(evalmod, "load_json", fake_load_json)
+    monkeypatch.setattr(evalmod, "read_file", lambda path, limit=evalmod.MAX_OUTPUT: "")
+
+    evalmod.main()
+    result = json.loads(capsys.readouterr().out)
+
+    criteria = {item["criterion"]: item for item in result["criteria"]}
+    assert result["status"] == "success"
+    assert criteria["fail_to_pass"]["status"] == "pass"
+    assert criteria["baseline_tests"]["test_exit_code"] == 1
+    assert expected_name in criteria["baseline_tests"]["failed_tests"]

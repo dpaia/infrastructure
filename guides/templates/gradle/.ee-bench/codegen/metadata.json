@@ -2,16 +2,39 @@
   "version": "1.0",
   "benchmark_type": "codegen",
   "language": "java",
-  "jvm_version": "21",
+  "jvm_version": "24",
+  "build_system": "gradle",
   "expected": {
-    "fail_to_pass": [
-      "com.example.SomeTest.testFailingCase"
-    ],
-    "pass_to_pass": [
-      "com.example.SomeTest.testPassingCase"
-    ]
+    "fail_to_pass": [],
+    "pass_to_pass": []
   },
   "environment": {
-    "project_root": "/repo"
+    "project_root": "/repo",
+    "docker": {
+      "run_params": {
+        "privileged": true,
+        "network": "host",
+        "volumes": [
+          "/var/run/docker.sock:/var/run/docker.sock"
+        ],
+        "environment": {
+          "TESTCONTAINERS_RYUK_DISABLED": "true",
+          "TESTCONTAINERS_CHECKS_DISABLE": "true",
+          "DOCKER_HOST": "unix:///var/run/docker.sock"
+        }
+      }
+    },
+    "resources": {
+      "cpus": 2,
+      "memory_mb": 4096,
+      "storage_mb": 8192
+    },
+    "network_mode": "public",
+    "allowed_hosts": [],
+    "timeouts": {
+      "agent_seconds": 1800,
+      "verifier_seconds": 600,
+      "build_seconds": 1200
+    }
   }
 }

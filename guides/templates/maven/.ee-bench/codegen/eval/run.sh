@@ -18,11 +18,13 @@ _elapsed() { echo $(( SECONDS - ${1:-$OVERALL_START} )); }
 _run_tests() {
   local label="$1"
   local orig_artifacts="$ARTIFACTS_DIR"
+  local exit_code=0
   export ARTIFACTS_DIR="$orig_artifacts/$label"
   mkdir -p "$ARTIFACTS_DIR"
 
   set +e
   ./mvnw test -q > "/tmp/${label}_stdout.log" 2> "/tmp/${label}_stderr.log"
+  exit_code=$?
   set -e
 
   # Copy Surefire XML results to ARTIFACTS_DIR for parser (supports multi-module)
@@ -31,6 +33,9 @@ _run_tests() {
   python3 "$EVAL_DIR/scripts/ee_bench_parser_junit.py" "$ARTIFACTS_DIR" > "/tmp/${label}_parser.json" 2>/dev/null || echo '{}' > "/tmp/${label}_parser.json"
 
   export ARTIFACTS_DIR="$orig_artifacts"
+  # Keep errexit disabled so callers can capture expected test failures.
+  set +e
+  return "$exit_code"
 }
 
 cd "$PROJECT_ROOT"
@@ -51,27 +56,39 @@ COMPILE_STATUS="pass"
 }
 COMPILE_DURATION=$(_elapsed $COMPILE_START)
 
-# ============================================================
-# Run baseline tests (clean base, before test_patch)
-# Establishes pass_to_pass baseline and fail_to_pass baseline.
-# ============================================================
 HAS_TEST_PATCH="false"
 if [ -f "$EVAL_DIR/test_patch.diff" ]; then
   HAS_TEST_PATCH="true"
 fi
 
-BASELINE_DURATION=0
-if [ "$COMPILE_STATUS" = "pass" ]; then
-  BASELINE_START=$SECONDS
-  _run_tests baseline
-  BASELINE_DURATION=$(_elapsed $BASELINE_START)
+# ============================================================
+# Apply test patch after clean-base compilation and before baseline.
+# This lets fail_to_pass prove the test fails without the solution.
+# ============================================================
+if [ "$COMPILE_STATUS" = "pass" ] && [ "$HAS_TEST_PATCH" = "true" ]; then
+  git apply -v "$EVAL_DIR/test_patch.diff" 2>/tmp/test_patch_apply.log || true
 fi
 
 # ============================================================
-# Apply test patch (after baseline, before gold patch)
+# Run baseline tests (base + test_patch, before gold patch)
+# Baseline compile/test failures are tolerated and interpreted by the
+# emitter as expected fail_to_pass failures.
 # ============================================================
-if [ "$HAS_TEST_PATCH" = "true" ]; then
-  git apply -v "$EVAL_DIR/test_patch.diff" 2>/dev/null || true
+BASELINE_DURATION=0
+BASELINE_TEST_EXIT_CODE=0
+if [ "$COMPILE_STATUS" = "pass" ]; then
+  BASELINE_START=$SECONDS
+  set +e
+  ./mvnw test-compile -q > /tmp/baseline_compile_stdout.log 2> /tmp/baseline_compile_stderr.log
+  BASELINE_TEST_EXIT_CODE=$?
+  set -e
+  if [ "$BASELINE_TEST_EXIT_CODE" = "0" ]; then
+    set +e
+    _run_tests baseline
+    BASELINE_TEST_EXIT_CODE=$?
+    set -e
+  fi
+  BASELINE_DURATION=$(_elapsed $BASELINE_START)
 fi
 
 # ============================================================
@@ -108,9 +125,13 @@ fi
 # Run eval tests (only if rebuild/compilation OK and patch not failed)
 # ============================================================
 TEST_DURATION=0
+EVAL_TEST_EXIT_CODE=0
 if [ "$REBUILD_STATUS" = "pass" ] || ([ "$COMPILE_STATUS" = "pass" ] && [ "$PATCH_STATUS" != "fail" ]); then
   TEST_START=$SECONDS
+  set +e
   _run_tests eval
+  EVAL_TEST_EXIT_CODE=$?
+  set -e
   TEST_DURATION=$(_elapsed $TEST_START)
 fi
 
@@ -130,6 +151,6 @@ EXPECTED_EOF
 # ============================================================
 export PATCH_STATUS PATCH_DURATION COMPILE_STATUS COMPILE_DURATION
 export TEST_DURATION BASELINE_DURATION OVERALL_DURATION TIMESTAMP
-export HAS_TEST_PATCH
+export HAS_TEST_PATCH BASELINE_TEST_EXIT_CODE EVAL_TEST_EXIT_CODE
 
 python3 "$EVAL_DIR/scripts/ee_bench_eval.py"

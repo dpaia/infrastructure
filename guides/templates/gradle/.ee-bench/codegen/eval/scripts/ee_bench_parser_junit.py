@@ -55,6 +55,7 @@ def parse_junit_xml(root):
             failure = tc.find("failure")
             error = tc.find("error")
             skipped = tc.find("skipped")
+            outcome = _testcase_outcome(tc)
 
             if failure is not None:
                 entry["status"] = "failed"
@@ -66,16 +67,33 @@ def parse_junit_xml(root):
                 entry["type"] = "error"
                 entry["message"] = error.get("message", "")
                 entry["stacktrace"] = _truncate(error.text or "")
-            elif skipped is not None:
+            elif skipped is not None or outcome in {"skipped", "ignored", "notexecuted", "inconclusive"}:
                 entry["status"] = "skipped"
-                msg = skipped.get("message", "") or (skipped.text or "")
+                msg = ""
+                if skipped is not None:
+                    msg = skipped.get("message", "") or (skipped.text or "")
                 if msg:
                     entry["message"] = msg
+            elif outcome in {"failed", "failure"}:
+                entry["status"] = "failed"
+                entry["type"] = "assertion"
+            elif outcome == "error":
+                entry["status"] = "failed"
+                entry["type"] = "error"
             else:
                 entry["status"] = "passed"
 
             methods.append(entry)
     return methods
+
+
+def _testcase_outcome(testcase):
+    """Return lower-cased testcase outcome from common JUnit logger attrs."""
+    for attr in ("result", "status", "outcome"):
+        value = testcase.get(attr)
+        if value:
+            return value.strip().lower()
+    return ""
 
 
 def detect_and_parse(artifacts_dir):
@@ -101,9 +119,9 @@ def detect_and_parse(artifacts_dir):
 
 def aggregate(methods):
     """Build summary and test lists from parsed method results."""
-    passed_names = []
-    failed_names = []
-    skipped_names = []
+    passed_entries = []
+    failed_entries = []
+    skipped_entries = []
     total_duration = 0.0
     n_errors = 0
 
@@ -111,26 +129,32 @@ def aggregate(methods):
         total_duration += m.get("duration_seconds", 0.0)
         status = m["status"]
         if status == "passed":
-            passed_names.append(m["name"])
+            passed_entries.append(m)
         elif status == "failed":
-            failed_names.append(m["name"])
+            failed_entries.append(m)
             if m.get("type") == "error":
                 n_errors += 1
         elif status == "skipped":
-            skipped_names.append(m["name"])
+            skipped_entries.append(m)
+
+    def unique_entries(entries):
+        by_name = {}
+        for entry in entries:
+            by_name.setdefault(entry["name"], entry)
+        return [by_name[name] for name in sorted(by_name)]
 
     return {
         "summary": {
             "total": len(methods),
-            "passed": len(passed_names),
-            "failed": len(failed_names) - n_errors,
+            "passed": len(passed_entries),
+            "failed": len(failed_entries) - n_errors,
             "errors": n_errors,
-            "skipped": len(skipped_names),
+            "skipped": len(skipped_entries),
             "duration_seconds": round(total_duration, 3),
         },
-        "passed_tests": [{"name": n} for n in sorted(set(passed_names))],
-        "failed_tests": [{"name": n} for n in sorted(set(failed_names))],
-        "skipped_tests": [{"name": n} for n in sorted(set(skipped_names))],
+        "passed_tests": unique_entries(passed_entries),
+        "failed_tests": unique_entries(failed_entries),
+        "skipped_tests": unique_entries(skipped_entries),
         "methods": methods,
     }
 

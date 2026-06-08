@@ -268,6 +268,7 @@ Results:
   patch_applied:  <status>
   tests:          <status>
   fail_to_pass:   <status>
+  fail_to_fail:   <status>
 ```
 
 ## Step 8: Cleanup
@@ -293,12 +294,26 @@ VERIFICATION FAILED
 
 ## Troubleshooting
 
-| Problem | Cause | Fix |
-|---------|-------|-----|
-| Tests fail with Testcontainers errors | Tests need Docker-in-Docker access | Add structured `environment.docker.run_params` to `metadata.json` with `privileged: true`, `network: "host"`, volume `/var/run/docker.sock:/var/run/docker.sock`, and env vars `TESTCONTAINERS_RYUK_DISABLED=true`, `TESTCONTAINERS_CHECKS_DISABLE=true`, `DOCKER_HOST=unix:///var/run/docker.sock`, `TESTCONTAINERS_HOST_OVERRIDE=host.docker.internal`. Also install Docker CLI in the Dockerfile |
-| Unrendered `{{ }}` in Dockerfile | Template variable not in context.json | Check metadata.json has all fields referenced in templates |
-| Build fails with dependency errors | Missing system packages | Add extra `RUN apt-get install` commands to the Dockerfile |
-| Parser returns empty results | Test results not in expected location | Verify the results directory matches the build system (surefire-reports for Maven, build/test-results for Gradle, etc.) |
+Most verify failures stem from three causes:
+
+1. **Patch classification** — test files routed to the wrong bucket (`test_patch` vs `verify/patch.diff`).
+2. **Missing rebuild between `test_patch` apply and eval run** — affects compile-based languages.
+3. **Expected-list selection that doesn't match the test's relationship to baseline** — see the contribution guide's "Choosing an evaluation methodology" table.
+
+Failure modes observed during verification:
+
+| Symptom | Likely cause | Fix |
+|---------|--------------|-----|
+| `container_execution: fail`, no schema v2.0 JSON | `run.sh` aborted under `errexit` before the emitter ran, often because a Java/Gradle test command returned nonzero inside `_run_tests` | Capture the test exit code under `set +e`, restore shell state, and let `ee_bench_eval.py` emit JSON with `BASELINE_TEST_EXIT_CODE` / `EVAL_TEST_EXIT_CODE`. |
+| `tests: fail` while `fail_to_pass: pass` | The expected tests were fixed, but another whole-repo test failed after the gold patch | Repair the source or test patch. Current emitters include `tests` in overall failure, so this is a real failed datapoint. |
+| `fail_to_pass: fail`, detail `eval missing: <test>` | Test source added by `test_patch` or submission was not compiled, or the expected name does not match parser output | Ensure `run.sh` rebuilds after `test_patch` or submission patch; check JUnit/TRX result names. |
+| `fail_to_pass: fail`, detail `baseline unexpected pass: <test>` | Expected test is too broad, usually class-level with mixed passing/failing methods | Use method-level expected names or move the stable test to `pass_to_pass`. |
+| `patch_applied: skipped` when you expected `pass` | `verify/patch.diff` is empty or classification routed all changes to `test_patch` | Regenerate and inspect `verify/patch.diff`; add `patch.source_patterns` / `patch.test_patterns` only when the semantics require it. |
+| `fail_to_fail: fail`, detail `eval unexpected pass: <test>` | Test listed as "should always fail" actually passed | Narrow `fail_to_fail`, set `fail_to_fail_strict: false` only for deterministic tolerated failures, or drop the entry. |
+| Tests fail with Testcontainers errors | Tests need Docker-in-Docker access | Add structured `environment.docker.run_params` to `metadata.json` with `privileged: true`, `network: "host"`, volume `/var/run/docker.sock:/var/run/docker.sock`, and env vars `TESTCONTAINERS_RYUK_DISABLED=true`, `TESTCONTAINERS_CHECKS_DISABLE=true`, `DOCKER_HOST=unix:///var/run/docker.sock`, `TESTCONTAINERS_HOST_OVERRIDE=host.docker.internal`. Also install Docker CLI in the Dockerfile. |
+| Unrendered `{{ }}` in Dockerfile | Template variable not in context.json | Check `metadata.json` has all fields referenced in templates. |
+| Build fails with dependency errors | Missing system packages | Add extra `RUN apt-get install` commands to the Dockerfile. |
+| Parser returns empty results | Test results not in expected location | Verify the results directory matches the build system: Surefire reports for Maven, `build/test-results` for Gradle, `TestResults/` for .NET when no explicit results directory is set. |
 
 ## Error Handling
 

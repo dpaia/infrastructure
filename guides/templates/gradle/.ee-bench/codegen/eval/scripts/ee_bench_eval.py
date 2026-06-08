@@ -8,7 +8,7 @@ Prints the result JSON to stdout.
 Environment variables consumed:
     COMPILE_STATUS, COMPILE_DURATION, PATCH_STATUS, PATCH_DURATION,
     TEST_DURATION, BASELINE_DURATION, OVERALL_DURATION, TIMESTAMP,
-    HAS_TEST_PATCH
+    HAS_TEST_PATCH, BASELINE_TEST_EXIT_CODE, EVAL_TEST_EXIT_CODE
 
 Temp files consumed:
     /tmp/_compile_output.txt, /tmp/_patch_output.txt, /tmp/_expected.json,
@@ -78,8 +78,28 @@ def _normalize_legacy_name(name):
     colon_index = name.find(":")
     first_dot_index = name.find(".")
     if colon_index >= 0 and (first_dot_index < 0 or colon_index < first_dot_index):
-        name = name.split(":", 1)[1]
+        # Gradle module paths are colon-separated (for example
+        # "microservices:review-service:FQN"); JUnit reports only the FQN.
+        name = name.rsplit(":", 1)[-1]
+    name = name.replace("\\", "/")
+    if "/" in name:
+        name = name.rsplit("/", 1)[-1]
+    if name.endswith(".java"):
+        name = name[:-5]
     return name.replace("#", ".").replace("+", ".")
+
+
+def _legacy_class_key(name):
+    normalized = _legacy_prefix(_normalize_legacy_name(name))
+    parts = normalized.split(".")
+    for index, part in enumerate(parts):
+        if re.search(r"(Test|Tests|IT)$", part):
+            return ".".join(parts[: index + 1])
+    return normalized
+
+
+def _legacy_simple_class_key(name):
+    return _legacy_class_key(name).split(".")[-1]
 
 
 def legacy_matches(expected_name, actual_names):
@@ -101,10 +121,26 @@ def legacy_matches(expected_name, actual_names):
     }:
         return True
 
-    class_prefix = name + "."
-    return (
-        not _legacy_has_parameters(name)
-        and any(n.startswith(class_prefix) for n in normalized_set)
+    if _legacy_has_parameters(name):
+        return False
+
+    # Method-level legacy names may omit the package:
+    # 'FooTest.testA' should match 'pkg.FooTest.testA'.
+    if any(n.endswith("." + name) for n in normalized_set):
+        return True
+
+    class_key = _legacy_class_key(name)
+    is_class_level_expected = _legacy_prefix(name) == class_key
+    if not is_class_level_expected:
+        return False
+
+    class_prefix = class_key + "."
+    if any(n.startswith(class_prefix) for n in normalized_set):
+        return True
+
+    return any(
+        _legacy_simple_class_key(n) == _legacy_simple_class_key(name)
+        for n in normalized_set
     )
 
 
@@ -328,6 +364,12 @@ def main():
     expected_f2f = expected.get("fail_to_fail", [])
     fail_to_fail_strict = expected.get("fail_to_fail_strict", True)
 
+    if has_test_patch and baseline_test_exit_code != 0 and expected_f2p:
+        baseline_all = baseline_passed + baseline_failed
+        baseline_failed.extend(
+            t for t in expected_f2p if not _matches_entry(t, baseline_all)
+        )
+
     # Expand wildcards: ["*"] means "all discovered tests"
     all_eval_tests = sorted(
         {_entry_id(t) for t in eval_passed}
@@ -353,7 +395,7 @@ def main():
         "errors": 0, "skipped": 0, "duration_seconds": 0.0,
     })
 
-    eval_summary_failed = eval_summary.get("failed", 0)
+    eval_summary_failed = eval_summary.get("failed", 0) + eval_summary.get("errors", 0)
     if not fail_to_fail_strict and expected_f2f:
         excluded = [n for n in eval_failed if _matches_any_expected(n, expected_f2f)]
         eval_summary_failed = max(0, eval_summary_failed - len(excluded))
@@ -400,9 +442,9 @@ def main():
         )
 
     # --- Overall status ---
-    # tests_status is intentionally omitted - raw test failures are surfaced via fail_to_pass / fail_to_fail.
     has_failure = any(
-        s == "fail" for s in [compile_status, patch_status, f2p_status, p2p_status, f2f_status]
+        s == "fail"
+        for s in [compile_status, patch_status, tests_status, f2p_status, p2p_status, f2f_status]
     )
     overall_status = "failure" if has_failure else "success"
 
@@ -426,7 +468,7 @@ def main():
                 "duration_seconds": baseline_duration,
                 "test_exit_code": baseline_test_exit_code,
                 "passed_tests": sorted(_entry_name(t) for t in baseline_passed),
-                "failed_tests": baseline_data.get("failed_tests", []),
+                "failed_tests": baseline_failed,
             },
             {
                 "criterion": "patch_applied",

@@ -35,6 +35,7 @@ Happy path for a new datapoint:
    - **Direct model** (simpler; matches feature-service precedent): branch `<issue-id>-<slug>` from main with the gold fix. PR goes branch → main.
 3. On the solution/head branch: override `.ee-bench/codegen/metadata.json` to fill the `expected` arrays. Add the source/test changes.
 4. Open the PR. Title + body should describe the task as the agent sees it — no ee-bench boilerplate inside.
+   Add the matching language label to the PR, such as `Language: Java` for Java datapoints or `Language: Kotlin` for Kotlin datapoints. These labels are exported as dataset tags.
 5. The validator runs automatically: `patch_splitter` extracts `test_patch` and `verify/patch.diff` from the PR diff; `validate.sh` runs the eval end-to-end in Docker.
 
 Datapoint PRs SHOULD NOT add `.ee-bench/` scaffolding inline. The scaffolding is inherited from the default branch. PRs that carry scaffolding are harder to review, harder to reproduce, and mix two concerns.
@@ -134,7 +135,7 @@ The `eval/scripts/` directory contains shared utility scripts from [`guides/temp
 
 | Script | Description | Used by |
 |--------|-------------|---------|
-| `ee_bench_eval.py` | Language-independent emitter — builds schema v2.0 JSON with all 6 criteria | All languages |
+| `ee_bench_eval.py` | Language-independent emitter — builds schema v2.0 JSON with all 7 shared criteria | All languages |
 | `ee_bench_parser_junit.py` | JUnit XML test result parser | Java (Maven, Gradle), Python (pytest) |
 | `ee_bench_parser_trx.py` | Visual Studio TRX test result parser | C#/.NET |
 
@@ -168,9 +169,15 @@ All fields in `metadata.json` are **optional**. They are populated in the result
 | `benchmark_type`                | string   | Evaluation type (default: `"codegen"`)                                                                                                                    |
 | `language`                      | string   | Programming language (e.g., `"java"`, `"csharp"`, `"python"`)                                                                                             |
 | `environment.project_root`      | string   | Working directory inside the container (default: `/repo`)                                                                                                 |
-| `environment.docker.run_params` | string   | Extra `docker run` flags (e.g., `"--network=host"`, `"--privileged"`)                                                                                     |
+| `environment.docker.run_params` | object or string | Extra `docker run` settings. Prefer structured form with `privileged`, `network`, `volumes`, and `environment`; flat strings are legacy-compatible. |
+| `environment.resources`         | object   | Resource hints for export targets, e.g. `{"cpus": 2, "memory_mb": 4096, "storage_mb": 8192}`                                                              |
+| `environment.network_mode`      | string   | Network policy for export targets: usually `"public"`, `"no-network"`, or `"allowlist"`                                                                  |
+| `environment.allowed_hosts`     | string[] | Allowed hosts when `network_mode` is `"allowlist"`                                                                                                        |
+| `environment.timeouts`          | object   | Timeout hints: `agent_seconds`, `verifier_seconds`, and `build_seconds`                                                                                   |
 | `expected.fail_to_pass`         | string[] | Tests expected to fail before the fix and pass after — used to verify the gold patch fixes the intended issue. Available as template variable in `run.sh` |
 | `expected.pass_to_pass`         | string[] | Tests expected to pass both before and after — ensures the fix doesn't break existing functionality. Available as template variable in `run.sh`           |
+| `expected.fail_to_fail`         | string[] | Tests expected to fail both before and after. Use sparingly for deterministic known failures.                                                             |
+| `expected.fail_to_fail_strict`  | boolean  | Whether `fail_to_fail` failures still count against the raw `tests` criterion. Default: `true`                                                            |
 | `patch.test_patterns`           | string[] | Glob patterns or file paths classified as test files (overrides built-in heuristics). See [How Patches Are Split](#how-patches-are-split)                 |
 | `patch.source_patterns`         | string[] | Glob patterns or file paths classified as source files (highest priority override). See [How Patches Are Split](#how-patches-are-split)                   |
 | `environment.files`             | object   | Map of filename to content, added to the Docker build context                                                                                             |
@@ -201,7 +208,9 @@ All fields in `metadata.json` are **optional**. They are populated in the result
   "environment": {
     "project_root": "/repo",
     "docker": {
-      "run_params": "--network=host"
+      "run_params": {
+        "network": "host"
+      }
     }
   },
   "eval": {
@@ -388,9 +397,9 @@ It receives the patch and evaluation scripts at fixed mount points:
 `run.sh` is a self-evaluating validation script that performs a two-phase test execution:
 1. **Baseline phase**: applies the test patch from `/ee-bench/eval/test_patch.diff`, builds, and runs tests (verifying the bug exists)
 2. **Eval phase**: applies the submission patch from `/ee-bench/submission/patch.diff`, rebuilds, and runs tests (verifying the fix works)
-3. **Comparison**: checks `fail_to_pass` tests (failed in baseline, pass after submission) and `pass_to_pass` tests (passed in baseline, still pass after submission)
+3. **Comparison**: checks `fail_to_pass` tests (failed in baseline, pass after submission), `pass_to_pass` tests (passed in baseline, still pass after submission), and `fail_to_fail` tests when configured
 
-`run.sh` is self-evaluating — it outputs a JSON result conforming to the result schema v2.0 to stdout, including all 6 criteria checks. No external harness is needed for criteria matching. The expected test lists are baked into `run.sh` at render time via template variables (`{{ instance.expected.fail_to_pass | tojson }}` and `{{ instance.expected.pass_to_pass | tojson }}`).
+`run.sh` is self-evaluating — it outputs a JSON result conforming to the result schema v2.0 to stdout, including all shared criteria checks. No external harness is needed for criteria matching. The expected test lists are baked into `run.sh` at render time via template variables (`{{ instance.expected.fail_to_pass | tojson }}` and `{{ instance.expected.pass_to_pass | tojson }}`).
 
 The validation script identifies the JSON output by searching for a line containing `"schema_version"`. Make sure your script prints exactly one JSON object containing this field to stdout.
 
@@ -402,9 +411,15 @@ The validation script identifies the JSON output by searching for a line contain
 2. **Eval phase** — apply submission patch, rebuild, run tests (verify the fix works)
 3. **Comparison** — compare both runs against expected test lists (`fail_to_pass` and `pass_to_pass`)
 
+For Java/Kotlin Maven and Gradle templates, the clean base is compiled before
+`test_patch` is applied. Then `test_patch` is applied before baseline tests.
+Baseline compile/test failure is tolerated and interpreted by the emitter as a
+valid baseline failure for expected `fail_to_pass` tests when the patched tests
+cannot compile or run without the gold solution.
+
 ### Result Schema v2.0
 
-The result contains 6 criteria, evaluated in order:
+The shared result contains 7 criteria, evaluated in order:
 
 | Criterion | Description | Status values |
 |-----------|-------------|---------------|
@@ -414,8 +429,9 @@ The result contains 6 criteria, evaluated in order:
 | `tests` | Test run after submission | `pass`, `fail`, `skipped` |
 | `fail_to_pass` | Expected-failing tests failed in baseline, pass after submission | `pass`, `fail`, `skipped` |
 | `pass_to_pass` | Expected-passing tests passed in baseline, still pass after submission | `pass`, `fail`, `skipped` |
+| `fail_to_fail` | Expected-failing tests still fail after submission | `pass`, `fail`, `skipped` |
 
-Criteria are skipped when their prerequisites are not met (e.g., `tests` is skipped if compilation or patch application failed; `fail_to_pass`/`pass_to_pass` are skipped if the expected list is empty or upstream criteria failed).
+Criteria are skipped when their prerequisites are not met (e.g., `tests` is skipped if compilation or patch application failed; `fail_to_pass`/`pass_to_pass`/`fail_to_fail` are skipped if the expected list is empty or upstream criteria failed).
 
 ```json
 {
@@ -472,6 +488,11 @@ Criteria are skipped when their prerequisites are not met (e.g., `tests` is skip
       "expected": ["com.example.FooTest#testBar"],
       "matched": ["com.example.FooTest#testBar"],
       "unmatched": []
+    },
+    {
+      "criterion": "fail_to_fail",
+      "status": "skipped",
+      "expected": []
     }
   ]
 }
@@ -482,11 +503,11 @@ Criteria are skipped when their prerequisites are not met (e.g., `tests` is skip
 | Field              | Required | Type                     | Description                            |
 |--------------------|----------|--------------------------|----------------------------------------|
 | `schema_version`   | Yes      | `"2.0"`                  | Must be exactly `"2.0"`                |
-| `status`           | Yes      | `"success"` or `"error"` | Whether run.sh completed successfully  |
-| `criteria`         | Yes      | array                    | Array of 6 criterion objects           |
+| `status`           | Yes      | `"success"` or `"failure"` | Whether all required criteria passed  |
+| `criteria`         | Yes      | array                    | Array of criterion objects             |
 | `duration_seconds` | No       | number                   | Total wall-clock time                  |
 | `timestamp`        | No       | string                   | ISO-8601 UTC completion time           |
-| `error`            | No       | string                   | Error message when status is `"error"` |
+| `error`            | No       | string                   | Error message for unrecoverable evaluator failures |
 
 **Criterion types:**
 
@@ -498,6 +519,7 @@ Criteria are skipped when their prerequisites are not met (e.g., `tests` is skip
 | `tests`          | `criterion`, `status`, `summary`, `passed_tests`, `failed_tests` | Test results after submission                                     |
 | `fail_to_pass`   | `criterion`, `status`                                            | Whether expected-failing tests now pass after submission           |
 | `pass_to_pass`   | `criterion`, `status`                                            | Whether expected-passing tests still pass after submission         |
+| `fail_to_fail`   | `criterion`, `status`                                            | Whether expected known-failing tests still fail                    |
 
 **Criterion status values:** `"pass"`, `"fail"`, `"skipped"`
 
@@ -532,6 +554,7 @@ Criteria are skipped when their prerequisites are not met (e.g., `tests` is skip
 
 **run.sh:**
 - Apply test patch before submission patch if test patch exists (order matters for some build systems)
+- For Java/Kotlin Maven and Gradle, keep the clean-base compile before `test_patch`, then run baseline against `base + test_patch`
 - keep in mind that submission patch is optional, so it may not be applied
 - Redirect build/test verbose output to stderr or log files — only the JSON result should go to stdout
 - Use `set -euo pipefail` for strict error handling
@@ -539,6 +562,9 @@ Criteria are skipped when their prerequisites are not met (e.g., `tests` is skip
 - Use template variables for values that change per-datapoint (base commit, project root, expected tests) rather than hardcoding
 
 **Language / runtime gotchas:**
+- **Java/Kotlin — Gradle multimodule names:** expected tests may be module-qualified, e.g. `microservices:review-service:shop.core.FooTest#shouldWork`. The shared evaluator strips the full colon-separated module prefix before matching JUnit FQNs.
+- **Java/Kotlin — class-level expectations:** avoid class-level `fail_to_pass` when only some methods fail at baseline. Use method-level selectors to prevent `baseline unexpected pass`.
+- **Java/Kotlin — historical bases:** normalize Maven/Gradle wrapper files on the base side when old commits point at wrappers the Docker image cannot fetch or validate.
 - **C# — `dotnet test --no-build`:** `run.sh` must rebuild the test project whenever `HAS_TEST_PATCH=true`, not only when a submission patch applied. Without the rebuild, newly-added test source isn't compiled into the DLL and eval reports `fail_to_pass: fail` with detail `eval missing: <test>`.
 - **C# — `dotnet build`:** add `-m:1` to serialize the build. Parallel builds race on `obj/Debug/<tf>/rpswa.dswa.cache.json` (StaticWebAssets task), producing `MSB4018` mid-build.
 - **C# — `dotnet test`:** include `--results-directory "$ARTIFACTS_DIR"`. The TRX logger otherwise writes to the project's `TestResults/` directory and the parser sees 0 tests while stdout still shows `Passed: N`.
@@ -615,8 +641,9 @@ You can add custom fields by using any `key` value — they will be extracted au
 1. Create a branch in the target `dpaia/*` repository
 2. Add the `.ee-bench/codegen/` directory with all required files or only files which override defaults from main branch (for example only metadata.json)
 3. Open a pull request — the PR itself contains the code change (the "gold patch") that solves the issue
-4. Request that the PR be added to the [Code Generation](https://github.com/orgs/dpaia/projects/13) project
-5. When PR complete, move to "Review" to begin automated verification
+4. Add the appropriate language label: `Language: Java` for Java datapoints or `Language: Kotlin` for Kotlin datapoints
+5. Request that the PR be added to the [Code Generation](https://github.com/orgs/dpaia/projects/13) project
+6. When PR complete, move to "Review" to begin automated verification
 
 ## Local Testing
 
@@ -776,7 +803,7 @@ The comment looks like:
 **Tests:** Total: 5, Passed: 5, Failed: 0, Skipped: 0
 **fail_to_pass:** Expected: 1, Matched: 1
 **pass_to_pass:** Expected: 1, Matched: 1
-**Criteria:** 6/6 passed
+**Criteria:** 7/7 passed
 **Details:** [Workflow run](https://github.com/...)
 ```
 
@@ -821,22 +848,25 @@ If your project's tests use [Testcontainers](https://www.testcontainers.org/) (o
 {
   "environment": {
     "docker": {
-      "run_params": "--privileged --network bridge -v /var/run/docker.sock:/var/run/docker.sock"
+      "run_params": {
+        "privileged": true,
+        "network": "host",
+        "volumes": ["/var/run/docker.sock:/var/run/docker.sock"],
+        "environment": {
+          "TESTCONTAINERS_RYUK_DISABLED": "true",
+          "TESTCONTAINERS_CHECKS_DISABLE": "true",
+          "DOCKER_HOST": "unix:///var/run/docker.sock"
+        }
+      }
     }
   }
 }
 ```
 
-**2. Add environment variables to the Dockerfile:**
-
-```dockerfile
-ENV TESTCONTAINERS_RYUK_DISABLED=true
-ENV TESTCONTAINERS_CHECKS_DISABLE=true
-ENV DOCKER_HOST=unix:///var/run/docker.sock
-```
+**2. Install Docker CLI in the Dockerfile when tests call Docker directly.**
 
 - `TESTCONTAINERS_RYUK_DISABLED` — disables the Ryuk container that cleans up resources (not needed in ephemeral CI containers)
 - `TESTCONTAINERS_CHECKS_DISABLE` — skips Testcontainers' startup checks that may fail in Docker-in-Docker
 - `DOCKER_HOST` — tells Testcontainers where the Docker socket is
 
-The `--privileged` flag and Docker socket mount give the evaluation container access to the host's Docker daemon. The `--network bridge` ensures containers created by Testcontainers can communicate with the test process.
+The `--privileged` flag and Docker socket mount give the evaluation container access to the host's Docker daemon. `network: "host"` matches the current Java/Kotlin templates used for Spring/Testcontainers datapoints.

@@ -31,18 +31,6 @@ The default branch holds the shared scaffolding that every datapoint inherits. I
         └── ee_bench_parser_*.py # Language-specific test parser (junit / trx)
 ```
 
-Requirements for the repository:
-
-- It must live under the **`dpaia` GitHub org** (fork the upstream project if needed).
-- The default branch is **protected** from direct pushes.
-- Scaffolding is generated once (`/generate-ee-bench codegen` or a starter template) and
-  committed to the default branch.
-- The shared eval scripts must stay in sync with `guides/templates/shared/scripts/` — drift
-  means datapoints run outdated evaluation logic.
-
-> If the fork's default branch must track upstream, keep the scaffolding on a long-lived
-> `eval` branch and treat that as the default for these purposes.
-
 ## Branches
 
 A datapoint is anchored on two states of the project:
@@ -83,19 +71,21 @@ only what it needs. The fields also become **template variables** (`{{ instance.
 available in `Dockerfile` and `run.sh`.
 
 ### Common fields
+Keep in mind, it's a JSON schema. Fields with dots mean nested structures, not the field names.
 
-| Field                           | Type     | Description                                                                 |
-|---------------------------------|----------|-----------------------------------------------------------------------------|
-| `version`                       | string   | Schema version (default `"1.0"`)                                            |
-| `benchmark_type`                | string   | Evaluation type (default `"codegen"`)                                       |
-| `language`                      | string   | Programming language (`"java"`, `"csharp"`, `"python"`, …) — exported as a tag |
-| `environment.project_root`      | string   | Working directory inside the container (default `/repo`)                    |
-| `environment.docker.run_params` | object   | Extra `docker run` settings (`privileged`, `network`, `volumes`, `environment`) |
-| `expected.fail_to_pass`         | string[] | Tests that fail on the base state and pass after the gold fix               |
-| `expected.pass_to_pass`         | string[] | Tests that pass before and after — regression guard (`["*"]` = all)         |
-| `expected.fail_to_fail`         | string[] | Tests expected to fail both before and after (use sparingly)               |
-| `patch.test_patterns`           | string[] | Globs forcing files to be classified as tests                              |
-| `patch.source_patterns`         | string[] | Globs forcing files to be classified as source (highest priority)          |
+| Field                           | Type     | Description                                                                                               |
+|---------------------------------|----------|-----------------------------------------------------------------------------------------------------------|
+| `instance_id`                   | string   | By default, datapoint id is generated as repo_name_<RT_number>, but using this field you can override it. |
+| `version`                       | string   | Schema version (default `"1.0"`)                                                                          |
+| `benchmark_type`                | string   | Evaluation type (default `"codegen"`)                                                                     |
+| `language`                      | string   | Programming language (`"java"`, `"csharp"`, `"python"`, …) — exported as a tag                            |
+| `environment.project_root`      | string   | Working directory inside the container (default `/repo`)                                                  |
+| `environment.docker.run_params` | object   | Extra `docker run` settings (`privileged`, `network`, `volumes`, `environment`)                           |
+| `expected.fail_to_pass`         | string[] | Tests that fail on the base state and pass after the gold fix                                             |
+| `expected.pass_to_pass`         | string[] | Tests that pass before and after — regression guard (`["*"]` = all)                                       |
+| `expected.fail_to_fail`         | string[] | Tests expected to fail both before and after (use sparingly)                                              |
+| `patch.test_patterns`           | string[] | Globs forcing files to be classified as tests                                                             |
+| `patch.source_patterns`         | string[] | Globs forcing files to be classified as source (highest priority)                                         |
 
 ### The `expected` arrays
 

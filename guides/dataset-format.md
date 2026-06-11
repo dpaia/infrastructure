@@ -28,7 +28,8 @@ The default branch holds the shared scaffolding that every datapoint inherits. I
     ├── run.sh                   # Evaluation entry point (two-phase test runner)
     └── scripts/
         ├── ee_bench_eval.py     # Language-independent result emitter (schema v2.0)
-        └── ee_bench_parser_*.py # Language-specific test parser (junit / trx)
+        ├── ee_bench_parser_*.py # Language-specific test parser (junit / trx)
+        └── custom_script.py     # Custom scripts can be places here to be used in run.sh
 ```
 
 ## Branches

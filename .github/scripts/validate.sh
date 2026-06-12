@@ -191,7 +191,10 @@ if [ -n "${GH_TOKEN:-}" ]; then
     REPO_VISIBILITY=$(gh repo view "$REPO_SLUG" --json visibility -q '.visibility' 2>/dev/null || echo "PUBLIC")
     if [ "$REPO_VISIBILITY" = "PRIVATE" ]; then
       echo "Private repo detected ($REPO_SLUG), injecting auth token for git clone ..."
-      sed -i "s|git clone https://github.com/|git clone https://x-access-token:${GH_TOKEN}@github.com/|g" "$DOCKERFILE_DIR/Dockerfile"
+      sed -i \
+        -e "s|git clone https://github.com/|git clone https://x-access-token:${GH_TOKEN}@github.com/|g" \
+        -e "s|git remote add origin https://github.com/|git remote add origin https://x-access-token:${GH_TOKEN}@github.com/|g" \
+        "$DOCKERFILE_DIR/Dockerfile"
     fi
   fi
 fi

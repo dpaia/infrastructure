@@ -229,7 +229,7 @@ jobs:
             exit 0
           fi
 
-          gh workflow run hf-sync-batch_v2.yml --ref "$GITHUB_REF_NAME"
+          gh workflow run hf-sync-batch_v2.yml --ref "$GITHUB_REF_NAME" -f run_key="${{ inputs.run_key }}"
           echo "dispatched=true" >> "$GITHUB_OUTPUT"
           echo "reason=dispatched" >> "$GITHUB_OUTPUT"
 

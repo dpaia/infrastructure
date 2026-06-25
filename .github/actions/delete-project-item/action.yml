@@ -1,0 +1,42 @@
+name: 'Delete Project Item'
+description: 'Deletes a GitHub Projects v2 item from a project'
+author: 'JetBrains'
+
+inputs:
+  project_id:
+    description: 'The ID of the GitHub Project V2'
+    required: true
+  item_id:
+    description: 'Project item node ID'
+    required: true
+  github_token:
+    description: 'GitHub token for API access'
+    required: true
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Delete project item
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github_token }}
+        PROJECT_ID: ${{ inputs.project_id }}
+        ITEM_ID: ${{ inputs.item_id }}
+      run: |
+        if [ -z "$PROJECT_ID" ]; then
+          echo "Error: project_id is required" >&2
+          exit 1
+        fi
+        if [ -z "$ITEM_ID" ]; then
+          echo "Error: item_id is required" >&2
+          exit 1
+        fi
+
+        echo "Deleting project item '$ITEM_ID' from project '$PROJECT_ID'..."
+        gh api graphql -f query='
+          mutation($projectId: ID!, $itemId: ID!) {
+            deleteProjectV2Item(input: { projectId: $projectId, itemId: $itemId }) {
+              deletedItemId
+            }
+          }' -f projectId="$PROJECT_ID" -f itemId="$ITEM_ID"
+        echo "Deleted project item '$ITEM_ID'"

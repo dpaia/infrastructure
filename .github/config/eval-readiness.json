@@ -1,0 +1,32 @@
+{
+  "profiles": {
+    "codegen": {
+      "enabled": true,
+      "hf_dataset": "JetBrains/eval_plugin",
+      "hf_base_path": "code-generation-swe",
+      "generator_kind": "dpai-generic-format",
+      "registration_bucket": "swe/dataset/dev"
+    },
+    "methodgen": {
+      "enabled": false,
+      "hf_dataset": "JetBrains/eval_plugin",
+      "hf_base_path": "TBD",
+      "generator_kind": "TBD",
+      "registration_bucket": "TBD"
+    }
+  },
+  "languages": {
+    "Language: Java": {
+      "hf_dir": "java",
+      "hf_filename": "dpai-java-instances.large",
+      "pipeline_language_enum": "JAVA",
+      "teamcity_dataset_id": "Dpai-Bench"
+    },
+    "Language: C#": {
+      "hf_dir": "csharp",
+      "hf_filename": "dpai-csharp-instances.large",
+      "pipeline_language_enum": "CSHARP",
+      "teamcity_dataset_id": "Csharp-Dataset"
+    }
+  }
+}

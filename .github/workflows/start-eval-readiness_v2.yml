@@ -1,0 +1,250 @@
+name: Start Eval Readiness (v2)
+run-name: "[${{ inputs.organization }}/${{ inputs.repository }}] Start eval readiness #${{ inputs.pr_number }} (key=${{ inputs.run_key }})"
+
+on:
+  workflow_dispatch:
+    inputs:
+      organization:
+        description: 'GitHub organization name'
+        required: true
+        type: string
+      repository:
+        description: 'Repository name'
+        required: true
+        type: string
+      pr_number:
+        description: 'Pull request number'
+        required: true
+        type: string
+      eval_type:
+        description: 'Evaluation type (e.g., codegen, methodgen)'
+        required: true
+        type: string
+      eval_project_number:
+        description: 'Eval project number'
+        required: true
+        type: string
+      run_key:
+        description: 'Unique run correlation key (UUID)'
+        required: false
+        type: string
+        default: 'manual'
+
+jobs:
+  start:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout infrastructure
+        uses: actions/checkout@v5
+
+      - name: Check rate limit
+        uses: ./.github/actions/check-rate-limit
+        with:
+          github_token: ${{ secrets.PROJECT_TOKEN }}
+
+      - name: Load eval-readiness config
+        id: config
+        shell: bash
+        run: |
+          CONFIG=$(cat .github/config/eval-projects.json)
+          echo "organization=$(echo "$CONFIG" | jq -r '.organization')" >> "$GITHUB_OUTPUT"
+          echo "dataset_project=$(echo "$CONFIG" | jq -r '.dataset_metadata_project')" >> "$GITHUB_OUTPUT"
+          echo "eval_readiness_project=$(echo "$CONFIG" | jq -r '.eval_readiness_project')" >> "$GITHUB_OUTPUT"
+
+      - name: Read source PR metadata
+        id: source-pr
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
+          REPO: ${{ inputs.organization }}/${{ inputs.repository }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+        run: |
+          PR_JSON=$(gh api "repos/$REPO/pulls/$PR_NUMBER" \
+            --jq '{state: (.state | ascii_upcase), title: .title, url: .html_url, labels: [.labels[].name]}')
+          LABELS_FILE="${RUNNER_TEMP}/eval-readiness-labels.json"
+          echo "$PR_JSON" | jq '.labels' > "$LABELS_FILE"
+          echo "state=$(echo "$PR_JSON" | jq -r '.state')" >> "$GITHUB_OUTPUT"
+          echo "url=$(echo "$PR_JSON" | jq -r '.url')" >> "$GITHUB_OUTPUT"
+          echo "title=$(echo "$PR_JSON" | jq -r '.title')" >> "$GITHUB_OUTPUT"
+          echo "labels_file=$LABELS_FILE" >> "$GITHUB_OUTPUT"
+
+      - name: Query eval project items
+        id: query-eval
+        uses: ./.github/actions/query-project-items
+        with:
+          organization: ${{ inputs.organization }}
+          project_number: ${{ inputs.eval_project_number }}
+          github_token: ${{ secrets.PROJECT_TOKEN }}
+
+      - name: Query Dataset Metadata items
+        id: query-dataset
+        uses: ./.github/actions/query-project-items
+        with:
+          organization: ${{ steps.config.outputs.organization }}
+          project_number: ${{ steps.config.outputs.dataset_project }}
+          github_token: ${{ secrets.PROJECT_TOKEN }}
+
+      - name: Select source PR project items
+        id: select-items
+        shell: bash
+        env:
+          EVAL_ITEMS_JSON: ${{ steps.query-eval.outputs.items }}
+          DATASET_ITEMS_JSON: ${{ steps.query-dataset.outputs.items }}
+          OWNER: ${{ inputs.organization }}
+          REPO: ${{ inputs.repository }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+        run: |
+          EVAL_ITEM_FILE="${RUNNER_TEMP}/eval-readiness-eval-item.json"
+          DATASET_ITEM_FILE="${RUNNER_TEMP}/eval-readiness-dataset-item.json"
+
+          printf '%s' "$EVAL_ITEMS_JSON" |
+            jq --arg owner "$OWNER" --arg repo "$REPO" --arg pr "$PR_NUMBER" \
+              '[.[] | select(.content_type == "PullRequest" and .owner == $owner and .repo == $repo and (.number | tostring) == $pr)] | first // null' \
+              > "$EVAL_ITEM_FILE"
+
+          printf '%s' "$DATASET_ITEMS_JSON" |
+            jq --arg owner "$OWNER" --arg repo "$REPO" --arg pr "$PR_NUMBER" \
+              '[.[] | select(.content_type == "PullRequest" and .owner == $owner and .repo == $repo and (.number | tostring) == $pr)] | first // null' \
+              > "$DATASET_ITEM_FILE"
+
+          echo "eval_item_file=$EVAL_ITEM_FILE" >> "$GITHUB_OUTPUT"
+          echo "dataset_item_file=$DATASET_ITEM_FILE" >> "$GITHUB_OUTPUT"
+          echo "eval_item_id=$(jq -r '.item_id // ""' "$EVAL_ITEM_FILE")" >> "$GITHUB_OUTPUT"
+          echo "dataset_item_id=$(jq -r '.item_id // ""' "$DATASET_ITEM_FILE")" >> "$GITHUB_OUTPUT"
+
+      - name: Evaluate start guards
+        id: start
+        shell: bash
+        run: |
+          PYTHONPATH=.github/scripts python3 .github/scripts/eval_readiness/start.py \
+            --eval-type '${{ inputs.eval_type }}' \
+            --pr-state '${{ steps.source-pr.outputs.state }}' \
+            --labels-file '${{ steps.source-pr.outputs.labels_file }}' \
+            --eval-item-file '${{ steps.select-items.outputs.eval_item_file }}' \
+            --dataset-item-file '${{ steps.select-items.outputs.dataset_item_file }}' \
+            --github-output "$GITHUB_OUTPUT"
+
+      - name: Revert public Status to Done
+        if: steps.start.outputs.queued != 'true' && steps.select-items.outputs.eval_item_id != ''
+        uses: ./.github/actions/set-project-status
+        with:
+          organization: ${{ inputs.organization }}
+          project_number: ${{ inputs.eval_project_number }}
+          item_id: ${{ steps.select-items.outputs.eval_item_id }}
+          value: Done
+          github_token: ${{ secrets.PROJECT_TOKEN }}
+
+      - name: Mark public Verification as Eval Blocked
+        if: steps.start.outputs.queued != 'true' && steps.select-items.outputs.eval_item_id != ''
+        uses: ./.github/actions/update-project-field
+        with:
+          organization: ${{ inputs.organization }}
+          project_number: ${{ inputs.eval_project_number }}
+          item_id: ${{ steps.select-items.outputs.eval_item_id }}
+          field_name: Verification
+          value: Eval Blocked
+          value_type: single_select
+          github_token: ${{ secrets.PROJECT_TOKEN }}
+
+      - name: Comment on blocked source PR
+        if: steps.start.outputs.queued != 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
+          REPO: ${{ inputs.organization }}/${{ inputs.repository }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+          REASON: ${{ steps.start.outputs.reason }}
+          DETAIL: ${{ steps.start.outputs.detail }}
+        run: |
+          BODY_FILE="${RUNNER_TEMP}/eval-readiness-blocked.md"
+          {
+            echo "Eval-readiness preparation was not queued."
+            echo ""
+            echo "**Reason:** \`$REASON\`"
+            echo "**Detail:** $DETAIL"
+          } > "$BODY_FILE"
+          gh pr comment "$PR_NUMBER" --repo "$REPO" --body-file "$BODY_FILE" || true
+
+      - name: Get source PR node ID
+        id: source-node
+        if: steps.start.outputs.queued == 'true'
+        uses: ./.github/actions/get-pr-node-id
+        with:
+          organization: ${{ inputs.organization }}
+          repository: ${{ inputs.repository }}
+          pr_number: ${{ inputs.pr_number }}
+          github_token: ${{ secrets.PROJECT_TOKEN }}
+
+      - name: Get eval-readiness project ID
+        id: readiness-project
+        if: steps.start.outputs.queued == 'true'
+        uses: ./.github/actions/get-project-id
+        with:
+          organization: ${{ steps.config.outputs.organization }}
+          project_number: ${{ steps.config.outputs.eval_readiness_project }}
+          github_token: ${{ secrets.PROJECT_TOKEN }}
+
+      - name: Add source PR to eval-readiness project
+        id: add-private-item
+        if: steps.start.outputs.queued == 'true'
+        uses: ./.github/actions/add-issue-to-project
+        with:
+          project_id: ${{ steps.readiness-project.outputs.project_id }}
+          issue_node_id: ${{ steps.source-node.outputs.node_id }}
+          github_token: ${{ secrets.PROJECT_TOKEN }}
+
+      - name: Set private Status to Queued
+        if: steps.start.outputs.queued == 'true'
+        uses: ./.github/actions/set-project-status
+        with:
+          organization: ${{ steps.config.outputs.organization }}
+          project_number: ${{ steps.config.outputs.eval_readiness_project }}
+          item_id: ${{ steps.add-private-item.outputs.item_id }}
+          value: Queued
+          github_token: ${{ secrets.PROJECT_TOKEN }}
+
+      - name: Set public Verification to Eval Prep Queued
+        if: steps.start.outputs.queued == 'true'
+        uses: ./.github/actions/update-project-field
+        with:
+          organization: ${{ inputs.organization }}
+          project_number: ${{ inputs.eval_project_number }}
+          item_id: ${{ steps.select-items.outputs.eval_item_id }}
+          field_name: Verification
+          value: Eval Prep Queued
+          value_type: single_select
+          github_token: ${{ secrets.PROJECT_TOKEN }}
+
+      - name: Dispatch HF sync
+        id: dispatch-hf
+        if: steps.start.outputs.queued == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
+        run: |
+          if [ ! -f .github/workflows/hf-sync-batch_v2.yml ]; then
+            echo "dispatched=false" >> "$GITHUB_OUTPUT"
+            echo "reason=hf-sync-workflow-missing" >> "$GITHUB_OUTPUT"
+            echo "hf-sync-batch_v2.yml is not present on this ref; skipping dispatch."
+            exit 0
+          fi
+
+          gh workflow run hf-sync-batch_v2.yml --ref "$GITHUB_REF_NAME"
+          echo "dispatched=true" >> "$GITHUB_OUTPUT"
+          echo "reason=dispatched" >> "$GITHUB_OUTPUT"
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "# Eval-Readiness Start Summary" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Source PR:** ${{ inputs.organization }}/${{ inputs.repository }}#${{ inputs.pr_number }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Run key:** ${{ inputs.run_key }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Queued:** ${{ steps.start.outputs.queued }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Reason:** ${{ steps.start.outputs.reason }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Detail:** ${{ steps.start.outputs.detail }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Instance:** ${{ steps.start.outputs.instance_id }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **HF dataset:** ${{ steps.start.outputs.hf_dataset }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **HF path:** ${{ steps.start.outputs.hf_path }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Language:** ${{ steps.start.outputs.language_label }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **HF sync dispatch:** ${{ steps.dispatch-hf.outputs.dispatched || 'false' }} (${{ steps.dispatch-hf.outputs.reason || 'not queued' }})" >> "$GITHUB_STEP_SUMMARY"

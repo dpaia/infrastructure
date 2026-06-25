@@ -1,0 +1,239 @@
+name: HF Sync Batch (v2)
+run-name: "[eval-readiness] HF sync batch (key=${{ inputs.run_key }})"
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_key:
+        description: 'Unique run correlation key'
+        required: false
+        type: string
+        default: 'manual'
+
+concurrency:
+  group: eval-readiness-hf-sync
+  cancel-in-progress: false
+
+jobs:
+  sync-hf:
+    runs-on: ubuntu-latest
+    outputs:
+      organization: ${{ steps.config.outputs.organization }}
+      readiness_project: ${{ steps.config.outputs.readiness_project }}
+      uploaded_items: ${{ steps.hf-sync.outputs.uploaded_items || '[]' }}
+      uploaded_count: ${{ steps.hf-sync.outputs.uploaded_count || '0' }}
+      failed_items: ${{ steps.hf-sync.outputs.failed_items || '[]' }}
+      failed_count: ${{ steps.hf-sync.outputs.failed_count || '0' }}
+      groups: ${{ steps.hf-sync.outputs.groups || '[]' }}
+      group_count: ${{ steps.hf-sync.outputs.group_count || '0' }}
+      changed_group_count: ${{ steps.hf-sync.outputs.changed_group_count || '0' }}
+      noop_group_count: ${{ steps.hf-sync.outputs.noop_group_count || '0' }}
+
+    steps:
+      - name: Checkout infrastructure
+        uses: actions/checkout@v5
+
+      - name: Check rate limit
+        uses: ./.github/actions/check-rate-limit
+        with:
+          github_token: ${{ secrets.PROJECT_TOKEN }}
+
+      - name: Debounce queued items
+        shell: bash
+        run: sleep 90
+
+      - name: Load eval-readiness config
+        id: config
+        shell: bash
+        run: |
+          CONFIG=$(cat .github/config/eval-projects.json)
+          echo "organization=$(echo "$CONFIG" | jq -r '.organization')" >> "$GITHUB_OUTPUT"
+          echo "dataset_project=$(echo "$CONFIG" | jq -r '.dataset_metadata_project')" >> "$GITHUB_OUTPUT"
+          echo "readiness_project=$(echo "$CONFIG" | jq -r '.eval_readiness_project')" >> "$GITHUB_OUTPUT"
+          echo "codegen_project=$(echo "$CONFIG" | jq -r '.eval_projects.codegen')" >> "$GITHUB_OUTPUT"
+          echo "methodgen_project=$(echo "$CONFIG" | jq -r '.eval_projects.methodgen')" >> "$GITHUB_OUTPUT"
+
+      - name: Query queued private eval-readiness items
+        id: query-private
+        uses: ./.github/actions/query-project-items
+        with:
+          organization: ${{ steps.config.outputs.organization }}
+          project_number: ${{ steps.config.outputs.readiness_project }}
+          status_filter: Queued
+          github_token: ${{ secrets.PROJECT_TOKEN }}
+
+      - name: Query Dataset Metadata items
+        id: query-dataset
+        uses: ./.github/actions/query-project-items
+        with:
+          organization: ${{ steps.config.outputs.organization }}
+          project_number: ${{ steps.config.outputs.dataset_project }}
+          github_token: ${{ secrets.PROJECT_TOKEN }}
+
+      - name: Query codegen eval project items
+        id: query-codegen
+        uses: ./.github/actions/query-project-items
+        with:
+          organization: ${{ steps.config.outputs.organization }}
+          project_number: ${{ steps.config.outputs.codegen_project }}
+          github_token: ${{ secrets.PROJECT_TOKEN }}
+
+      - name: Query methodgen eval project items
+        id: query-methodgen
+        uses: ./.github/actions/query-project-items
+        with:
+          organization: ${{ steps.config.outputs.organization }}
+          project_number: ${{ steps.config.outputs.methodgen_project }}
+          github_token: ${{ secrets.PROJECT_TOKEN }}
+
+      - name: Prepare HF sync input files
+        id: input-files
+        shell: bash
+        env:
+          PRIVATE_ITEMS_JSON: ${{ steps.query-private.outputs.items }}
+          DATASET_ITEMS_JSON: ${{ steps.query-dataset.outputs.items }}
+          CODEGEN_ITEMS_JSON: ${{ steps.query-codegen.outputs.items }}
+          METHODGEN_ITEMS_JSON: ${{ steps.query-methodgen.outputs.items }}
+        run: |
+          PRIVATE_ITEMS_FILE="${RUNNER_TEMP}/eval-readiness-private-items.json"
+          DATASET_ITEMS_FILE="${RUNNER_TEMP}/eval-readiness-dataset-items.json"
+          EVAL_ITEMS_FILE="${RUNNER_TEMP}/eval-readiness-eval-items.json"
+
+          printf '%s' "$PRIVATE_ITEMS_JSON" > "$PRIVATE_ITEMS_FILE"
+          printf '%s' "$DATASET_ITEMS_JSON" > "$DATASET_ITEMS_FILE"
+          jq -n \
+            --argjson codegen "$CODEGEN_ITEMS_JSON" \
+            --argjson methodgen "$METHODGEN_ITEMS_JSON" \
+            '{codegen: $codegen, methodgen: $methodgen}' > "$EVAL_ITEMS_FILE"
+
+          echo "private_items_file=$PRIVATE_ITEMS_FILE" >> "$GITHUB_OUTPUT"
+          echo "dataset_items_file=$DATASET_ITEMS_FILE" >> "$GITHUB_OUTPUT"
+          echo "eval_items_file=$EVAL_ITEMS_FILE" >> "$GITHUB_OUTPUT"
+
+      - name: Install HF dependencies
+        shell: bash
+        run: python3 -m pip install --disable-pip-version-check 'huggingface_hub>=0.23,<1'
+
+      - name: Run HF sync
+        id: hf-sync
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
+          HF_DATASET_TOKEN: ${{ secrets.HF_DATASET_TOKEN }}
+        run: |
+          SUMMARY_FILE="${RUNNER_TEMP}/eval-readiness-hf-sync-summary.md"
+          echo "summary_file=$SUMMARY_FILE" >> "$GITHUB_OUTPUT"
+
+          PYTHONPATH=.github/scripts python3 .github/scripts/eval_readiness/hf_sync.py \
+            --queued-items-file '${{ steps.input-files.outputs.private_items_file }}' \
+            --dataset-items-file '${{ steps.input-files.outputs.dataset_items_file }}' \
+            --eval-items-file '${{ steps.input-files.outputs.eval_items_file }}' \
+            --run-key '${{ inputs.run_key }}' \
+            --hf-token-env HF_DATASET_TOKEN \
+            --github-output "$GITHUB_OUTPUT" \
+            --summary-file "$SUMMARY_FILE"
+
+      - name: Summary
+        if: always()
+        shell: bash
+        run: |
+          SUMMARY_FILE='${{ steps.hf-sync.outputs.summary_file }}'
+          if [ -n "$SUMMARY_FILE" ] && [ -f "$SUMMARY_FILE" ]; then
+            cat "$SUMMARY_FILE" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "# Eval-Readiness HF Sync Summary" >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "HF sync did not produce a summary file." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+  mark-uploaded:
+    needs: sync-hf
+    if: needs.sync-hf.outputs.uploaded_count != '0'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        item: ${{ fromJson(needs.sync-hf.outputs.uploaded_items) }}
+
+    steps:
+      - name: Checkout infrastructure
+        uses: actions/checkout@v5
+
+      - name: Set private Status to HF Uploaded
+        uses: ./.github/actions/set-project-status
+        with:
+          organization: ${{ needs.sync-hf.outputs.organization }}
+          project_number: ${{ needs.sync-hf.outputs.readiness_project }}
+          item_id: ${{ matrix.item.private_item_id }}
+          value: HF Uploaded
+          github_token: ${{ secrets.PROJECT_TOKEN }}
+
+      - name: Set private HF Commit SHA
+        if: matrix.item.hf_commit_sha != ''
+        uses: ./.github/actions/update-project-field
+        with:
+          organization: ${{ needs.sync-hf.outputs.organization }}
+          project_number: ${{ needs.sync-hf.outputs.readiness_project }}
+          item_id: ${{ matrix.item.private_item_id }}
+          field_name: HF Commit SHA
+          value: ${{ matrix.item.hf_commit_sha }}
+          value_type: text
+          github_token: ${{ secrets.PROJECT_TOKEN }}
+
+      - name: Set public Verification to Eval Prep In Progress
+        uses: ./.github/actions/update-project-field
+        with:
+          organization: ${{ needs.sync-hf.outputs.organization }}
+          project_number: ${{ matrix.item.public_project_number }}
+          item_id: ${{ matrix.item.public_item_id }}
+          field_name: Verification
+          value: Eval Prep In Progress
+          value_type: single_select
+          github_token: ${{ secrets.PROJECT_TOKEN }}
+
+  mark-failed:
+    needs: sync-hf
+    if: needs.sync-hf.outputs.failed_count != '0'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        item: ${{ fromJson(needs.sync-hf.outputs.failed_items) }}
+
+    steps:
+      - name: Checkout infrastructure
+        uses: actions/checkout@v5
+
+      - name: Set private Status to Failed
+        if: matrix.item.private_item_id != ''
+        uses: ./.github/actions/set-project-status
+        with:
+          organization: ${{ needs.sync-hf.outputs.organization }}
+          project_number: ${{ needs.sync-hf.outputs.readiness_project }}
+          item_id: ${{ matrix.item.private_item_id }}
+          value: Failed
+          github_token: ${{ secrets.PROJECT_TOKEN }}
+
+      - name: Set private Last Error
+        if: matrix.item.private_item_id != ''
+        uses: ./.github/actions/update-project-field
+        with:
+          organization: ${{ needs.sync-hf.outputs.organization }}
+          project_number: ${{ needs.sync-hf.outputs.readiness_project }}
+          item_id: ${{ matrix.item.private_item_id }}
+          field_name: Last Error
+          value: ${{ matrix.item.error }}
+          value_type: text
+          github_token: ${{ secrets.PROJECT_TOKEN }}
+
+      - name: Set public Verification to Eval Failed
+        if: matrix.item.public_item_id != ''
+        uses: ./.github/actions/update-project-field
+        with:
+          organization: ${{ needs.sync-hf.outputs.organization }}
+          project_number: ${{ matrix.item.public_project_number }}
+          item_id: ${{ matrix.item.public_item_id }}
+          field_name: Verification
+          value: Eval Failed
+          value_type: single_select
+          github_token: ${{ secrets.PROJECT_TOKEN }}

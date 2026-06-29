@@ -60,6 +60,8 @@ jobs:
           organization: ${{ steps.config.outputs.organization }}
           project_number: ${{ steps.config.outputs.readiness_project }}
           status_filter: Queued
+          output_file: ${{ runner.temp }}/eval-readiness-private-items.json
+          emit_items_output: false
           github_token: ${{ secrets.PROJECT_TOKEN }}
 
       - name: Query Dataset Metadata items
@@ -68,6 +70,8 @@ jobs:
         with:
           organization: ${{ steps.config.outputs.organization }}
           project_number: ${{ steps.config.outputs.dataset_project }}
+          output_file: ${{ runner.temp }}/eval-readiness-dataset-items.json
+          emit_items_output: false
           github_token: ${{ secrets.PROJECT_TOKEN }}
 
       - name: Query codegen eval project items
@@ -76,6 +80,8 @@ jobs:
         with:
           organization: ${{ steps.config.outputs.organization }}
           project_number: ${{ steps.config.outputs.codegen_project }}
+          output_file: ${{ runner.temp }}/eval-readiness-codegen-items.json
+          emit_items_output: false
           github_token: ${{ secrets.PROJECT_TOKEN }}
 
       - name: Query methodgen eval project items
@@ -84,27 +90,22 @@ jobs:
         with:
           organization: ${{ steps.config.outputs.organization }}
           project_number: ${{ steps.config.outputs.methodgen_project }}
+          output_file: ${{ runner.temp }}/eval-readiness-methodgen-items.json
+          emit_items_output: false
           github_token: ${{ secrets.PROJECT_TOKEN }}
 
       - name: Prepare HF sync input files
         id: input-files
         shell: bash
-        env:
-          PRIVATE_ITEMS_JSON: ${{ steps.query-private.outputs.items }}
-          DATASET_ITEMS_JSON: ${{ steps.query-dataset.outputs.items }}
-          CODEGEN_ITEMS_JSON: ${{ steps.query-codegen.outputs.items }}
-          METHODGEN_ITEMS_JSON: ${{ steps.query-methodgen.outputs.items }}
         run: |
-          PRIVATE_ITEMS_FILE="${RUNNER_TEMP}/eval-readiness-private-items.json"
-          DATASET_ITEMS_FILE="${RUNNER_TEMP}/eval-readiness-dataset-items.json"
+          PRIVATE_ITEMS_FILE='${{ steps.query-private.outputs.items_file }}'
+          DATASET_ITEMS_FILE='${{ steps.query-dataset.outputs.items_file }}'
           EVAL_ITEMS_FILE="${RUNNER_TEMP}/eval-readiness-eval-items.json"
 
-          printf '%s' "$PRIVATE_ITEMS_JSON" > "$PRIVATE_ITEMS_FILE"
-          printf '%s' "$DATASET_ITEMS_JSON" > "$DATASET_ITEMS_FILE"
           jq -n \
-            --argjson codegen "$CODEGEN_ITEMS_JSON" \
-            --argjson methodgen "$METHODGEN_ITEMS_JSON" \
-            '{codegen: $codegen, methodgen: $methodgen}' > "$EVAL_ITEMS_FILE"
+            --slurpfile codegen '${{ steps.query-codegen.outputs.items_file }}' \
+            --slurpfile methodgen '${{ steps.query-methodgen.outputs.items_file }}' \
+            '{codegen: $codegen[0], methodgen: $methodgen[0]}' > "$EVAL_ITEMS_FILE"
 
           echo "private_items_file=$PRIVATE_ITEMS_FILE" >> "$GITHUB_OUTPUT"
           echo "dataset_items_file=$DATASET_ITEMS_FILE" >> "$GITHUB_OUTPUT"

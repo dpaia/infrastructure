@@ -20,6 +20,14 @@ inputs:
   github_token:
     description: 'GitHub token for API access'
     required: true
+  output_file:
+    description: 'Optional file path where the JSON array should be written. Defaults to $RUNNER_TEMP/query-result.json.'
+    required: false
+    default: ''
+  emit_items_output:
+    description: 'Whether to emit the full JSON array as the items output. Set to false for large projects.'
+    required: false
+    default: 'true'
 
 outputs:
   items:
@@ -28,6 +36,9 @@ outputs:
   count:
     description: 'Number of items returned'
     value: ${{ steps.query.outputs.count }}
+  items_file:
+    description: 'Path to the JSON file containing the project items'
+    value: ${{ steps.query.outputs.items_file }}
 
 runs:
   using: 'composite'
@@ -41,6 +52,8 @@ runs:
         PROJECT_NUMBER: ${{ inputs.project_number }}
         STATUS_FILTER: ${{ inputs.status_filter }}
         EVAL_TYPE_FILTER: ${{ inputs.eval_type_filter }}
+        OUTPUT_FILE: ${{ inputs.output_file }}
+        EMIT_ITEMS_OUTPUT: ${{ inputs.emit_items_output }}
       run: |
         ITEMS_FILE="${RUNNER_TEMP}/project-items.json"
         echo "[]" > "$ITEMS_FILE"
@@ -146,13 +159,23 @@ runs:
         echo "Found $COUNT items (status_filter='$STATUS_FILTER', eval_type_filter='$EVAL_TYPE_FILTER')"
 
         # Write to file for large outputs (avoids ARG_MAX issues)
-        RESULT_FILE="${RUNNER_TEMP}/query-result.json"
+        if [ -n "$OUTPUT_FILE" ]; then
+          RESULT_FILE="$OUTPUT_FILE"
+          mkdir -p "$(dirname "$RESULT_FILE")"
+        else
+          RESULT_FILE="${RUNNER_TEMP}/query-result.json"
+        fi
         echo "$RESULT" > "$RESULT_FILE"
+        echo "items_file=$RESULT_FILE" >> $GITHUB_OUTPUT
 
-        # For GITHUB_OUTPUT, use delimiter syntax for multiline values
-        {
-          echo "items<<QUERY_EOF"
-          cat "$RESULT_FILE"
-          echo "QUERY_EOF"
-        } >> $GITHUB_OUTPUT
+        if [ "$EMIT_ITEMS_OUTPUT" = "true" ]; then
+          # For GITHUB_OUTPUT, use delimiter syntax for multiline values
+          {
+            echo "items<<QUERY_EOF"
+            cat "$RESULT_FILE"
+            echo "QUERY_EOF"
+          } >> $GITHUB_OUTPUT
+        else
+          echo "items=[]" >> $GITHUB_OUTPUT
+        fi
         echo "count=$COUNT" >> $GITHUB_OUTPUT

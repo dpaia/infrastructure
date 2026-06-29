@@ -181,14 +181,14 @@ jobs:
           value_type: text
           github_token: ${{ secrets.PROJECT_TOKEN }}
 
-      - name: Set public Verification to Eval Prep In Progress
+      - name: Set public Verification to HF Uploaded
         uses: ./.github/actions/update-project-field
         with:
           organization: ${{ needs.sync-hf.outputs.organization }}
           project_number: ${{ matrix.item.public_project_number }}
           item_id: ${{ matrix.item.public_item_id }}
           field_name: Verification
-          value: Eval Prep In Progress
+          value: HF Uploaded
           value_type: single_select
           github_token: ${{ secrets.PROJECT_TOKEN }}
 

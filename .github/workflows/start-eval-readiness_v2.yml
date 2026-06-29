@@ -254,7 +254,7 @@ jobs:
           value: Queued
           github_token: ${{ secrets.PROJECT_TOKEN }}
 
-      - name: Set public Verification to Eval Prep Queued
+      - name: Set public Verification to HF Uploading...
         if: steps.start.outputs.queued == 'true'
         uses: ./.github/actions/update-project-field
         with:
@@ -262,7 +262,7 @@ jobs:
           project_number: ${{ inputs.eval_project_number }}
           item_id: ${{ steps.select-items.outputs.eval_item_id }}
           field_name: Verification
-          value: Eval Prep Queued
+          value: HF Uploading...
           value_type: single_select
           github_token: ${{ secrets.PROJECT_TOKEN }}
 

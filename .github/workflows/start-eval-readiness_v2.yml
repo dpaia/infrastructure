@@ -68,44 +68,95 @@ jobs:
           echo "title=$(echo "$PR_JSON" | jq -r '.title')" >> "$GITHUB_OUTPUT"
           echo "labels_file=$LABELS_FILE" >> "$GITHUB_OUTPUT"
 
-      - name: Query eval project items
-        id: query-eval
-        uses: ./.github/actions/query-project-items
-        with:
-          organization: ${{ inputs.organization }}
-          project_number: ${{ inputs.eval_project_number }}
-          github_token: ${{ secrets.PROJECT_TOKEN }}
-
-      - name: Query Dataset Metadata items
-        id: query-dataset
-        uses: ./.github/actions/query-project-items
-        with:
-          organization: ${{ steps.config.outputs.organization }}
-          project_number: ${{ steps.config.outputs.dataset_project }}
-          github_token: ${{ secrets.PROJECT_TOKEN }}
-
       - name: Select source PR project items
         id: select-items
         shell: bash
         env:
-          EVAL_ITEMS_JSON: ${{ steps.query-eval.outputs.items }}
-          DATASET_ITEMS_JSON: ${{ steps.query-dataset.outputs.items }}
+          GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
           OWNER: ${{ inputs.organization }}
-          REPO: ${{ inputs.repository }}
+          REPO_NAME: ${{ inputs.repository }}
           PR_NUMBER: ${{ inputs.pr_number }}
+          EVAL_PROJECT_NUMBER: ${{ inputs.eval_project_number }}
+          DATASET_PROJECT_NUMBER: ${{ steps.config.outputs.dataset_project }}
         run: |
           EVAL_ITEM_FILE="${RUNNER_TEMP}/eval-readiness-eval-item.json"
           DATASET_ITEM_FILE="${RUNNER_TEMP}/eval-readiness-dataset-item.json"
+          PROJECT_ITEMS_FILE="${RUNNER_TEMP}/eval-readiness-project-items.json"
 
-          printf '%s' "$EVAL_ITEMS_JSON" |
-            jq --arg owner "$OWNER" --arg repo "$REPO" --arg pr "$PR_NUMBER" \
-              '[.[] | select(.content_type == "PullRequest" and .owner == $owner and .repo == $repo and (.number | tostring) == $pr)] | first // null' \
-              > "$EVAL_ITEM_FILE"
+          gh api graphql \
+            -f owner="$OWNER" \
+            -f repo="$REPO_NAME" \
+            -F pr="$PR_NUMBER" \
+            -f query='
+              query($owner: String!, $repo: String!, $pr: Int!) {
+                repository(owner: $owner, name: $repo) {
+                  pullRequest(number: $pr) {
+                    projectItems(first: 50) {
+                      nodes {
+                        id
+                        project { number title }
+                        fieldValues(first: 30) {
+                          nodes {
+                            ... on ProjectV2ItemFieldTextValue {
+                              text
+                              field { ... on ProjectV2Field { name } }
+                            }
+                            ... on ProjectV2ItemFieldNumberValue {
+                              number
+                              field { ... on ProjectV2Field { name } }
+                            }
+                            ... on ProjectV2ItemFieldSingleSelectValue {
+                              name
+                              field { ... on ProjectV2SingleSelectField { name } }
+                            }
+                            ... on ProjectV2ItemFieldDateValue {
+                              date
+                              field { ... on ProjectV2Field { name } }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }' \
+            --jq '.data.repository.pullRequest.projectItems.nodes' > "$PROJECT_ITEMS_FILE"
 
-          printf '%s' "$DATASET_ITEMS_JSON" |
-            jq --arg owner "$OWNER" --arg repo "$REPO" --arg pr "$PR_NUMBER" \
-              '[.[] | select(.content_type == "PullRequest" and .owner == $owner and .repo == $repo and (.number | tostring) == $pr)] | first // null' \
-              > "$DATASET_ITEM_FILE"
+          jq \
+            --arg owner "$OWNER" \
+            --arg repo "$REPO_NAME" \
+            --arg pr "$PR_NUMBER" \
+            --arg project "$EVAL_PROJECT_NUMBER" \
+            '[.[] | select((.project.number | tostring) == $project)] | first as $item |
+             if $item == null then null else {
+               item_id: $item.id,
+               content_type: "PullRequest",
+               number: ($pr | tonumber),
+               owner: $owner,
+               repo: $repo,
+               fields: ([$item.fieldValues.nodes[] | select(.field.name != null) |
+                 { key: .field.name, value: (.text // .name // (if .number != null then (.number | tostring) else null end) // .date // null) }
+               ] | from_entries)
+             } end' \
+            "$PROJECT_ITEMS_FILE" > "$EVAL_ITEM_FILE"
+
+          jq \
+            --arg owner "$OWNER" \
+            --arg repo "$REPO_NAME" \
+            --arg pr "$PR_NUMBER" \
+            --arg project "$DATASET_PROJECT_NUMBER" \
+            '[.[] | select((.project.number | tostring) == $project)] | first as $item |
+             if $item == null then null else {
+               item_id: $item.id,
+               content_type: "PullRequest",
+               number: ($pr | tonumber),
+               owner: $owner,
+               repo: $repo,
+               fields: ([$item.fieldValues.nodes[] | select(.field.name != null) |
+                 { key: .field.name, value: (.text // .name // (if .number != null then (.number | tostring) else null end) // .date // null) }
+               ] | from_entries)
+             } end' \
+            "$PROJECT_ITEMS_FILE" > "$DATASET_ITEM_FILE"
 
           echo "eval_item_file=$EVAL_ITEM_FILE" >> "$GITHUB_OUTPUT"
           echo "dataset_item_file=$DATASET_ITEM_FILE" >> "$GITHUB_OUTPUT"

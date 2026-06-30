@@ -40,7 +40,7 @@ cd "$PROJECT_ROOT" || {
 
 if git rev-parse --git-dir >/dev/null 2>&1; then
   git add -N . >/tmp/harbor_git_add_intent.log 2>&1 || true
-  git diff --binary --no-ext-diff HEAD > /ee-bench/submission/patch.diff || true
+  git diff --binary --no-ext-diff HEAD -- . ':(exclude).ee-bench/**' > /ee-bench/submission/patch.diff || true
   if [ ! -s /ee-bench/submission/patch.diff ]; then
     rm -f /ee-bench/submission/patch.diff
   fi

@@ -222,33 +222,49 @@ def fetch_data_field_urls(org: str, metadata_project_number: int, node_ids: list
 
 
 def parse_data_url(url: str) -> Optional[dict]:
-    """Parse a GitHub blob URL into components.
+    """Parse a GitHub blob or tree URL into components.
 
-    Example: https://github.com/dpaia/dataset/blob/main/codegen/efcore/dotnet__efcore-31808.json
-    Returns: {owner, repo, branch, path, instance_id}
+    A ``blob`` URL points at a datapoint.json file; a ``tree`` URL points at the
+    instance directory itself (used by ``_harbor_converted`` entries). In both
+    cases the instance ID is the leaf name (with any .json extension stripped).
+
+    Blob example:
+        https://github.com/dpaia/dataset/blob/main/codegen/efcore/dotnet__efcore-31808.json
+    Tree example:
+        https://github.com/dpaia/dataset/tree/main/_harbor_converted/java/saas-procurement/dpaia__saas__procurement-1
+
+    Returns: {owner, repo, branch, file_path, dir_path, instance_id}
     """
-    if not url or "github.com" not in url or "/blob/" not in url:
+    if not url or "github.com" not in url:
+        return None
+    if "/blob/" not in url and "/tree/" not in url:
         return None
 
-    # Strip https://github.com/
+    # Strip https://github.com/ and drop any query string / fragment / trailing slash.
     path = url.split("github.com/", 1)[-1]
+    path = path.split("?", 1)[0].split("#", 1)[0].rstrip("/")
     parts = path.split("/")
     if len(parts) < 5:
         return None
 
     owner = parts[0]
     repo = parts[1]
-    # parts[2] == "blob"
+    # parts[2] == "blob" | "tree"
     branch = parts[3]
-    file_path = "/".join(parts[4:])
+    remainder = "/".join(parts[4:])
+    leaf = remainder.rsplit("/", 1)[-1]
 
-    # Instance ID: strip .json extension from filename, derive directory path
-    if file_path.endswith(".json"):
-        instance_id = file_path.rsplit("/", 1)[-1].replace(".json", "")
-        dir_path = file_path.replace(".json", "")
+    if remainder.endswith(".json"):
+        # blob URL to a datapoint.json file
+        instance_id = leaf[: -len(".json")]
+        dir_path = remainder[: -len(".json")]
+        file_path = remainder
     else:
-        instance_id = file_path.rsplit("/", 1)[-1]
-        dir_path = file_path
+        # tree URL (or extensionless blob) pointing at the instance directory;
+        # the datapoint.json lives inside it.
+        instance_id = leaf
+        dir_path = remainder
+        file_path = f"{remainder}/datapoint.json"
 
     return {
         "owner": owner,

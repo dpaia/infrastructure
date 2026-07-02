@@ -29,11 +29,11 @@ on:
         required: false
         type: string
         default: 'oracle'
-      harbor_version:
-        description: 'Optional Harbor PyPI version. Empty installs latest.'
+      harbor_fork_ref:
+        description: 'Git ref of the JetBrains/ide-eval-harbor fork to validate with'
         required: false
         type: string
-        default: ''
+        default: 'main'
       min_reward:
         description: 'Minimum reward required for validation success'
         required: false
@@ -164,8 +164,9 @@ jobs:
         with:
           task_dir: ${{ steps.task.outputs.task_dir }}
           agent: ${{ inputs.agent }}
-          harbor_version: ${{ inputs.harbor_version }}
+          harbor_fork_ref: ${{ inputs.harbor_fork_ref }}
           min_reward: ${{ inputs.min_reward }}
+          fork_token: ${{ secrets.HARBOR_FORK_TOKEN || secrets.PROJECT_TOKEN }}
 
       - name: Upload Harbor validation log
         if: always()

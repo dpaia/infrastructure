@@ -11,6 +11,7 @@ if str(SCRIPT_DIR) not in sys.path:
 
 import export_datapoints_v2  # noqa: E402
 import generate_manifest_v2  # noqa: E402
+import github_client_v2  # noqa: E402
 import resolve_instances_v2  # noqa: E402
 
 
@@ -20,6 +21,51 @@ def test_parse_instance_ids_splits_commas_and_newlines() -> None:
         "b",
         "c",
     ]
+
+
+def test_parse_data_url_handles_blob_json() -> None:
+    parsed = github_client_v2.parse_data_url(
+        "https://github.com/dpaia/dataset/blob/main/codegen/efcore/dotnet__efcore-31808.json"
+    )
+    assert parsed == {
+        "owner": "dpaia",
+        "repo": "dataset",
+        "branch": "main",
+        "file_path": "codegen/efcore/dotnet__efcore-31808.json",
+        "dir_path": "codegen/efcore/dotnet__efcore-31808",
+        "instance_id": "dotnet__efcore-31808",
+    }
+
+
+def test_parse_data_url_handles_tree_directory() -> None:
+    # _harbor_converted instances are linked as /tree/ directory URLs whose leaf
+    # is the instance id; the datapoint.json lives inside that directory.
+    parsed = github_client_v2.parse_data_url(
+        "https://github.com/dpaia/dataset/tree/main/"
+        "_harbor_converted/java/saas-procurement/dpaia__saas__procurement-1"
+    )
+    assert parsed is not None
+    assert parsed["instance_id"] == "dpaia__saas__procurement-1"
+    assert parsed["dir_path"] == (
+        "_harbor_converted/java/saas-procurement/dpaia__saas__procurement-1"
+    )
+    assert parsed["file_path"] == (
+        "_harbor_converted/java/saas-procurement/dpaia__saas__procurement-1/datapoint.json"
+    )
+
+
+def test_parse_data_url_ignores_trailing_slash_and_fragment() -> None:
+    parsed = github_client_v2.parse_data_url(
+        "https://github.com/dpaia/dataset/tree/main/"
+        "_harbor_converted/java/saas-procurement/dpaia__saas__procurement-1/?foo=1#frag"
+    )
+    assert parsed is not None
+    assert parsed["instance_id"] == "dpaia__saas__procurement-1"
+
+
+def test_parse_data_url_rejects_non_github_urls() -> None:
+    assert github_client_v2.parse_data_url("") is None
+    assert github_client_v2.parse_data_url("https://example.com/foo/bar") is None
 
 
 def test_harbor_find_instance_dir_prefers_converted_over_manual(

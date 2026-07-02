@@ -25,14 +25,51 @@ Usage:
 """
 
 import argparse
+import fnmatch
 import json
 import shutil
 import sys
 from pathlib import Path
 
 
-def find_instance_dir(instance_id: str, eval_type: str, dataset_dir: Path) -> Path | None:
+def _find_harbor_instance_dirs(instance_id: str, dataset_dir: Path) -> list[Path]:
+    """Locate Harbor task dirs, preferring converted over manual for duplicates."""
+    roots = [
+        dataset_dir / "_harbor_converted",
+        dataset_dir / "_harbor_manual",
+    ]
+    matches: list[Path] = []
+    seen: set[str] = set()
+
+    for root in roots:
+        if not root.is_dir():
+            continue
+
+        for candidate in sorted(path for path in root.rglob("*") if path.is_dir()):
+            if not _is_harbor_task_dir(candidate) or not fnmatch.fnmatch(
+                candidate.name, instance_id
+            ):
+                continue
+            if candidate.name in seen:
+                continue
+            matches.append(candidate)
+            seen.add(candidate.name)
+
+    return matches
+
+
+def _is_harbor_task_dir(path: Path) -> bool:
+    return (path / "task.toml").is_file()
+
+
+def find_instance_dir(
+    instance_id: str, eval_type: str, dataset_dir: Path, output_format: str = "folders"
+) -> Path | None:
     """Locate an instance directory in the dataset checkout."""
+    if output_format == "harbor":
+        matches = _find_harbor_instance_dirs(instance_id, dataset_dir)
+        return matches[0] if matches else None
+
     if eval_type == "all":
         search_root = dataset_dir
     else:
@@ -47,6 +84,20 @@ def find_instance_dir(instance_id: str, eval_type: str, dataset_dir: Path) -> Pa
             return candidate
 
     return None
+
+
+def find_instance_dirs(
+    instance_id: str, eval_type: str, dataset_dir: Path, output_format: str
+) -> list[tuple[str, Path]]:
+    """Locate one or more instance directories for an ID or glob selector."""
+    if output_format == "harbor":
+        return [
+            (candidate.name, candidate)
+            for candidate in _find_harbor_instance_dirs(instance_id, dataset_dir)
+        ]
+
+    found = find_instance_dir(instance_id, eval_type, dataset_dir, output_format)
+    return [(instance_id, found)] if found else []
 
 
 def export_folders(instance_id: str, instance_src: Path, output_dir: Path) -> bool:
@@ -77,17 +128,35 @@ def export_jsonl(instance_id: str, instance_src: Path, jsonl_path: Path) -> bool
         return False
 
 
-def main():
-    parser = argparse.ArgumentParser(description="Export datapoints from dataset checkout")
-    parser.add_argument("--ids-file", required=True, help="File with instance IDs (one per line)")
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        description="Export datapoints from dataset checkout"
+    )
+    parser.add_argument(
+        "--ids-file", required=True, help="File with instance IDs (one per line)"
+    )
     parser.add_argument("--eval-type", default="codegen", help="Eval type directory")
-    parser.add_argument("--dataset-dir", required=True, help="Path to dataset checkout directory")
-    parser.add_argument("--format", choices=["folders", "jsonl"], default="folders", help="Output format")
+    parser.add_argument(
+        "--dataset-dir", required=True, help="Path to dataset checkout directory"
+    )
+    parser.add_argument(
+        "--format",
+        choices=["folders", "jsonl", "harbor"],
+        default="folders",
+        help="Output format",
+    )
     parser.add_argument("--output-dir", required=True, help="Output directory")
-    parser.add_argument("--output-name", default="dataset", help="Output name (used for JSONL filename)")
-    parser.add_argument("--exported-ids-file", default=None, help="File to write exported instance IDs")
+    parser.add_argument(
+        "--output-name", default="dataset", help="Output name (used for JSONL filename)"
+    )
+    parser.add_argument(
+        "--exported-ids-file", default=None, help="File to write exported instance IDs"
+    )
+    parser.add_argument(
+        "--skipped-ids-file", default=None, help="File to write skipped instance IDs"
+    )
 
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     ids_file = Path(args.ids_file)
     dataset_dir = Path(args.dataset_dir)
@@ -95,49 +164,61 @@ def main():
 
     if not ids_file.is_file():
         print(f"Error: IDs file not found: {ids_file}", file=sys.stderr)
-        sys.exit(1)
+        return 1
 
     if not dataset_dir.is_dir():
         print(f"Error: dataset directory not found: {dataset_dir}", file=sys.stderr)
-        sys.exit(1)
+        return 1
 
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # Read instance IDs
-    instance_ids = [line.strip() for line in ids_file.read_text().splitlines() if line.strip()]
+    instance_ids = [
+        line.strip() for line in ids_file.read_text().splitlines() if line.strip()
+    ]
     print(f"Processing {len(instance_ids)} instance IDs")
 
     exported = []
     skipped = []
+    exported_seen = set()
     jsonl_path = output_dir / f"{args.output_name}.jsonl"
 
     for instance_id in instance_ids:
-        instance_src = find_instance_dir(instance_id, args.eval_type, dataset_dir)
+        matches = find_instance_dirs(
+            instance_id, args.eval_type, dataset_dir, args.format
+        )
 
-        if not instance_src:
+        if not matches:
             print(f"  Skip: {instance_id} — not found in dataset")
             skipped.append(instance_id)
             continue
 
-        if args.format == "folders":
-            ok = export_folders(instance_id, instance_src, output_dir)
-        else:
-            ok = export_jsonl(instance_id, instance_src, jsonl_path)
+        for exported_id, instance_src in matches:
+            if exported_id in exported_seen:
+                continue
+            if args.format in {"folders", "harbor"}:
+                ok = export_folders(exported_id, instance_src, output_dir)
+            else:
+                ok = export_jsonl(exported_id, instance_src, jsonl_path)
 
-        if ok:
-            exported.append(instance_id)
-        else:
-            skipped.append(instance_id)
+            if ok:
+                exported.append(exported_id)
+                exported_seen.add(exported_id)
+            else:
+                skipped.append(exported_id)
 
     # Write exported IDs
     exported_ids_file = args.exported_ids_file or str(output_dir / "exported-ids.txt")
     Path(exported_ids_file).write_text("\n".join(exported) + "\n" if exported else "")
+    skipped_ids_file = args.skipped_ids_file or str(output_dir / "skipped-ids.txt")
+    Path(skipped_ids_file).write_text("\n".join(skipped) + "\n" if skipped else "")
 
     print(f"\nExported {len(exported)} datapoints, skipped {len(skipped)}")
 
     # Write count to stdout for workflow capture
     print(f"EXPORT_COUNT={len(exported)}")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

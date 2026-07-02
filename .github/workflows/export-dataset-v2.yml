@@ -1,5 +1,5 @@
 name: Export Dataset (v2)
-run-name: "Export ${{ inputs.eval_type }} (${{ inputs.format }}) | query: ${{ inputs.search_query || 'all' }} | repo: ${{ inputs.dataset_repo }}"
+run-name: "Export ${{ inputs.eval_type }} (${{ inputs.format }}) | query: ${{ inputs.search_query || 'all' }} | repo: ${{ inputs.dataset_repo }} | tag: ${{ inputs.run_tag || 'none' }}"
 
 on:
   workflow_dispatch:
@@ -21,7 +21,23 @@ on:
         options:
           - folders
           - jsonl
+          - harbor
         default: 'folders'
+      instance_ids:
+        description: 'Explicit instance IDs or globs, separated by commas or newlines. Merged with query results; with empty query, exports exactly these selectors.'
+        required: false
+        type: string
+        default: ''
+      include_manual:
+        description: 'Reserved for manual Harbor task selectors; explicit instance_ids are the primary selector.'
+        required: false
+        type: boolean
+        default: false
+      run_tag:
+        description: 'Opaque correlation tag appended to the workflow run name.'
+        required: false
+        type: string
+        default: ''
       output_name:
         description: 'Output artifact name (leave empty for auto-generated "dataset-YYYY-MM-DD")'
         required: false
@@ -86,6 +102,7 @@ jobs:
           GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
           PYTHONPATH: .github/scripts/export
           SEARCH_QUERY: ${{ inputs.search_query }}
+          INSTANCE_IDS: ${{ inputs.instance_ids }}
           EVAL_TYPE: ${{ inputs.eval_type }}
           ORG: ${{ inputs.organization }}
         run: |
@@ -98,6 +115,7 @@ jobs:
 
           python .github/scripts/export/resolve_instances_v2.py \
             "${QUERY_ARGS[@]}" \
+            --instance-ids "$INSTANCE_IDS" \
             --eval-type "$EVAL_TYPE" \
             --org "$ORG" \
             --dataset-dir dataset-checkout \
@@ -119,6 +137,7 @@ jobs:
         run: |
           OUTPUT_DIR="${RUNNER_TEMP}/export-output/${OUTPUT_NAME}"
           EXPORTED_IDS="${RUNNER_TEMP}/exported-ids.txt"
+          SKIPPED_IDS="${RUNNER_TEMP}/skipped-ids.txt"
 
           python .github/scripts/export/export_datapoints_v2.py \
             --ids-file "$IDS_FILE" \
@@ -128,12 +147,14 @@ jobs:
             --output-dir "$OUTPUT_DIR" \
             --output-name "$OUTPUT_NAME" \
             --exported-ids-file "$EXPORTED_IDS" \
+            --skipped-ids-file "$SKIPPED_IDS" \
             | tee /tmp/export-output.log
 
           # Extract count from script output
           COUNT=$(grep -oP 'EXPORT_COUNT=\K\d+' /tmp/export-output.log || echo 0)
           echo "count=$COUNT" >> $GITHUB_OUTPUT
           echo "exported_ids_file=$EXPORTED_IDS" >> $GITHUB_OUTPUT
+          echo "skipped_ids_file=$SKIPPED_IDS" >> $GITHUB_OUTPUT
 
       - name: Generate manifest
         shell: bash
@@ -145,6 +166,7 @@ jobs:
           DATASET_SHA: ${{ steps.dataset-ref.outputs.sha }}
           OUTPUT_NAME: ${{ steps.params.outputs.output_name }}
           EXPORTED_IDS_FILE: ${{ steps.export.outputs.exported_ids_file }}
+          SKIPPED_IDS_FILE: ${{ steps.export.outputs.skipped_ids_file }}
         run: |
           OUTPUT_DIR="${RUNNER_TEMP}/export-output/${OUTPUT_NAME}"
 
@@ -154,6 +176,7 @@ jobs:
             --format "$FORMAT" \
             --query "$SEARCH_QUERY" \
             --dataset-commit "$DATASET_SHA" \
+            --skipped-ids-file "$SKIPPED_IDS_FILE" \
             --output-dir "$OUTPUT_DIR"
 
       - name: Upload export artifact

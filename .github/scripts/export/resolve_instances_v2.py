@@ -25,8 +25,6 @@ Usage:
 """
 
 import argparse
-import json
-import os
 import sys
 from pathlib import Path
 
@@ -62,7 +60,9 @@ def resolve_from_query(
 
     # Step 2: Batch-fetch Data field URLs from metadata project via GraphQL
     node_ids = [item["node_id"] for item in items]
-    print(f"Fetching Data field values from metadata project {org}/{metadata_project_number} for {len(node_ids)} items...")
+    print(
+        f"Fetching Data field values from metadata project {org}/{metadata_project_number} for {len(node_ids)} items..."
+    )
     data_urls = fetch_data_field_urls(org, metadata_project_number, node_ids)
     print(f"Got {len(data_urls)} Data field URLs")
 
@@ -75,7 +75,10 @@ def resolve_from_query(
         url = data_urls.get(node_id)
 
         if not url:
-            print(f"  Warning: no Data field for {item['repo_name']}#{item['number']}", file=sys.stderr)
+            print(
+                f"  Warning: no Data field for {item['repo_name']}#{item['number']}",
+                file=sys.stderr,
+            )
             continue
 
         parsed = parse_data_url(url)
@@ -100,9 +103,13 @@ def resolve_from_query(
 
     # Step 4: Download fallback for items not found locally
     if fallback_needed:
-        print(f"\n{len(fallback_needed)} items not found locally, attempting API download...")
+        print(
+            f"\n{len(fallback_needed)} items not found locally, attempting API download..."
+        )
         for item, parsed in fallback_needed:
-            print(f"  Downloading: {parsed['owner']}/{parsed['repo']}/{parsed['file_path']}")
+            print(
+                f"  Downloading: {parsed['owner']}/{parsed['repo']}/{parsed['file_path']}"
+            )
             content = download_content(
                 parsed["owner"], parsed["repo"], parsed["branch"], parsed["file_path"]
             )
@@ -119,14 +126,16 @@ def resolve_from_query(
                 instance_ids.append(parsed["instance_id"])
                 print(f"  Downloaded: {parsed['instance_id']}")
             else:
-                print(f"  Failed: {item['repo_name']}#{item['number']}", file=sys.stderr)
+                print(
+                    f"  Failed: {item['repo_name']}#{item['number']}", file=sys.stderr
+                )
 
     return sorted(set(instance_ids))
 
 
 def resolve_from_filesystem(eval_type: str, dataset_dir: Path) -> list[str]:
     """Resolve all instance IDs from the dataset directory."""
-    print(f"Collecting all instances from filesystem")
+    print("Collecting all instances from filesystem")
 
     instance_ids = set()
     if eval_type == "all":
@@ -146,32 +155,74 @@ def resolve_from_filesystem(eval_type: str, dataset_dir: Path) -> list[str]:
     return result
 
 
-def main():
-    parser = argparse.ArgumentParser(description="Resolve instance IDs for dataset export")
-    parser.add_argument("--query", default="", help="GitHub search query for project board items")
-    parser.add_argument("--eval-type", default="codegen", help="Eval type directory (codegen, debugging, or all)")
-    parser.add_argument("--org", default="dpaia", help="GitHub organization")
-    parser.add_argument("--project-number", type=int, default=13, help="Project board number (for search)")
-    parser.add_argument("--metadata-project-number", type=int, default=3, help="Dataset Metadata project number (for Data field)")
-    parser.add_argument("--dataset-dir", required=True, help="Path to dataset checkout directory")
-    parser.add_argument("--output", required=True, help="Output file for instance IDs (one per line)")
+def parse_instance_ids(raw: str) -> list[str]:
+    """Parse explicit instance IDs from a comma/newline separated string."""
+    return sorted(
+        {item.strip() for item in raw.replace(",", "\n").splitlines() if item.strip()}
+    )
 
-    args = parser.parse_args()
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        description="Resolve instance IDs for dataset export"
+    )
+    parser.add_argument(
+        "--query", default="", help="GitHub search query for project board items"
+    )
+    parser.add_argument(
+        "--instance-ids",
+        default="",
+        help="Explicit instance IDs or globs, separated by commas or newlines",
+    )
+    parser.add_argument(
+        "--eval-type",
+        default="codegen",
+        help="Eval type directory (codegen, debugging, or all)",
+    )
+    parser.add_argument("--org", default="dpaia", help="GitHub organization")
+    parser.add_argument(
+        "--project-number",
+        type=int,
+        default=13,
+        help="Project board number (for search)",
+    )
+    parser.add_argument(
+        "--metadata-project-number",
+        type=int,
+        default=3,
+        help="Dataset Metadata project number (for Data field)",
+    )
+    parser.add_argument(
+        "--dataset-dir", required=True, help="Path to dataset checkout directory"
+    )
+    parser.add_argument(
+        "--output", required=True, help="Output file for instance IDs (one per line)"
+    )
+
+    args = parser.parse_args(argv)
     dataset_dir = Path(args.dataset_dir)
 
     if not dataset_dir.is_dir():
         print(f"Error: dataset directory not found: {dataset_dir}", file=sys.stderr)
-        sys.exit(1)
+        return 1
+
+    explicit_instance_ids = parse_instance_ids(args.instance_ids)
 
     if args.query:
-        instance_ids = resolve_from_query(
-            query=args.query,
-            eval_type=args.eval_type,
-            org=args.org,
-            project_number=args.project_number,
-            metadata_project_number=args.metadata_project_number,
-            dataset_dir=dataset_dir,
+        instance_ids = set(
+            resolve_from_query(
+                query=args.query,
+                eval_type=args.eval_type,
+                org=args.org,
+                project_number=args.project_number,
+                metadata_project_number=args.metadata_project_number,
+                dataset_dir=dataset_dir,
+            )
         )
+        instance_ids.update(explicit_instance_ids)
+        instance_ids = sorted(instance_ids)
+    elif explicit_instance_ids:
+        instance_ids = explicit_instance_ids
     else:
         instance_ids = resolve_from_filesystem(args.eval_type, dataset_dir)
 
@@ -182,7 +233,8 @@ def main():
 
     print(f"\nTotal instance IDs to export: {len(instance_ids)}")
     print(f"Written to: {output_path}")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

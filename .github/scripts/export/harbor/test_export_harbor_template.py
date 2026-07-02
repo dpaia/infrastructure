@@ -194,7 +194,20 @@ def test_inject_datapoint_files_defaults():
     assert files["instruction.md"].content == b"Fix it\n"
     assert files["solution/patch.diff"].content == b"diff --git a/x b/x\n"
     assert files["solution/solve.sh"].executable
+    assert b"cd /repo\n" in files["solution/solve.sh"].content
     assert "tests/test_patch.diff" not in files
+
+
+def test_inject_datapoint_files_solve_sh_uses_project_root():
+    files = {}
+    inject_datapoint_files(
+        files,
+        problem_statement="Fix it",
+        gold_patch="gold\n",
+        test_patch="",
+        project_root="/repo/app",
+    )
+    assert b"cd /repo/app\n" in files["solution/solve.sh"].content
 
 
 def test_inject_datapoint_files_respects_overrides_where_allowed():

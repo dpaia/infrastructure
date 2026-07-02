@@ -73,10 +73,10 @@ _TEST_FIELD_LINE_RE = re.compile(
     r"^\s*(FAIL_TO_PASS|PASS_TO_PASS)\s*:.*$", re.IGNORECASE | re.MULTILINE
 )
 
-SOLVE_SH = """#!/usr/bin/env bash
+SOLVE_SH_TEMPLATE = """#!/usr/bin/env bash
 set -euo pipefail
 
-cd "${EE_BENCH_PROJECT_ROOT:-/repo}"
+cd {project_root}
 git apply /solution/patch.diff
 """
 
@@ -465,6 +465,7 @@ def inject_datapoint_files(
     problem_statement: str,
     gold_patch: str,
     test_patch: str,
+    project_root: str = "/repo",
 ) -> None:
     """Add per-datapoint files the export script owns (spec §3 table)."""
     if "instruction.md" not in files:
@@ -474,8 +475,9 @@ def inject_datapoint_files(
     files["solution/patch.diff"] = TaskFile(content=gold_patch.encode("utf-8"), origin="injected")
 
     if "solution/solve.sh" not in files:
+        solve_sh = SOLVE_SH_TEMPLATE.format(project_root=project_root)
         files["solution/solve.sh"] = TaskFile(
-            content=SOLVE_SH.encode("utf-8"), executable=True, origin="injected"
+            content=solve_sh.encode("utf-8"), executable=True, origin="injected"
         )
 
     if test_patch.strip():
@@ -675,6 +677,7 @@ def export(config: dict[str, str], output_dir: Path) -> int:
         problem_statement=problem_statement,
         gold_patch=gold_patch,
         test_patch=test_patch,
+        project_root=str(ctx.get("project_root") or "/repo"),
     )
 
     # --- 8. Post-render checks ---

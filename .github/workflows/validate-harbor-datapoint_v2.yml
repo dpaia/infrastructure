@@ -1,0 +1,238 @@
+name: Validate Harbor Datapoint (v2)
+run-name: "[harbor] Validate ${{ inputs.datapoints_repo }}${{ inputs.pr_number != '' && format(' PR #{0}', inputs.pr_number) || format('@{0}', inputs.ref) }} (key=${{ inputs.run_key }})"
+
+on:
+  workflow_dispatch:
+    inputs:
+      datapoints_repo:
+        description: 'Datapoints repository in owner/name form'
+        required: false
+        type: string
+        default: 'dpaia/dataset'
+      pr_number:
+        description: 'Datapoints repository PR number. Leave empty to validate a ref.'
+        required: false
+        type: string
+        default: ''
+      ref:
+        description: 'Ref to validate when pr_number is empty'
+        required: false
+        type: string
+        default: 'main'
+      task_path:
+        description: 'Path to Harbor task directory inside the datapoints repo. Required when validating a ref; optional for PRs.'
+        required: false
+        type: string
+        default: ''
+      agent:
+        description: 'Harbor agent used for validation'
+        required: false
+        type: string
+        default: 'oracle'
+      harbor_version:
+        description: 'Optional Harbor PyPI version. Empty installs latest.'
+        required: false
+        type: string
+        default: ''
+      min_reward:
+        description: 'Minimum reward required for validation success'
+        required: false
+        type: string
+        default: '1'
+      run_key:
+        description: 'Unique run correlation key (UUID)'
+        required: false
+        type: string
+        default: 'manual'
+      comment_on_pr:
+        description: 'Post validation result as a comment when pr_number is set'
+        required: false
+        type: boolean
+        default: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout infrastructure
+        uses: actions/checkout@v5
+
+      - name: Check rate limit
+        uses: ./.github/actions/check-rate-limit
+        with:
+          github_token: ${{ secrets.PROJECT_TOKEN }}
+
+      - name: Checkout datapoints PR
+        if: inputs.pr_number != ''
+        uses: actions/checkout@v5
+        with:
+          repository: ${{ inputs.datapoints_repo }}
+          token: ${{ secrets.PROJECT_TOKEN }}
+          path: datapoints-checkout
+          ref: refs/pull/${{ inputs.pr_number }}/head
+
+      - name: Checkout datapoints ref
+        if: inputs.pr_number == ''
+        uses: actions/checkout@v5
+        with:
+          repository: ${{ inputs.datapoints_repo }}
+          token: ${{ secrets.PROJECT_TOKEN }}
+          path: datapoints-checkout
+          ref: ${{ inputs.ref }}
+
+      - name: Resolve Harbor task
+        id: task
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
+          DATAPOINTS_REPO: ${{ inputs.datapoints_repo }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+          TASK_PATH: ${{ inputs.task_path }}
+        run: |
+          set -euo pipefail
+
+          CHECKOUT_DIR="datapoints-checkout"
+
+          normalize_task_path() {
+            local path="$1"
+            path="${path#./}"
+            path="${path%/}"
+            if [ -z "$path" ] || [[ "$path" == /* ]] || [[ "$path" == *".."* ]]; then
+              echo "Error: unsafe Harbor task path: '$path'" >&2
+              exit 1
+            fi
+            if [ ! -f "$CHECKOUT_DIR/$path/task.toml" ]; then
+              echo "Error: '$path' is not a Harbor task directory with task.toml" >&2
+              exit 1
+            fi
+            echo "$path"
+          }
+
+          find_task_for_changed_file() {
+            local file="$1"
+            local dir
+            dir="$(dirname "$file")"
+            while [ "$dir" != "." ] && [ "$dir" != "/" ]; do
+              if [ -f "$CHECKOUT_DIR/$dir/task.toml" ]; then
+                echo "$dir"
+                return 0
+              fi
+              dir="$(dirname "$dir")"
+            done
+            return 1
+          }
+
+          if [ -n "$TASK_PATH" ]; then
+            TASK_PATH="$(normalize_task_path "$TASK_PATH")"
+          elif [ -n "$PR_NUMBER" ]; then
+            TASKS_FILE="${RUNNER_TEMP}/harbor-task-paths.txt"
+            : > "$TASKS_FILE"
+
+            gh pr diff "$PR_NUMBER" --repo "$DATAPOINTS_REPO" --name-only |
+              while IFS= read -r changed_file; do
+                [ -n "$changed_file" ] || continue
+                find_task_for_changed_file "$changed_file" || true
+              done | sort -u > "$TASKS_FILE"
+
+            TASK_COUNT="$(wc -l < "$TASKS_FILE" | tr -d ' ')"
+            if [ "$TASK_COUNT" -eq 0 ]; then
+              echo "Error: no changed Harbor task directory found in PR #$PR_NUMBER" >&2
+              exit 1
+            fi
+            if [ "$TASK_COUNT" -gt 1 ]; then
+              echo "Error: multiple Harbor task directories changed; pass task_path explicitly" >&2
+              cat "$TASKS_FILE" >&2
+              exit 1
+            fi
+            TASK_PATH="$(cat "$TASKS_FILE")"
+          else
+            echo "Error: task_path is required when validating a ref" >&2
+            exit 1
+          fi
+
+          TASK_DIR="$CHECKOUT_DIR/$TASK_PATH"
+          TASK_NAME="$(basename "$TASK_DIR")"
+
+          echo "task_path=$TASK_PATH" >> "$GITHUB_OUTPUT"
+          echo "task_dir=$TASK_DIR" >> "$GITHUB_OUTPUT"
+          echo "task_name=$TASK_NAME" >> "$GITHUB_OUTPUT"
+          echo "Resolved Harbor task: $TASK_PATH"
+
+      - name: Run Harbor validation
+        id: harbor
+        uses: ./.github/actions/run-harbor-validation
+        with:
+          task_dir: ${{ steps.task.outputs.task_dir }}
+          agent: ${{ inputs.agent }}
+          harbor_version: ${{ inputs.harbor_version }}
+          min_reward: ${{ inputs.min_reward }}
+
+      - name: Upload Harbor validation log
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: harbor-validation-log-${{ steps.task.outputs.task_name }}-${{ inputs.run_key }}
+          path: ${{ steps.harbor.outputs.log_path }}
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Upload Harbor job artifacts
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: harbor-job-${{ steps.task.outputs.task_name }}-${{ inputs.run_key }}
+          path: ${{ steps.harbor.outputs.job_dir }}
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Comment on datapoints PR
+        if: always() && inputs.pr_number != '' && inputs.comment_on_pr == true
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
+          DATAPOINTS_REPO: ${{ inputs.datapoints_repo }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+          RESULT: ${{ steps.harbor.outputs.result }}
+          REWARD: ${{ steps.harbor.outputs.reward }}
+          TASK_PATH: ${{ steps.task.outputs.task_path }}
+          FAILURE_DETAILS: ${{ steps.harbor.outputs.failure_details }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          if [ "$RESULT" = "success" ]; then
+            MSG="Harbor datapoint validation **passed**."
+          else
+            MSG="Harbor datapoint validation **failed**."
+          fi
+
+          COMMENT_BODY="${MSG}
+
+          **Task:** \`${TASK_PATH}\`
+          **Reward:** ${REWARD:-(unavailable)}
+          **Details:** [Workflow run](${RUN_URL})"
+
+          if [ "$RESULT" != "success" ] && [ -n "$FAILURE_DETAILS" ]; then
+            COMMENT_BODY="${COMMENT_BODY}
+
+          <details><summary>Error details</summary>
+
+          \`\`\`
+          ${FAILURE_DETAILS}
+          \`\`\`
+          </details>"
+          fi
+
+          gh pr comment "$PR_NUMBER" \
+            --repo "$DATAPOINTS_REPO" \
+            --body "$COMMENT_BODY" || true
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "# Harbor Validation Summary" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Datapoints repo:** ${{ inputs.datapoints_repo }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Task:** ${{ steps.task.outputs.task_path }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Agent:** ${{ inputs.agent }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Result:** ${{ steps.harbor.outputs.result }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Reward:** ${{ steps.harbor.outputs.reward }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Run key:** ${{ inputs.run_key }}" >> "$GITHUB_STEP_SUMMARY"

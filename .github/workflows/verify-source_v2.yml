@@ -30,6 +30,11 @@ on:
         required: false
         type: string
         default: ''
+      templates_repo:
+        description: 'Harbor templates repository (owner/name)'
+        required: false
+        type: string
+        default: 'dpaia/.dpaia_templates'
 
 jobs:
   verify:
@@ -71,8 +76,84 @@ jobs:
       - name: Setup ee-dataset CLI
         uses: ./.github/actions/setup-ee-import
 
+      # --- Format detection: which output formats can this PR produce? ---
+      - name: Detect ee-bench capability
+        id: detect
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
+          REPO: "${{ inputs.organization }}/${{ inputs.repository }}"
+          PR_NUMBER: ${{ inputs.pr_number }}
+          EVAL_TYPE: ${{ inputs.eval_type }}
+        run: |
+          HEAD_SHA=$(gh api "repos/$REPO/pulls/$PR_NUMBER" --jq '.head.sha')
+          EE_BENCH=false
+          if gh api "repos/$REPO/contents/.ee-bench/$EVAL_TYPE?ref=$HEAD_SHA" --silent >/dev/null 2>&1; then
+            EE_BENCH=true
+          elif gh api "repos/$REPO/contents/.ee-bench/$EVAL_TYPE" --silent >/dev/null 2>&1; then
+            EE_BENCH=true
+          fi
+          echo "ee_bench=$EE_BENCH" >> "$GITHUB_OUTPUT"
+          echo "EE-Bench applicable: $EE_BENCH"
+
+      # Harbor is a second output format (codegen only for now). The export
+      # script self-skips (harbor_status=skipped) when the repo has no central
+      # template, no templates.harbor reference and no .harbor/ dir in the PR.
+      - name: Generate Harbor task
+        id: harbor-export
+        if: inputs.eval_type == 'codegen'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.PROJECT_TOKEN }}
+          TEMPLATES_REPO: ${{ inputs.templates_repo }}
+        run: |
+          set +e
+          python3 .github/scripts/export/harbor/export_harbor_template.py \
+            --set REPO="${{ inputs.organization }}/${{ inputs.repository }}" \
+            --set PR_NUMBER="${{ inputs.pr_number }}" \
+            --set TEMPLATES_REPO="$TEMPLATES_REPO" \
+            --output-dir "${RUNNER_TEMP}/harbor-output" 2>&1 | tee "${RUNNER_TEMP}/harbor-export.log"
+          EXIT_CODE=${PIPESTATUS[0]}
+          set -e
+          if [ "$EXIT_CODE" != "0" ]; then
+            echo "harbor_status=error" >> "$GITHUB_OUTPUT"
+            {
+              echo "harbor_error<<HARBOR_ERR_EOF"
+              tail -20 "${RUNNER_TEMP}/harbor-export.log"
+              echo "HARBOR_ERR_EOF"
+            } >> "$GITHUB_OUTPUT"
+            exit "$EXIT_CODE"
+          fi
+
+      - name: Check at least one format applies
+        id: formats
+        if: always()
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
+          EE_BENCH: ${{ steps.detect.outputs.ee_bench }}
+          HARBOR_STATUS: ${{ steps.harbor-export.outputs.harbor_status }}
+          TEMPLATES_REPO: ${{ inputs.templates_repo }}
+        run: |
+          if [ "$EE_BENCH" != "true" ] && { [ -z "$HARBOR_STATUS" ] || [ "$HARBOR_STATUS" = "skipped" ]; }; then
+            echo "none=true" >> "$GITHUB_OUTPUT"
+            COMMENT_BODY="❌ This PR cannot produce a datapoint in any supported format.
+
+          Expected at least one of:
+          - \`.ee-bench/${{ inputs.eval_type }}/\` configuration (in the PR or on the default branch), or
+          - Harbor capability (codegen only): a central template \`harbor/${{ inputs.organization }}/${{ inputs.repository }}/\` in \`${TEMPLATES_REPO}\`, a \`templates.harbor\` reference in metadata.json, or a \`.harbor/\` directory in the PR."
+            gh pr comment "${{ inputs.pr_number }}" \
+              --repo "${{ inputs.organization }}/${{ inputs.repository }}" \
+              --body "$COMMENT_BODY" || true
+          else
+            echo "none=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # --- EE-Bench leg ---
       - name: Generate datapoint
         id: generate
+        if: steps.detect.outputs.ee_bench == 'true'
         uses: ./.github/actions/run-export-script
         with:
           organization: ${{ inputs.organization }}
@@ -83,6 +164,7 @@ jobs:
 
       - name: Run validation
         id: validate
+        if: steps.detect.outputs.ee_bench == 'true'
         uses: ./.github/actions/run-validation
         with:
           instance_dir: ${{ steps.generate.outputs.instance_dir }}
@@ -90,7 +172,7 @@ jobs:
           GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
 
       - name: Upload validation logs
-        if: always()
+        if: always() && steps.detect.outputs.ee_bench == 'true'
         uses: actions/upload-artifact@v5
         with:
           name: "verification-logs-${{ inputs.run_key }}"
@@ -99,7 +181,7 @@ jobs:
           retention-days: 7
 
       - name: Upload validation result JSON
-        if: always()
+        if: always() && steps.detect.outputs.ee_bench == 'true'
         uses: actions/upload-artifact@v5
         with:
           name: "verification-result-${{ inputs.run_key }}"
@@ -107,14 +189,61 @@ jobs:
           if-no-files-found: warn
           retention-days: 30
 
-      - name: Comment on source PR
+      # --- Harbor leg (oracle agent must reach reward 1) ---
+      - name: Run Harbor validation
+        id: harbor-validate
+        if: steps.harbor-export.outputs.harbor_status == 'generated'
+        uses: ./.github/actions/run-harbor-validation
+        with:
+          task_dir: ${{ steps.harbor-export.outputs.harbor_task_dir }}
+          min_reward: '1'
+
+      - name: Upload Harbor validation log
+        if: always() && steps.harbor-validate.outcome != 'skipped'
+        uses: actions/upload-artifact@v5
+        with:
+          name: "verification-harbor-log-${{ inputs.run_key }}"
+          path: ${{ steps.harbor-validate.outputs.log_path }}
+          if-no-files-found: warn
+          retention-days: 7
+
+      # --- Combined result: every applicable format must pass ---
+      - name: Compute verification result
+        id: result
         if: always()
         shell: bash
         env:
+          EE_APPLICABLE: ${{ steps.detect.outputs.ee_bench }}
+          EE_RESULT: ${{ steps.validate.outputs.result }}
+          HARBOR_STATUS: ${{ steps.harbor-export.outputs.harbor_status }}
+          HARBOR_RESULT: ${{ steps.harbor-validate.outputs.result }}
+          NO_FORMATS: ${{ steps.formats.outputs.none }}
+        run: |
+          OVERALL=success
+          if [ "$NO_FORMATS" = "true" ]; then
+            OVERALL=failure
+          fi
+          if [ "$EE_APPLICABLE" = "true" ] && [ "$EE_RESULT" != "success" ]; then
+            OVERALL=failure
+          fi
+          if [ "$HARBOR_STATUS" = "error" ]; then
+            OVERALL=failure
+          elif [ "$HARBOR_STATUS" = "generated" ] && [ "$HARBOR_RESULT" != "success" ]; then
+            OVERALL=failure
+          fi
+          echo "result=$OVERALL" >> "$GITHUB_OUTPUT"
+          echo "Overall verification result: $OVERALL"
+
+      - name: Comment on source PR
+        if: always() && steps.formats.outputs.none != 'true'
+        shell: bash
+        env:
           GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
-          RESULT: ${{ steps.validate.outputs.result }}
+          RESULT: ${{ steps.result.outputs.result }}
           STATUS: ${{ steps.validate.outputs.status }}
-          INSTANCE_ID: ${{ steps.generate.outputs.instance_id }}
+          EE_APPLICABLE: ${{ steps.detect.outputs.ee_bench }}
+          EE_RESULT: ${{ steps.validate.outputs.result }}
+          INSTANCE_ID: ${{ steps.generate.outputs.instance_id || steps.harbor-export.outputs.instance_id }}
           CRITERIA_SUMMARY: ${{ steps.validate.outputs.criteria_summary }}
           TEST_SUMMARY: ${{ steps.validate.outputs.test_summary }}
           FAIL_TO_PASS: ${{ steps.validate.outputs.fail_to_pass }}
@@ -122,6 +251,12 @@ jobs:
           FAILED_TESTS: ${{ steps.validate.outputs.failed_tests }}
           FAILURE_DETAILS: ${{ steps.validate.outputs.failure_details }}
           DURATION: ${{ steps.validate.outputs.duration }}
+          HARBOR_STATUS: ${{ steps.harbor-export.outputs.harbor_status }}
+          HARBOR_TASK_REL: ${{ steps.harbor-export.outputs.harbor_task_rel }}
+          HARBOR_ERROR: ${{ steps.harbor-export.outputs.harbor_error }}
+          HARBOR_RESULT: ${{ steps.harbor-validate.outputs.result }}
+          HARBOR_REWARD: ${{ steps.harbor-validate.outputs.reward }}
+          HARBOR_FAILURE: ${{ steps.harbor-validate.outputs.failure_details }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           if [ "$RESULT" = "success" ]; then
@@ -134,28 +269,35 @@ jobs:
 
           COMMENT_BODY="${ICON} ${MSG}
 
-          **Instance:** \`${INSTANCE_ID}\`
+          **Instance:** \`${INSTANCE_ID}\`"
+
+          # --- EE-Bench block ---
+          if [ "$EE_APPLICABLE" = "true" ]; then
+            COMMENT_BODY="${COMMENT_BODY}
+
+          ### EE-Bench
+          **Result:** ${EE_RESULT:-not run}
           **Duration:** ${DURATION:-(unknown)}s
           **Criteria:** ${CRITERIA_SUMMARY:-(unavailable)}"
 
-          if [ -n "$TEST_SUMMARY" ]; then
-            COMMENT_BODY="${COMMENT_BODY}
+            if [ -n "$TEST_SUMMARY" ]; then
+              COMMENT_BODY="${COMMENT_BODY}
           **Tests:** ${TEST_SUMMARY}"
-          fi
+            fi
 
-          if [ -n "$FAIL_TO_PASS" ]; then
-            COMMENT_BODY="${COMMENT_BODY}
+            if [ -n "$FAIL_TO_PASS" ]; then
+              COMMENT_BODY="${COMMENT_BODY}
           **FAIL_TO_PASS:** ${FAIL_TO_PASS}"
-          fi
+            fi
 
-          if [ "$RESULT" != "success" ] && [ -n "$FAILED_CRITERIA" ]; then
-            COMMENT_BODY="${COMMENT_BODY}
+            if [ "$EE_RESULT" != "success" ] && [ -n "$FAILED_CRITERIA" ]; then
+              COMMENT_BODY="${COMMENT_BODY}
 
           **Failed criteria:** ${FAILED_CRITERIA}"
-          fi
+            fi
 
-          if [ -n "$FAILURE_DETAILS" ]; then
-            COMMENT_BODY="${COMMENT_BODY}
+            if [ -n "$FAILURE_DETAILS" ]; then
+              COMMENT_BODY="${COMMENT_BODY}
 
           <details><summary>Error details</summary>
 
@@ -163,15 +305,49 @@ jobs:
           ${FAILURE_DETAILS}
           \`\`\`
           </details>"
-          fi
+            fi
 
-          if [ -n "$FAILED_TESTS" ]; then
-            COMMENT_BODY="${COMMENT_BODY}
+            if [ -n "$FAILED_TESTS" ]; then
+              COMMENT_BODY="${COMMENT_BODY}
 
           <details><summary>Failed tests (up to 20)</summary>
 
           \`\`\`
           ${FAILED_TESTS}
+          \`\`\`
+          </details>"
+            fi
+          fi
+
+          # --- Harbor block ---
+          if [ "$HARBOR_STATUS" = "generated" ]; then
+            COMMENT_BODY="${COMMENT_BODY}
+
+          ### Harbor
+          **Task:** \`_harbor_converted/${HARBOR_TASK_REL}\`
+          **Result:** ${HARBOR_RESULT:-not run}
+          **Reward:** ${HARBOR_REWARD:-(unavailable)}"
+
+            if [ "$HARBOR_RESULT" != "success" ] && [ -n "$HARBOR_FAILURE" ]; then
+              COMMENT_BODY="${COMMENT_BODY}
+
+          <details><summary>Harbor error details</summary>
+
+          \`\`\`
+          ${HARBOR_FAILURE}
+          \`\`\`
+          </details>"
+            fi
+          elif [ "$HARBOR_STATUS" = "error" ]; then
+            COMMENT_BODY="${COMMENT_BODY}
+
+          ### Harbor
+          **Result:** task generation **failed**
+
+          <details><summary>Harbor export error</summary>
+
+          \`\`\`
+          ${HARBOR_ERROR}
           \`\`\`
           </details>"
           fi
@@ -193,7 +369,7 @@ jobs:
           project_number: ${{ inputs.eval_project_number }}
           item_id: ${{ steps.find-pr.outputs.item_id }}
           field_name: Verification
-          value: ${{ steps.validate.outputs.result == 'success' && 'Valid' || 'Invalid' }}
+          value: ${{ steps.result.outputs.result == 'success' && 'Valid' || 'Invalid' }}
           value_type: single_select
           github_token: ${{ secrets.PROJECT_TOKEN }}
 
@@ -204,12 +380,21 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "- **Source PR:** ${{ inputs.organization }}/${{ inputs.repository }}#${{ inputs.pr_number }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Eval type:** ${{ inputs.eval_type }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Instance:** ${{ steps.generate.outputs.instance_id }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Result:** ${{ steps.validate.outputs.result }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Status:** ${{ steps.validate.outputs.status }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Duration:** ${{ steps.validate.outputs.duration }}s" >> $GITHUB_STEP_SUMMARY
+          echo "- **EE-Bench applicable:** ${{ steps.detect.outputs.ee_bench }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Harbor status:** ${{ steps.harbor-export.outputs.harbor_status || 'skipped' }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Instance:** ${{ steps.generate.outputs.instance_id || steps.harbor-export.outputs.instance_id }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Result:** ${{ steps.result.outputs.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **EE-Bench result:** ${{ steps.validate.outputs.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Harbor result:** ${{ steps.harbor-validate.outputs.result }} (reward=${{ steps.harbor-validate.outputs.reward }})" >> $GITHUB_STEP_SUMMARY
+          echo "- **Duration (ee-bench):** ${{ steps.validate.outputs.duration }}s" >> $GITHUB_STEP_SUMMARY
           echo "- **Criteria:** ${{ steps.validate.outputs.criteria_summary }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Run key:** ${{ inputs.run_key }}" >> $GITHUB_STEP_SUMMARY
           if [ -n "${{ steps.validate.outputs.failed_criteria }}" ]; then
             echo "- **Failed criteria:** ${{ steps.validate.outputs.failed_criteria }}" >> $GITHUB_STEP_SUMMARY
           fi
+
+      - name: Fail if verification failed
+        if: always() && steps.result.outputs.result != 'success'
+        run: |
+          echo "Verification failed (see summary above)"
+          exit 1

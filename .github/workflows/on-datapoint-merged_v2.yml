@@ -63,6 +63,8 @@ jobs:
           # Parse structured metadata from HTML comment (take first match only)
           INSTANCE_ID=$(echo "$PR_BODY" | grep -oP 'instance_id:\s*\K\S+' | head -1 || echo "")
           EVAL_TYPE=$(echo "$PR_BODY" | grep -oP 'eval_type:\s*\K\S+' | head -1 || echo "")
+          FORMATS=$(echo "$PR_BODY" | grep -oP 'formats:\s*\K\S+' | head -1 || echo "")
+          HARBOR_TASK_PATH=$(echo "$PR_BODY" | grep -oP 'harbor_task_path:\s*\K\S+' | head -1 || echo "")
           SOURCE_REPO=$(echo "$PR_BODY" | grep -oP 'source_repo:\s*\K\S+' | head -1 || echo "")
           SOURCE_PR=$(echo "$PR_BODY" | grep -oP 'source_pr:\s*\K\S+' | head -1 || echo "")
           SOURCE_COMMIT=$(echo "$PR_BODY" | grep -oP 'source_commit:\s*\K\S+' | head -1 || echo "")
@@ -76,16 +78,32 @@ jobs:
 
           echo "instance_id=$INSTANCE_ID" >> $GITHUB_OUTPUT
           echo "eval_type=$EVAL_TYPE" >> $GITHUB_OUTPUT
+          echo "formats=$FORMATS" >> $GITHUB_OUTPUT
+          echo "harbor_task_path=$HARBOR_TASK_PATH" >> $GITHUB_OUTPUT
           echo "source_repo=$SOURCE_REPO" >> $GITHUB_OUTPUT
           echo "source_pr=$SOURCE_PR" >> $GITHUB_OUTPUT
           echo "source_commit=$SOURCE_COMMIT" >> $GITHUB_OUTPUT
 
-          # Build permalink to datapoint on main
-          if [ -n "$SOURCE_REPO" ]; then
-            DATA_PERMALINK="https://github.com/${DATASET_REPO}/blob/main/${EVAL_TYPE}/${SOURCE_REPO}/${INSTANCE_ID}.json"
+          # Build the Data permalink: ee-bench datapoint JSON when present
+          # (legacy PRs without a formats line are ee-bench), else the
+          # harbor task directory (harbor-only datapoint).
+          HAS_EE_BENCH=true
+          if [ -n "$FORMATS" ] && ! echo "$FORMATS" | grep -q 'ee-bench'; then
+            HAS_EE_BENCH=false
+          fi
+
+          if [ "$HAS_EE_BENCH" = "true" ]; then
+            if [ -n "$SOURCE_REPO" ]; then
+              DATA_PERMALINK="https://github.com/${DATASET_REPO}/blob/main/${EVAL_TYPE}/${SOURCE_REPO}/${INSTANCE_ID}.json"
+            else
+              # Fallback for legacy datapoints without source_repo metadata
+              DATA_PERMALINK="https://github.com/${DATASET_REPO}/blob/main/${EVAL_TYPE}/${INSTANCE_ID}.json"
+            fi
+          elif [ -n "$HARBOR_TASK_PATH" ]; then
+            DATA_PERMALINK="https://github.com/${DATASET_REPO}/tree/main/${HARBOR_TASK_PATH}"
           else
-            # Fallback for legacy datapoints without source_repo metadata
-            DATA_PERMALINK="https://github.com/${DATASET_REPO}/blob/main/${EVAL_TYPE}/${INSTANCE_ID}.json"
+            echo "Error: formats=$FORMATS has no ee-bench artifact and no harbor_task_path" >&2
+            exit 1
           fi
           echo "data_permalink=$DATA_PERMALINK" >> $GITHUB_OUTPUT
 

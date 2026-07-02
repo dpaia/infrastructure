@@ -182,6 +182,7 @@ All fields in `metadata.json` are **optional**. They are populated in the result
 | `patch.source_patterns`         | string[] | Glob patterns or file paths classified as source files (highest priority override). See [How Patches Are Split](#how-patches-are-split)                   |
 | `environment.files`             | object   | Map of filename to content, added to the Docker build context                                                                                             |
 | `eval.files`                    | object   | Map of filename to content, added to the eval directory                                                                                                   |
+| `templates`                     | object   | Per-format template selection map, e.g. `{"harbor": "harbor/dpaia/feature-service@no-docker"}`. `false` opts a format out. See [Harbor Output Format](#harbor-output-format) |
 
 ### Example optional fields
 
@@ -635,6 +636,66 @@ List the specific code changes expected from an LLM solving this issue.
 | `requirements` | Requirements | Specific code changes expected                |
 
 You can add custom fields by using any `key` value — they will be extracted automatically.
+
+## Harbor Output Format
+
+Harbor is a **second output format, orthogonal to the eval type**: a single
+source PR can produce an EE-Bench datapoint, a [Harbor](https://pypi.org/project/harbor/)
+task, or both. Harbor tasks land in `dpaia/dataset` under
+`_harbor_converted/<language>/<repo>/<instance_id>/`. Initial scope is
+**codegen only**.
+
+### How a repo becomes harbor-capable
+
+Harbor generation triggers automatically for a datapoint PR when any of these
+holds (checked in this order at resolution time):
+
+1. The PR contains a `.harbor/` directory (file-level overrides).
+2. `metadata.json` names a template via the `templates` map:
+
+   ```json
+   { "templates": { "harbor": "harbor/dpaia/feature-service@no-docker" } }
+   ```
+
+   The reference format is `[<owner>/<repo>:]<path>` inside
+   [`dpaia/.dpaia_templates`](https://github.com/dpaia/.dpaia_templates) (or
+   another repo). An explicit reference that does not resolve is a hard
+   error. `"harbor": false` opts the datapoint out.
+3. A default central template `harbor/<org>/<repo>/` exists in
+   `dpaia/.dpaia_templates`.
+
+If none applies, harbor generation is skipped silently — nothing changes for
+ee-bench-only repositories.
+
+### Authoring
+
+- **Central template** (once per repo): use the `generate-harbor-template`
+  skill from a `dpaia/.dpaia_templates` checkout. A template is a real Harbor
+  task (`task.toml`, `environment/Dockerfile`, `tests/test.sh`) with the same
+  Jinja variables as `.ee-bench/` files. See the
+  [.dpaia_templates README](https://github.com/dpaia/.dpaia_templates) for
+  the full contract.
+- **Per-PR overrides**: files in the PR's `.harbor/` directory overlay the
+  central template file-by-file (`.harbor/metadata.json` is data, not
+  template — it takes precedence over `.ee-bench/codegen/metadata.json` in
+  the metadata fallback chain).
+- **Injected automatically** — never author these: `instruction.md` (from the
+  PR body), `solution/patch.diff` (gold patch), `solution/solve.sh`,
+  `tests/test_patch.diff`.
+
+### Pipeline behavior
+
+- **Verification** runs the harbor leg next to the ee-bench leg: the rendered
+  task is validated with Harbor's oracle agent, which must reach reward 1.
+  Where both formats apply, **both must pass** for the PR to be Valid (and
+  verification wall-time roughly doubles — a full docker build plus test runs
+  per format).
+- **Generation** places both artifacts in a single dataset PR; the dataset PR
+  metadata block gains `formats:` and `harbor_task_path:` lines.
+- **Dataset validation** validates every changed harbor task with the oracle
+  agent before auto-merge.
+- **Testcontainers caveat**: repos whose tests need the Docker socket or
+  privileged mode cannot pass Harbor validation — keep them ee-bench-only.
 
 ## Submitting
 

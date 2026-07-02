@@ -54,8 +54,15 @@ on:
         default: ''
 
 jobs:
-  validate:
+  # --- Find both artifact types among the PR's changed files ---
+  detect:
     runs-on: ubuntu-latest
+    outputs:
+      has_ee_bench: ${{ steps.detect.outputs.has_ee_bench }}
+      instance_dir: ${{ steps.detect.outputs.instance_dir }}
+      instance_id: ${{ steps.detect.outputs.instance_id }}
+      has_harbor: ${{ steps.detect.outputs.has_harbor }}
+      harbor_tasks: ${{ steps.detect.outputs.harbor_tasks }}
     steps:
       - name: Checkout infrastructure
         uses: actions/checkout@v5
@@ -73,7 +80,7 @@ jobs:
           path: dataset-checkout
           ref: "refs/pull/${{ inputs.pr_number }}/head"
 
-      - name: Detect changed instance directory
+      - name: Detect changed artifacts
         id: detect
         shell: bash
         env:
@@ -81,34 +88,100 @@ jobs:
           DATASET_REPO: "${{ inputs.organization }}/${{ inputs.repository }}"
           PR_NUMBER: ${{ inputs.pr_number }}
         run: |
-          # Get list of changed files in the PR
+          set -euo pipefail
+
           CHANGED_FILES=$(gh pr diff "$PR_NUMBER" --repo "$DATASET_REPO" --name-only)
 
-          # Find instance directories (look for datapoint.json in changed paths)
-          INSTANCE_DIRS=$(echo "$CHANGED_FILES" | sed 's|/[^/]*$||' | sort -u | while read dir; do
-            if [ -f "dataset-checkout/$dir/datapoint.json" ]; then
-              echo "$dir"
-            fi
-          done)
+          # Walk up from a changed file to the closest dir containing a marker
+          find_marker_dir() {
+            local file="$1"
+            local marker="$2"
+            local dir
+            dir="$(dirname "$file")"
+            while [ "$dir" != "." ] && [ "$dir" != "/" ]; do
+              if [ -f "dataset-checkout/$dir/$marker" ]; then
+                echo "$dir"
+                return 0
+              fi
+              dir="$(dirname "$dir")"
+            done
+            return 1
+          }
 
-          if [ -z "$INSTANCE_DIRS" ]; then
-            echo "Error: no instance directory with datapoint.json found in PR changes" >&2
+          EE_DIRS_FILE="${RUNNER_TEMP}/ee-instance-dirs.txt"
+          HARBOR_DIRS_FILE="${RUNNER_TEMP}/harbor-task-dirs.txt"
+          : > "$EE_DIRS_FILE"
+          : > "$HARBOR_DIRS_FILE"
+
+          while IFS= read -r changed_file; do
+            [ -n "$changed_file" ] || continue
+            find_marker_dir "$changed_file" "datapoint.json" >> "$EE_DIRS_FILE" || true
+            find_marker_dir "$changed_file" "task.toml" >> "$HARBOR_DIRS_FILE" || true
+          done <<< "$CHANGED_FILES"
+
+          sort -u "$EE_DIRS_FILE" -o "$EE_DIRS_FILE"
+          sort -u "$HARBOR_DIRS_FILE" -o "$HARBOR_DIRS_FILE"
+
+          EE_COUNT=$(grep -c . "$EE_DIRS_FILE" || true)
+          HARBOR_COUNT=$(grep -c . "$HARBOR_DIRS_FILE" || true)
+
+          if [ "$EE_COUNT" -eq 0 ] && [ "$HARBOR_COUNT" -eq 0 ]; then
+            echo "Error: no ee-bench instance directory (datapoint.json) or Harbor task directory (task.toml) found in PR changes" >&2
             exit 1
           fi
 
-          # Use the first (should be only) instance directory
-          INSTANCE_DIR=$(echo "$INSTANCE_DIRS" | head -1)
-          INSTANCE_ID=$(jq -r '.instance_id' "dataset-checkout/$INSTANCE_DIR/datapoint.json")
+          INSTANCE_ID=""
+          if [ "$EE_COUNT" -gt 0 ]; then
+            # Use the first (should be only) instance directory
+            INSTANCE_DIR=$(head -1 "$EE_DIRS_FILE")
+            INSTANCE_ID=$(jq -r '.instance_id' "dataset-checkout/$INSTANCE_DIR/datapoint.json")
+            echo "has_ee_bench=true" >> "$GITHUB_OUTPUT"
+            echo "instance_dir=$INSTANCE_DIR" >> "$GITHUB_OUTPUT"
+            echo "Detected ee-bench instance: $INSTANCE_ID at $INSTANCE_DIR"
+          else
+            echo "has_ee_bench=false" >> "$GITHUB_OUTPUT"
+            echo "instance_dir=" >> "$GITHUB_OUTPUT"
+          fi
 
-          echo "instance_dir=dataset-checkout/$INSTANCE_DIR" >> $GITHUB_OUTPUT
-          echo "instance_id=$INSTANCE_ID" >> $GITHUB_OUTPUT
-          echo "Detected instance: $INSTANCE_ID at $INSTANCE_DIR"
+          if [ "$HARBOR_COUNT" -gt 0 ]; then
+            HARBOR_TASKS=$(jq -R -s -c 'split("\n") | map(select(length > 0))' "$HARBOR_DIRS_FILE")
+            echo "has_harbor=true" >> "$GITHUB_OUTPUT"
+            echo "harbor_tasks=$HARBOR_TASKS" >> "$GITHUB_OUTPUT"
+            echo "Detected Harbor tasks: $HARBOR_TASKS"
+            if [ -z "$INSTANCE_ID" ]; then
+              FIRST_TASK=$(head -1 "$HARBOR_DIRS_FILE")
+              INSTANCE_ID=$(grep -m1 -oP '^instance_id\s*=\s*"\K[^"]+' \
+                "dataset-checkout/$FIRST_TASK/task.toml" || basename "$FIRST_TASK")
+            fi
+          else
+            echo "has_harbor=false" >> "$GITHUB_OUTPUT"
+            echo "harbor_tasks=[]" >> "$GITHUB_OUTPUT"
+          fi
+
+          echo "instance_id=$INSTANCE_ID" >> "$GITHUB_OUTPUT"
+
+  # --- EE-Bench datapoint validation ---
+  validate-ee-bench:
+    needs: detect
+    if: needs.detect.outputs.has_ee_bench == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout infrastructure
+        uses: actions/checkout@v5
+
+      - name: Checkout dataset PR
+        uses: actions/checkout@v5
+        with:
+          repository: "${{ inputs.organization }}/${{ inputs.repository }}"
+          token: ${{ secrets.PROJECT_TOKEN }}
+          path: dataset-checkout
+          ref: "refs/pull/${{ inputs.pr_number }}/head"
 
       - name: Run validation
         id: validate
         uses: ./.github/actions/run-validation
         with:
-          instance_dir: ${{ steps.detect.outputs.instance_dir }}
+          instance_dir: dataset-checkout/${{ needs.detect.outputs.instance_dir }}
         env:
           GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
           EE_BENCH_ARTIFACTS_DIR: ${{ runner.temp }}/eval-artifacts
@@ -117,7 +190,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v5
         with:
-          name: "validation-${{ steps.detect.outputs.instance_id }}"
+          name: "validation-${{ needs.detect.outputs.instance_id }}"
           path: ${{ steps.validate.outputs.log_path }}
           if-no-files-found: warn
           retention-days: 7
@@ -126,15 +199,82 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v5
         with:
-          name: "eval-artifacts-${{ steps.detect.outputs.instance_id }}"
+          name: "eval-artifacts-${{ needs.detect.outputs.instance_id }}"
           path: ${{ runner.temp }}/eval-artifacts
           if-no-files-found: ignore
           retention-days: 7
 
+  # --- Harbor task validation (one job per changed task dir) ---
+  validate-harbor:
+    needs: detect
+    if: needs.detect.outputs.has_harbor == 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        task_path: ${{ fromJSON(needs.detect.outputs.harbor_tasks) }}
+    steps:
+      - name: Checkout infrastructure
+        uses: actions/checkout@v5
+
+      - name: Checkout dataset PR
+        uses: actions/checkout@v5
+        with:
+          repository: "${{ inputs.organization }}/${{ inputs.repository }}"
+          token: ${{ secrets.PROJECT_TOKEN }}
+          path: dataset-checkout
+          ref: "refs/pull/${{ inputs.pr_number }}/head"
+
+      - name: Run Harbor validation
+        id: harbor
+        uses: ./.github/actions/run-harbor-validation
+        with:
+          task_dir: dataset-checkout/${{ matrix.task_path }}
+          min_reward: '1'
+
+      - name: Upload Harbor validation log
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: "harbor-validation-${{ inputs.run_key }}-${{ strategy.job-index }}"
+          path: ${{ steps.harbor.outputs.log_path }}
+          if-no-files-found: warn
+          retention-days: 7
+
+  # --- Combined result, auto-merge, comments, project status ---
+  finalize:
+    needs: [detect, validate-ee-bench, validate-harbor]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout infrastructure
+        uses: actions/checkout@v5
+
+      - name: Compute validation result
+        id: result
+        shell: bash
+        env:
+          DETECT_RESULT: ${{ needs.detect.result }}
+          EE_RESULT: ${{ needs.validate-ee-bench.result }}
+          HARBOR_RESULT: ${{ needs.validate-harbor.result }}
+        run: |
+          OVERALL=success
+          if [ "$DETECT_RESULT" != "success" ]; then
+            OVERALL=failure
+          fi
+          if [ "$EE_RESULT" != "success" ] && [ "$EE_RESULT" != "skipped" ]; then
+            OVERALL=failure
+          fi
+          if [ "$HARBOR_RESULT" != "success" ] && [ "$HARBOR_RESULT" != "skipped" ]; then
+            OVERALL=failure
+          fi
+          echo "result=$OVERALL" >> "$GITHUB_OUTPUT"
+          echo "Overall validation result: $OVERALL (detect=$DETECT_RESULT, ee-bench=$EE_RESULT, harbor=$HARBOR_RESULT)"
+
       # --- Auto-merge on validation success ---
       - name: Auto-merge dataset PR
         id: automerge
-        if: steps.validate.outputs.result == 'success' && inputs.auto_merge == true
+        if: steps.result.outputs.result == 'success' && inputs.auto_merge == true
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
@@ -217,8 +357,11 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
-          RESULT: ${{ steps.validate.outputs.result }}
-          INSTANCE_ID: ${{ steps.detect.outputs.instance_id }}
+          RESULT: ${{ steps.result.outputs.result }}
+          INSTANCE_ID: ${{ needs.detect.outputs.instance_id }}
+          EE_JOB_RESULT: ${{ needs.validate-ee-bench.result }}
+          HARBOR_JOB_RESULT: ${{ needs.validate-harbor.result }}
+          HARBOR_TASKS: ${{ needs.detect.outputs.harbor_tasks }}
           AUTO_MERGE_REQUESTED: ${{ inputs.auto_merge }}
           AUTO_MERGE_OUTCOME: ${{ steps.automerge.outcome }}
           AUTO_MERGE_STATUS: ${{ steps.automerge.outputs.status }}
@@ -251,6 +394,17 @@ jobs:
 
           **Instance:** \`${INSTANCE_ID}\`"
 
+          if [ "$EE_JOB_RESULT" != "skipped" ]; then
+            COMMENT_BODY="${COMMENT_BODY}
+          **EE-Bench validation:** ${EE_JOB_RESULT}"
+          fi
+
+          if [ "$HARBOR_JOB_RESULT" != "skipped" ] && [ -n "$HARBOR_TASKS" ] && [ "$HARBOR_TASKS" != "[]" ]; then
+            TASK_LIST=$(echo "$HARBOR_TASKS" | jq -r 'map("`" + . + "`") | join(", ")')
+            COMMENT_BODY="${COMMENT_BODY}
+          **Harbor validation:** ${HARBOR_JOB_RESULT} (${TASK_LIST})"
+          fi
+
           if [ -n "$AUTO_MERGE_DETAILS" ]; then
             COMMENT_BODY="${COMMENT_BODY}
           **Auto-merge:** ${AUTO_MERGE_DETAILS}"
@@ -266,7 +420,7 @@ jobs:
       # --- Dataset Metadata: set Status=Invalid on validation failure ---
       - name: Find source PR in Dataset Metadata project
         id: find-source-pr
-        if: always() && steps.validate.outputs.result != 'success' && inputs.dataset_project_number != '' && inputs.source_pr_number != ''
+        if: always() && steps.result.outputs.result != 'success' && inputs.dataset_project_number != '' && inputs.source_pr_number != ''
         uses: ./.github/actions/find-pr-in-project
         with:
           organization: ${{ inputs.source_organization }}
@@ -276,7 +430,7 @@ jobs:
           github_token: ${{ secrets.PROJECT_TOKEN }}
 
       - name: Set Dataset Metadata Status to Invalid
-        if: always() && steps.validate.outputs.result != 'success' && inputs.dataset_project_number != '' && steps.find-source-pr.outputs.item_id != ''
+        if: always() && steps.result.outputs.result != 'success' && inputs.dataset_project_number != '' && steps.find-source-pr.outputs.item_id != ''
         uses: ./.github/actions/set-project-status
         with:
           organization: ${{ inputs.source_organization }}
@@ -291,9 +445,11 @@ jobs:
           echo "# Datapoint Validation Summary" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "- **Dataset PR:** ${{ inputs.organization }}/${{ inputs.repository }}#${{ inputs.pr_number }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Instance:** ${{ steps.detect.outputs.instance_id }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Instance:** ${{ needs.detect.outputs.instance_id }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Eval type:** ${{ inputs.eval_type }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Result:** ${{ steps.validate.outputs.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **EE-Bench validation:** ${{ needs.validate-ee-bench.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Harbor validation:** ${{ needs.validate-harbor.result }} (tasks: ${{ needs.detect.outputs.harbor_tasks }})" >> $GITHUB_STEP_SUMMARY
+          echo "- **Result:** ${{ steps.result.outputs.result }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Auto-merge requested:** ${{ inputs.auto_merge }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Auto-merge status:** ${{ steps.automerge.outputs.status }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Run key:** ${{ inputs.run_key }}" >> $GITHUB_STEP_SUMMARY

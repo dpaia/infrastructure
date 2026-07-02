@@ -16,13 +16,22 @@ inputs:
     description: 'Head SHA of the source PR at generation time'
     required: true
   datapoint_path:
-    description: 'Local path to the generated datapoint directory (must contain datapoint.json and subdirectories)'
-    required: true
+    description: 'Local path to the generated datapoint directory (must contain datapoint.json and subdirectories). Optional for harbor-only datapoints.'
+    required: false
+    default: ''
   source_repo_name:
     description: 'Source repository name, used as subdirectory under eval_type (e.g., spectre.console)'
     required: true
   flat_json_path:
     description: 'Local path to the flat JSON file (all files inlined). Copied as <eval_type>/<repo>/<instance_id>.json'
+    required: false
+    default: ''
+  harbor_task_dir:
+    description: 'Local path to a rendered Harbor task directory (must contain task.toml). Optional.'
+    required: false
+    default: ''
+  harbor_task_rel:
+    description: 'Harbor task path relative to _harbor_converted/ (e.g. java/feature-service/<instance_id>). Required when harbor_task_dir is set.'
     required: false
     default: ''
   dataset_repo:
@@ -59,6 +68,8 @@ runs:
         SOURCE_COMMIT: ${{ inputs.source_commit }}
         DATAPOINT_PATH: ${{ inputs.datapoint_path }}
         FLAT_JSON_PATH: ${{ inputs.flat_json_path }}
+        HARBOR_TASK_DIR: ${{ inputs.harbor_task_dir }}
+        HARBOR_TASK_REL: ${{ inputs.harbor_task_rel }}
         DATASET_REPO: ${{ inputs.dataset_repo }}
       run: |
         set -euo pipefail
@@ -69,14 +80,43 @@ runs:
 
         echo "branch_name=$BRANCH_NAME" >> $GITHUB_OUTPUT
 
-        # Validate datapoint path
-        if [ ! -d "$DATAPOINT_PATH" ]; then
-          echo "Error: datapoint path '$DATAPOINT_PATH' does not exist" >&2
+        # Validate artifacts: at least one of datapoint_path / harbor_task_dir
+        if [ -z "$DATAPOINT_PATH" ] && [ -z "$HARBOR_TASK_DIR" ]; then
+          echo "Error: neither datapoint_path nor harbor_task_dir was provided" >&2
           exit 1
         fi
-        if [ ! -f "$DATAPOINT_PATH/datapoint.json" ]; then
-          echo "Error: datapoint.json not found in '$DATAPOINT_PATH'" >&2
-          exit 1
+        if [ -n "$DATAPOINT_PATH" ]; then
+          if [ ! -d "$DATAPOINT_PATH" ]; then
+            echo "Error: datapoint path '$DATAPOINT_PATH' does not exist" >&2
+            exit 1
+          fi
+          if [ ! -f "$DATAPOINT_PATH/datapoint.json" ]; then
+            echo "Error: datapoint.json not found in '$DATAPOINT_PATH'" >&2
+            exit 1
+          fi
+        fi
+        if [ -n "$HARBOR_TASK_DIR" ]; then
+          if [ ! -f "$HARBOR_TASK_DIR/task.toml" ]; then
+            echo "Error: task.toml not found in '$HARBOR_TASK_DIR'" >&2
+            exit 1
+          fi
+          if [ -z "$HARBOR_TASK_REL" ]; then
+            echo "Error: harbor_task_rel is required when harbor_task_dir is set" >&2
+            exit 1
+          fi
+          case "$HARBOR_TASK_REL" in
+            /*|*..*) echo "Error: unsafe harbor_task_rel '$HARBOR_TASK_REL'" >&2; exit 1 ;;
+          esac
+        fi
+
+        # Formats carried by this dataset PR
+        FORMATS=""
+        if [ -n "$DATAPOINT_PATH" ]; then
+          FORMATS="ee-bench"
+        fi
+        if [ -n "$HARBOR_TASK_DIR" ]; then
+          FORMATS="${FORMATS:+${FORMATS},}harbor"
+          HARBOR_TARGET_PATH="_harbor_converted/${HARBOR_TASK_REL%/}"
         fi
 
         # Clone dataset repo
@@ -99,22 +139,33 @@ runs:
         fi
 
         # Copy datapoint files into the target directory (structured folder)
-        TARGET_DIR="${EVAL_TYPE}/${SOURCE_REPO_NAME}/${INSTANCE_ID}"
-        rm -rf "$TARGET_DIR"
-        mkdir -p "$TARGET_DIR"
-        cp -r "$DATAPOINT_PATH"/* "$TARGET_DIR/"
-
-        # Copy flat JSON (all files inlined) as sibling file
         FLAT_JSON_TARGET="${EVAL_TYPE}/${SOURCE_REPO_NAME}/${INSTANCE_ID}.json"
-        if [ -n "$FLAT_JSON_PATH" ] && [ -f "$FLAT_JSON_PATH" ]; then
-          cp "$FLAT_JSON_PATH" "$FLAT_JSON_TARGET"
-          echo "Copied flat JSON to $FLAT_JSON_TARGET"
-        else
-          echo "No flat JSON provided or not found, skipping"
+        if [ -n "$DATAPOINT_PATH" ]; then
+          TARGET_DIR="${EVAL_TYPE}/${SOURCE_REPO_NAME}/${INSTANCE_ID}"
+          rm -rf "$TARGET_DIR"
+          mkdir -p "$TARGET_DIR"
+          cp -r "$DATAPOINT_PATH"/* "$TARGET_DIR/"
+          git add "$TARGET_DIR"
+
+          # Copy flat JSON (all files inlined) as sibling file
+          if [ -n "$FLAT_JSON_PATH" ] && [ -f "$FLAT_JSON_PATH" ]; then
+            cp "$FLAT_JSON_PATH" "$FLAT_JSON_TARGET"
+            echo "Copied flat JSON to $FLAT_JSON_TARGET"
+          else
+            echo "No flat JSON provided or not found, skipping"
+          fi
         fi
 
-        # Stage and commit
-        git add "$TARGET_DIR"
+        # Copy rendered Harbor task into _harbor_converted/<language>/<repo>/<instance_id>
+        if [ -n "$HARBOR_TASK_DIR" ]; then
+          rm -rf "$HARBOR_TARGET_PATH"
+          mkdir -p "$HARBOR_TARGET_PATH"
+          cp -r "$HARBOR_TASK_DIR"/. "$HARBOR_TARGET_PATH/"
+          git add "$HARBOR_TARGET_PATH"
+          echo "Copied Harbor task to $HARBOR_TARGET_PATH"
+        fi
+
+        # Stage remaining files
         if [ -f "$FLAT_JSON_TARGET" ]; then
           git add "$FLAT_JSON_TARGET"
         fi
@@ -177,6 +228,10 @@ runs:
           echo "<!-- metadata"
           echo "instance_id: ${INSTANCE_ID}"
           echo "eval_type: ${EVAL_TYPE}"
+          echo "formats: ${FORMATS}"
+          if [ -n "$HARBOR_TASK_DIR" ]; then
+            echo "harbor_task_path: ${HARBOR_TARGET_PATH}"
+          fi
           echo "source_repo: ${SOURCE_REPO_NAME}"
           echo "source_pr: ${SOURCE_PR_URL}"
           echo "source_commit: ${SOURCE_COMMIT}"

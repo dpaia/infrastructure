@@ -1,0 +1,250 @@
+name: 'Run Harbor Validation'
+description: 'Runs Harbor oracle validation for a single Harbor task directory'
+author: 'JetBrains'
+
+inputs:
+  task_dir:
+    description: 'Path to the Harbor task directory containing task.toml'
+    required: true
+  agent:
+    description: 'Harbor agent used for validation. The oracle agent applies solution/solve.sh.'
+    required: false
+    default: 'oracle'
+  harbor_version:
+    description: 'Optional Harbor PyPI version to install. Empty installs the latest available version.'
+    required: false
+    default: ''
+  python_version:
+    description: 'Python version used to install Harbor'
+    required: false
+    default: '3.12'
+  min_reward:
+    description: 'Minimum reward required for validation success'
+    required: false
+    default: '1'
+
+outputs:
+  result:
+    description: 'Validation result: success or failure'
+    value: ${{ steps.collect.outputs.result }}
+  reward:
+    description: 'Observed Harbor reward value'
+    value: ${{ steps.collect.outputs.reward }}
+  task_name:
+    description: 'Validated Harbor task name'
+    value: ${{ steps.inspect.outputs.task_name }}
+  job_dir:
+    description: 'Harbor job output directory'
+    value: ${{ steps.inspect.outputs.job_dir }}
+  log_path:
+    description: 'Path to the Harbor validation log'
+    value: ${{ steps.inspect.outputs.log_path }}
+  result_json_path:
+    description: 'Path to the Harbor trial result JSON, if found'
+    value: ${{ steps.collect.outputs.result_json_path }}
+  reward_json_path:
+    description: 'Path to the Harbor reward JSON, if found'
+    value: ${{ steps.collect.outputs.reward_json_path }}
+  failure_details:
+    description: 'Short failure details from Harbor validation'
+    value: ${{ steps.collect.outputs.failure_details }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Set up Python
+      uses: actions/setup-python@v6
+      with:
+        python-version: ${{ inputs.python_version }}
+
+    - name: Install Harbor
+      shell: bash
+      env:
+        HARBOR_VERSION: ${{ inputs.harbor_version }}
+      run: |
+        set -euo pipefail
+
+        VENV_PATH="${RUNNER_TEMP}/harbor-venv"
+        python -m venv "$VENV_PATH"
+        source "$VENV_PATH/bin/activate"
+
+        python -m pip install --upgrade pip
+        if [ -n "$HARBOR_VERSION" ]; then
+          python -m pip install --upgrade "harbor==$HARBOR_VERSION"
+        else
+          python -m pip install --upgrade harbor
+        fi
+
+        echo "$VENV_PATH/bin" >> "$GITHUB_PATH"
+        harbor --help >/dev/null
+
+    - name: Inspect Harbor task
+      id: inspect
+      shell: bash
+      env:
+        TASK_DIR_INPUT: ${{ inputs.task_dir }}
+      run: |
+        set -euo pipefail
+
+        if [ ! -d "$TASK_DIR_INPUT" ]; then
+          echo "Error: Harbor task directory does not exist: $TASK_DIR_INPUT" >&2
+          exit 1
+        fi
+
+        TASK_DIR="$(cd "$TASK_DIR_INPUT" && pwd)"
+        for required in task.toml instruction.md environment tests/test.sh solution/solve.sh; do
+          if [ ! -e "$TASK_DIR/$required" ]; then
+            echo "Error: Harbor task is missing required path: $required" >&2
+            exit 1
+          fi
+        done
+
+        chmod +x "$TASK_DIR/tests/test.sh" "$TASK_DIR/solution/solve.sh"
+
+        TASK_NAME="$(basename "$TASK_DIR")"
+        TASK_PARENT="$(dirname "$TASK_DIR")"
+        SAFE_TASK_NAME="$(printf '%s' "$TASK_NAME" | tr -c 'A-Za-z0-9_.-' '-')"
+        JOB_NAME="harbor-${SAFE_TASK_NAME}-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-1}"
+        JOBS_DIR="${RUNNER_TEMP}/harbor-jobs"
+        JOB_DIR="${JOBS_DIR}/${JOB_NAME}"
+        LOG_PATH="${RUNNER_TEMP}/harbor-validation-${SAFE_TASK_NAME}.log"
+
+        mkdir -p "$JOBS_DIR"
+
+        echo "task_dir=$TASK_DIR" >> "$GITHUB_OUTPUT"
+        echo "task_parent=$TASK_PARENT" >> "$GITHUB_OUTPUT"
+        echo "task_name=$TASK_NAME" >> "$GITHUB_OUTPUT"
+        echo "job_name=$JOB_NAME" >> "$GITHUB_OUTPUT"
+        echo "jobs_dir=$JOBS_DIR" >> "$GITHUB_OUTPUT"
+        echo "job_dir=$JOB_DIR" >> "$GITHUB_OUTPUT"
+        echo "log_path=$LOG_PATH" >> "$GITHUB_OUTPUT"
+
+    - name: Run Harbor oracle validation
+      id: run
+      shell: bash
+      env:
+        AGENT: ${{ inputs.agent }}
+        TASK_PARENT: ${{ steps.inspect.outputs.task_parent }}
+        TASK_NAME: ${{ steps.inspect.outputs.task_name }}
+        JOBS_DIR: ${{ steps.inspect.outputs.jobs_dir }}
+        JOB_NAME: ${{ steps.inspect.outputs.job_name }}
+        LOG_PATH: ${{ steps.inspect.outputs.log_path }}
+      run: |
+        set +e
+        harbor run \
+          -p "$TASK_PARENT" \
+          -a "$AGENT" \
+          -t "$TASK_NAME" \
+          --jobs-dir "$JOBS_DIR" \
+          --job-name "$JOB_NAME" \
+          --env docker \
+          --n-concurrent 1 \
+          --n-attempts 1 \
+          -y \
+          2>&1 | tee "$LOG_PATH"
+        EXIT_CODE=${PIPESTATUS[0]}
+        set -e
+
+        echo "exit_code=$EXIT_CODE" >> "$GITHUB_OUTPUT"
+        exit 0
+
+    - name: Collect Harbor result
+      id: collect
+      shell: bash
+      env:
+        JOB_DIR: ${{ steps.inspect.outputs.job_dir }}
+        LOG_PATH: ${{ steps.inspect.outputs.log_path }}
+        HARBOR_EXIT_CODE: ${{ steps.run.outputs.exit_code }}
+        MIN_REWARD: ${{ inputs.min_reward }}
+      run: |
+        set -euo pipefail
+
+        python - <<'PY'
+        import json
+        import os
+        import sys
+        from pathlib import Path
+
+        job_dir = Path(os.environ["JOB_DIR"])
+        log_path = Path(os.environ["LOG_PATH"])
+        harbor_exit_code = int(os.environ.get("HARBOR_EXIT_CODE") or "1")
+        min_reward = float(os.environ.get("MIN_REWARD") or "1")
+        output_path = Path(os.environ["GITHUB_OUTPUT"])
+
+        def set_output(name: str, value: str) -> None:
+            with output_path.open("a", encoding="utf-8") as f:
+                if "\n" in value:
+                    f.write(f"{name}<<HARBOR_OUTPUT_EOF\n{value}\nHARBOR_OUTPUT_EOF\n")
+                else:
+                    f.write(f"{name}={value}\n")
+
+        def load_json(path: Path):
+            try:
+                return json.loads(path.read_text(encoding="utf-8"))
+            except Exception:
+                return None
+
+        trial_result_paths = []
+        if job_dir.is_dir():
+            trial_result_paths = sorted(
+                path
+                for path in job_dir.rglob("result.json")
+                if path.parent != job_dir
+            )
+
+        rewards = []
+        exceptions = []
+        selected_result_path = ""
+
+        for path in trial_result_paths:
+            data = load_json(path)
+            if not isinstance(data, dict):
+                continue
+            selected_result_path = selected_result_path or str(path)
+            verifier_result = data.get("verifier_result") or {}
+            if isinstance(verifier_result, dict):
+                if verifier_result.get("exception"):
+                    exceptions.append(str(verifier_result["exception"]))
+                verifier_rewards = verifier_result.get("rewards") or {}
+                if isinstance(verifier_rewards, dict) and verifier_rewards.get("reward") is not None:
+                    try:
+                        rewards.append(float(verifier_rewards["reward"]))
+                    except (TypeError, ValueError):
+                        pass
+
+        reward_json_paths = sorted(job_dir.rglob("reward.json")) if job_dir.is_dir() else []
+        reward = max(rewards) if rewards else None
+        success = harbor_exit_code == 0 and reward is not None and reward >= min_reward
+
+        details = []
+        if harbor_exit_code != 0:
+            details.append(f"harbor exited with code {harbor_exit_code}")
+        if reward is None:
+            details.append("no Harbor reward was found in the job output")
+        elif reward < min_reward:
+            details.append(f"reward {reward:g} is below required minimum {min_reward:g}")
+        details.extend(exceptions[:3])
+
+        if not details and not success:
+            details.append("Harbor validation failed")
+
+        if details:
+            log_tail = ""
+            if log_path.is_file():
+                log_tail = "\n".join(log_path.read_text(errors="replace").splitlines()[-40:])
+            if log_tail:
+                details.append(log_tail)
+
+        set_output("result", "success" if success else "failure")
+        set_output("reward", "" if reward is None else f"{reward:g}")
+        set_output("result_json_path", selected_result_path)
+        set_output("reward_json_path", str(reward_json_paths[0]) if reward_json_paths else "")
+        set_output("failure_details", "\n".join(details))
+        PY
+
+    - name: Fail on Harbor validation failure
+      if: steps.collect.outputs.result != 'success'
+      shell: bash
+      run: |
+        echo "Harbor validation failed"
+        exit 1

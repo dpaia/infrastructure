@@ -45,12 +45,17 @@ on:
         required: false
         type: string
         default: ''
+      templates_repo:
+        description: 'Harbor templates repository (owner/name)'
+        required: false
+        type: string
+        default: 'dpaia/.dpaia_templates'
 
 jobs:
   generate:
     runs-on: ubuntu-latest
     outputs:
-      instance_id: ${{ steps.generate.outputs.instance_id }}
+      instance_id: ${{ steps.generate.outputs.instance_id || steps.harbor-export.outputs.instance_id }}
       dataset_pr_number: ${{ steps.create-pr.outputs.pr_number }}
       dataset_pr_url: ${{ steps.create-pr.outputs.pr_url }}
     steps:
@@ -104,8 +109,56 @@ jobs:
           echo "pr_url=$PR_URL" >> $GITHUB_OUTPUT
           echo "Source PR head SHA: $HEAD_SHA"
 
+      # --- Format detection: which output formats can this PR produce? ---
+      - name: Detect ee-bench capability
+        id: detect
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
+          REPO: "${{ inputs.organization }}/${{ inputs.repository }}"
+          EVAL_TYPE: ${{ inputs.eval_type }}
+          HEAD_SHA: ${{ steps.source-pr.outputs.head_sha }}
+        run: |
+          EE_BENCH=false
+          if gh api "repos/$REPO/contents/.ee-bench/$EVAL_TYPE?ref=$HEAD_SHA" --silent >/dev/null 2>&1; then
+            EE_BENCH=true
+          elif gh api "repos/$REPO/contents/.ee-bench/$EVAL_TYPE" --silent >/dev/null 2>&1; then
+            EE_BENCH=true
+          fi
+          echo "ee_bench=$EE_BENCH" >> "$GITHUB_OUTPUT"
+          echo "EE-Bench applicable: $EE_BENCH"
+
+      # Harbor is a second output format (codegen only). The export script
+      # self-skips (harbor_status=skipped) when the repo is not harbor-capable.
+      - name: Generate Harbor task
+        id: harbor-export
+        if: inputs.eval_type == 'codegen'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.PROJECT_TOKEN }}
+          TEMPLATES_REPO: ${{ inputs.templates_repo }}
+        run: |
+          python3 .github/scripts/export/harbor/export_harbor_template.py \
+            --set REPO="${{ inputs.organization }}/${{ inputs.repository }}" \
+            --set PR_NUMBER="${{ inputs.pr_number }}" \
+            --set TEMPLATES_REPO="$TEMPLATES_REPO" \
+            --output-dir "${RUNNER_TEMP}/harbor-output"
+
+      - name: Check at least one format applies
+        shell: bash
+        env:
+          EE_BENCH: ${{ steps.detect.outputs.ee_bench }}
+          HARBOR_STATUS: ${{ steps.harbor-export.outputs.harbor_status }}
+        run: |
+          if [ "$EE_BENCH" != "true" ] && [ "$HARBOR_STATUS" != "generated" ]; then
+            echo "Error: PR produces neither an ee-bench datapoint nor a Harbor task" >&2
+            exit 1
+          fi
+
       - name: Generate datapoint
         id: generate
+        if: steps.detect.outputs.ee_bench == 'true'
         uses: ./.github/actions/run-export-script
         with:
           organization: ${{ inputs.organization }}
@@ -119,13 +172,15 @@ jobs:
         id: create-pr
         uses: ./.github/actions/create-datapoint-pr
         with:
-          instance_id: ${{ steps.generate.outputs.instance_id }}
+          instance_id: ${{ steps.generate.outputs.instance_id || steps.harbor-export.outputs.instance_id }}
           eval_type: ${{ inputs.eval_type }}
           source_repo_name: ${{ inputs.repository }}
           source_pr_url: ${{ steps.source-pr.outputs.pr_url }}
           source_commit: ${{ steps.source-pr.outputs.head_sha }}
           datapoint_path: ${{ steps.generate.outputs.instance_dir }}
           flat_json_path: ${{ steps.generate.outputs.flat_json }}
+          harbor_task_dir: ${{ steps.harbor-export.outputs.harbor_task_dir }}
+          harbor_task_rel: ${{ steps.harbor-export.outputs.harbor_task_rel }}
           dataset_repo: ${{ inputs.dataset_repo }}
           github_token: ${{ secrets.PROJECT_TOKEN }}
 
@@ -221,11 +276,27 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
+          HARBOR_STATUS: ${{ steps.harbor-export.outputs.harbor_status }}
+          HARBOR_TASK_REL: ${{ steps.harbor-export.outputs.harbor_task_rel }}
         run: |
+          FORMATS=""
+          if [ "${{ steps.detect.outputs.ee_bench }}" = "true" ]; then
+            FORMATS="ee-bench"
+          fi
+          if [ "$HARBOR_STATUS" = "generated" ]; then
+            FORMATS="${FORMATS:+${FORMATS},}harbor"
+          fi
+
           COMMENT_BODY="Datapoint generated successfully.
 
-          **Instance:** \`${{ steps.generate.outputs.instance_id }}\`
+          **Instance:** \`${{ steps.generate.outputs.instance_id || steps.harbor-export.outputs.instance_id }}\`
+          **Formats:** ${FORMATS}
           **Dataset PR:** ${{ steps.create-pr.outputs.pr_url }}"
+
+          if [ "$HARBOR_STATUS" = "generated" ]; then
+            COMMENT_BODY="${COMMENT_BODY}
+          **Harbor task:** \`_harbor_converted/${HARBOR_TASK_REL}\`"
+          fi
 
           gh pr comment "${{ inputs.pr_number }}" \
             --repo "${{ inputs.organization }}/${{ inputs.repository }}" \
@@ -250,6 +321,8 @@ jobs:
           echo "# Generation Summary" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "- **Source PR:** ${{ inputs.organization }}/${{ inputs.repository }}#${{ inputs.pr_number }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Instance:** ${{ steps.generate.outputs.instance_id }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Instance:** ${{ steps.generate.outputs.instance_id || steps.harbor-export.outputs.instance_id }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **EE-Bench applicable:** ${{ steps.detect.outputs.ee_bench }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Harbor status:** ${{ steps.harbor-export.outputs.harbor_status || 'skipped' }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Dataset PR:** ${{ steps.create-pr.outputs.pr_url }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Run key:** ${{ inputs.run_key }}" >> $GITHUB_STEP_SUMMARY

@@ -197,7 +197,6 @@ jobs:
         with:
           task_dir: ${{ steps.harbor-export.outputs.harbor_task_dir }}
           min_reward: '1'
-          fork_token: ${{ secrets.HARBOR_FORK_TOKEN || secrets.PROJECT_TOKEN }}
 
       - name: Upload Harbor validation log
         if: always() && steps.harbor-validate.outcome != 'skipped'

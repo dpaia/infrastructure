@@ -231,7 +231,6 @@ jobs:
         with:
           task_dir: dataset-checkout/${{ matrix.task_path }}
           min_reward: '1'
-          fork_token: ${{ secrets.HARBOR_FORK_TOKEN || secrets.PROJECT_TOKEN }}
 
       - name: Upload Harbor validation log
         if: always()

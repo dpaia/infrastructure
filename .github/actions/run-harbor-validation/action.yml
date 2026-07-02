@@ -1,5 +1,5 @@
 name: 'Run Harbor Validation'
-description: 'Runs Harbor oracle validation for a single Harbor task directory via the ide-eval-harbor fork and its run-harbor-eval wrapper'
+description: 'Runs Harbor oracle validation for a single Harbor task directory using the public Harbor package'
 author: 'JetBrains'
 
 inputs:
@@ -7,36 +7,21 @@ inputs:
     description: 'Path to the Harbor task directory containing task.toml'
     required: true
   agent:
-    description: 'Harbor agent harness used for validation. The oracle agent applies solution/solve.sh.'
+    description: 'Harbor agent used for validation. The oracle agent applies solution/solve.sh.'
     required: false
     default: 'oracle'
-  harbor_fork_repo:
-    description: 'Harbor fork repository (owner/name)'
+  harbor_version:
+    description: 'Optional public Harbor PyPI version to install. Empty installs the latest available version.'
     required: false
-    default: 'JetBrains/ide-eval-harbor'
-  harbor_fork_ref:
-    description: 'Git ref of the harbor fork to use'
+    default: ''
+  python_version:
+    description: 'Python version used to install Harbor'
     required: false
-    default: 'main'
-  fork_token:
-    description: 'Token with read access to the harbor fork repository'
-    required: true
+    default: '3.12'
   min_reward:
     description: 'Minimum reward required for validation success'
     required: false
     default: '1'
-  override_memory_mb:
-    description: 'Container memory cap passed to harbor (runner-sized, not the eval default)'
-    required: false
-    default: '4096'
-  override_storage_mb:
-    description: 'Container storage cap passed to harbor (runner-sized, not the eval default)'
-    required: false
-    default: '8192'
-  override_cpus:
-    description: 'Container CPU cap passed to harbor'
-    required: false
-    default: '2'
 
 outputs:
   result:
@@ -67,16 +52,31 @@ outputs:
 runs:
   using: 'composite'
   steps:
-    - name: Checkout harbor fork
-      uses: actions/checkout@v5
+    - name: Set up Python
+      uses: actions/setup-python@v6
       with:
-        repository: ${{ inputs.harbor_fork_repo }}
-        ref: ${{ inputs.harbor_fork_ref }}
-        token: ${{ inputs.fork_token }}
-        path: .ide-eval-harbor
+        python-version: ${{ inputs.python_version }}
 
-    - name: Set up uv
-      uses: astral-sh/setup-uv@v5
+    - name: Install Harbor
+      shell: bash
+      env:
+        HARBOR_VERSION: ${{ inputs.harbor_version }}
+      run: |
+        set -euo pipefail
+
+        VENV_PATH="${RUNNER_TEMP}/harbor-venv"
+        python -m venv "$VENV_PATH"
+        source "$VENV_PATH/bin/activate"
+
+        python -m pip install --upgrade pip
+        if [ -n "$HARBOR_VERSION" ]; then
+          python -m pip install --upgrade "harbor==$HARBOR_VERSION"
+        else
+          python -m pip install --upgrade harbor
+        fi
+
+        echo "$VENV_PATH/bin" >> "$GITHUB_PATH"
+        harbor --help >/dev/null
 
     - name: Inspect Harbor task
       id: inspect
@@ -129,27 +129,18 @@ runs:
         JOBS_DIR: ${{ steps.inspect.outputs.jobs_dir }}
         JOB_NAME: ${{ steps.inspect.outputs.job_name }}
         LOG_PATH: ${{ steps.inspect.outputs.log_path }}
-        OVERRIDE_MEMORY_MB: ${{ inputs.override_memory_mb }}
-        OVERRIDE_STORAGE_MB: ${{ inputs.override_storage_mb }}
-        OVERRIDE_CPUS: ${{ inputs.override_cpus }}
       run: |
         set +e
-        # The run-harbor-eval wrapper is the blessed launch path for the fork:
-        # it applies the team retry policy and forwards unknown flags to
-        # `harbor jobs start`. --skip-preflight: preflight checks are for
-        # agent evals (API keys, IDE archives); oracle needs none of them.
-        cd .ide-eval-harbor
-        uv run skills/run-harbor-eval/scripts/harbor_eval.py \
-          --harness "$AGENT" \
-          --dataset "$TASK_PARENT" \
-          --job-name "$JOB_NAME" \
-          -i "$TASK_NAME" \
-          --skip-preflight \
-          --override-memory-mb "$OVERRIDE_MEMORY_MB" \
-          --override-storage-mb "$OVERRIDE_STORAGE_MB" \
-          --override-cpus "$OVERRIDE_CPUS" \
-          -n 1 -k 1 \
+        harbor run \
+          -p "$TASK_PARENT" \
+          -a "$AGENT" \
+          -t "$TASK_NAME" \
           --jobs-dir "$JOBS_DIR" \
+          --job-name "$JOB_NAME" \
+          --env docker \
+          --n-concurrent 1 \
+          --n-attempts 1 \
+          -y \
           2>&1 | tee "$LOG_PATH"
         EXIT_CODE=${PIPESTATUS[0]}
         set -e

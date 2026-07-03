@@ -2,41 +2,19 @@
 
 How to contribute an evaluation datapoint that runs on the
 [Harbor](https://pypi.org/project/harbor/) framework — from a source PR in a
-`dpaia/*` repository to a task you can evaluate locally with `ide-eval-harbor`.
+`dpaia/*` repository to a task you can evaluate locally with `harbor-framework`.
 
 ## Introduction
 
 A **Harbor datapoint** is an evaluation task: a source PR in a `dpaia/*`
 repository, paired with a per-repository **Harbor task template** that lives in
 the central [`dpaia/.dpaia_templates`](https://github.com/dpaia/.dpaia_templates)
-repo. You open a normal PR that fixes an
-issue or adds a feature; the pipeline renders the template with your PR's data,
-validates the result with Harbor's oracle agent, and merges a complete Harbor
-task into [`dpaia/dataset`](https://github.com/dpaia/dataset) under
-`_harbor_converted/<language>/<repo>/<instance_id>/`.
-
-Everything a contributor authors is one file — `.harbor/metadata.json` — plus,
-optionally, a few file overrides. A Harbor template renders **byte-for-byte**
-into the final task, so there is no hidden transformation to reason about.
-
-**Pipeline at a glance:**
-
-1. You open a PR in a `dpaia/*` repo. The PR body is the agent task; the diff
-   contains a production-code change (the "gold" solution) and tests that gate
-   it. The PR includes `.harbor/metadata.json`.
-2. A reviewer moves the PR to **Review** on the
-   [Code Generation](https://github.com/orgs/dpaia/projects/13) board.
-3. The pipeline renders the template + your metadata into a Harbor task and
-   validates it with the **oracle agent** (must reach reward 1). Result posted
-   on the PR; **Verification** field flips to **Valid** or **Invalid**.
-4. A reviewer moves the PR to **Verified**. The pipeline generates a dataset PR
-   in `dpaia/dataset`, validates it, and auto-merges. Your PR reaches **Done**.
-5. You run the merged task locally with `ide-eval-harbor` and inspect results.
+repo. 
 
 For a complete real example, browse
-[`dpaia/.dpaia_templates/harbor/dpaia/feature-service/`](https://github.com/dpaia/.dpaia_templates/tree/main/harbor/dpaia/feature-service)
-(the template) alongside `dpaia/dataset/_harbor_converted/java/feature-service/`
-(the tasks it produces, e.g. `dpaia__feature__service-245`).
+[`dpaia/.dpaia_templates/harbor/dpaia/saas-procurement/`](https://github.com/dpaia/.dpaia_templates/tree/main/harbor/dpaia/saas-procurement)
+(the template) alongside `dpaia/dataset/_harbor_converted/java/saas-procurement/`
+(the tasks it produces, e.g. `dpaia__saas__procurement-1`).
 
 ## Prerequisites
 
@@ -46,11 +24,98 @@ For a complete real example, browse
 - **`gh` CLI, authenticated** — with project-board read, Actions read, and
   workflow-dispatch permission on `dpaia/infrastructure`. Required so the local
   runner can resolve a project-board query into instance ids
-  (see [Run the evaluation locally](#7-run-the-evaluation-locally)).
-- **A clone of [`ide-eval-harbor`](https://github.com/JetBrains/ide-eval-harbor)** —
+  (see [Run the evaluation locally](#3-run-the-evaluation-locally)).
+- **A clone of [`harbor-framework`](https://github.com/JetBrains/ide-eval-harbor)** —
   the local Harbor eval runner.
 
 ## The Main Flow
+
+Evaluating your functionality against Harbor is a four-step journey: find an
+existing task that exercises it, set up the local runner, run the evaluation,
+and analyze the results. If no existing task fits your requirements, author a
+new datapoint first — see [Creating a datapoint](#creating-a-datapoint).
+
+### 1. Find an existing task
+
+To evaluate your functionality, first look for existing tasks on the
+[Code Generation](https://github.com/orgs/dpaia/projects/13) board that already
+exercise it. Filter by labels, repositories, and other fields. If a task fits but
+isn't tagged for your use case, add your own labels to it so you can select it
+in a query later.
+
+**When no existing task meets your requirements** you should author a new
+one via a pull request — see [Creating a datapoint](#creating-a-datapoint) —
+then return here to evaluate it.
+
+### 2. Clone and set up `harbor-framework`
+
+Clone [`harbor-framework`](https://github.com/JetBrains/ide-eval-harbor) and do
+first-time setup:
+
+```bash
+cp skills/run-harbor-eval/scripts/.env.local.example \
+   skills/run-harbor-eval/scripts/.env.local
+```
+
+Fill in provider credentials and, if you plan to run with an IDE, the IDE
+archive path. For running the agent inside a JetBrains IDE with MCP, and for
+loading skills, see
+[Running the evaluation with an IDE and skills](#running-the-evaluation-with-an-ide-and-skills)
+and the canonical runbook,
+[`harbor-framework/README_RUN_EVAL.md`](https://github.com/JetBrains/ide-eval-harbor/blob/main/README_RUN_EVAL.md).
+
+> Two things to know up front: **MCP configuration changes require rebuilding
+> the IDE**, while **skills can be passed per run as `--skill` args or
+> configured once via a profile** — no rebuild needed.
+
+### 3. Run the evaluation locally
+
+Point the runner at a **slice of the `dpaia` dataset selected by query**. The
+wrapper resolves the project-board query to instance ids, exports the matching
+Harbor task directories into a local cache, and runs them — no manual clone of
+`dpaia/dataset` needed.
+
+By query (e.g. all Java datapoints):
+
+```bash
+./skills/run-harbor-eval/scripts/harbor_eval.py --detach \
+  --dpaia-query 'is:pr label:Spring repo:dpaia/saas-procurement' \
+  --job-name my-java-run-$(date +%Y%m%d-%H%M%S)
+```
+
+Or run exactly your datapoint by instance id:
+
+```bash
+./skills/run-harbor-eval/scripts/harbor_eval.py --detach \
+  --dpaia-instance-id dpaia__feature__service-245 \
+  --job-name my-datapoint-run-$(date +%Y%m%d-%H%M%S)
+```
+
+The detached launcher prints the job name, PID, and log path. For agent/model
+choices, profiles, and dry-run/preflight, see the
+[Local eval deep-dive](#local-eval-deep-dive).
+
+### 4. Analyze the results
+
+Once the job finishes, inspect the reward and compare runs — see
+[Comparing results with Harbor](#comparing-results-with-harbor). The
+authoritative signal is the verifier reward (`1` = solved):
+
+```bash
+jq '.stats' jobs/<job-name>/result.json
+cat jobs/<job-name>/<trial-name>/verifier/reward.txt
+```
+
+---
+
+## Creating a datapoint
+
+Author a new datapoint only when no existing task on the
+[Code Generation](https://github.com/orgs/dpaia/projects/13) board fits your
+requirements (see [Find an existing task](#1-find-an-existing-task)). A datapoint
+is a source PR in a `dpaia/*` repo; the pipeline renders it into a Harbor task
+and merges it into `dpaia/dataset`. Once **Done**, evaluate it via
+[The Main Flow](#the-main-flow).
 
 ### 1. Pick a project
 
@@ -118,65 +183,6 @@ Move the PR to **Verified**. The pipeline generates a dataset PR in
 `dpaia/dataset`, validates it, and auto-merges — your PR then reaches **Done**.
 The task now lives at `_harbor_converted/<language>/<repo>/<instance_id>/` and
 is ready to evaluate.
-
-### 6. Clone and set up `ide-eval-harbor`
-
-Clone [`ide-eval-harbor`](https://github.com/JetBrains/ide-eval-harbor) and do
-first-time setup:
-
-```bash
-cp skills/run-harbor-eval/scripts/.env.local.example \
-   skills/run-harbor-eval/scripts/.env.local
-```
-
-Fill in provider credentials and, if you plan to run with an IDE, the IDE
-archive path. For running the agent inside a JetBrains IDE with MCP, and for
-loading skills, see
-[Running the evaluation with an IDE and skills](#running-the-evaluation-with-an-ide-and-skills)
-and the canonical runbook,
-[`ide-eval-harbor/README_RUN_EVAL.md`](https://github.com/JetBrains/ide-eval-harbor/blob/main/README_RUN_EVAL.md).
-
-> Two things to know up front: **MCP configuration changes require rebuilding
-> the IDE**, while **skills can be passed per run as `--skill` args or
-> configured once via a profile** — no rebuild needed.
-
-### 7. Run the evaluation locally
-
-Point the runner at a **slice of the `dpaia` dataset selected by query**. The
-wrapper resolves the project-board query to instance ids, exports the matching
-Harbor task directories into a local cache, and runs them — no manual clone of
-`dpaia/dataset` needed.
-
-By query (e.g. all Java datapoints):
-
-```bash
-./skills/run-harbor-eval/scripts/harbor_eval.py --detach \
-  --dpaia-query 'is:pr label:Spring repo:dpaia/saas-procurement' \
-  --job-name my-java-run-$(date +%Y%m%d-%H%M%S)
-```
-
-Or run exactly your datapoint by instance id:
-
-```bash
-./skills/run-harbor-eval/scripts/harbor_eval.py --detach \
-  --dpaia-instance-id dpaia__feature__service-245 \
-  --job-name my-datapoint-run-$(date +%Y%m%d-%H%M%S)
-```
-
-The detached launcher prints the job name, PID, and log path. For agent/model
-choices, profiles, and dry-run/preflight, see the
-[Local eval deep-dive](#local-eval-deep-dive).
-
-### 8. Analyze the results
-
-Once the job finishes, inspect the reward and compare runs — see
-[Comparing results with Harbor](#comparing-results-with-harbor). The
-authoritative signal is the verifier reward (`1` = solved):
-
-```bash
-jq '.stats' jobs/<job-name>/result.json
-cat jobs/<job-name>/<trial-name>/verifier/reward.txt
-```
 
 ---
 
@@ -324,6 +330,64 @@ The runner is a wrapper around `harbor jobs start`. Everything goes through
 scripts/.env → scripts/.env.local → process env → --profile → CLI flags
 ```
 
+### Running a standard Harbor dataset
+
+Beyond the `dpaia` board flow, the runner evaluates any **normal local Harbor
+dataset** — a directory of task folders — by pointing it at the dataset path and
+selecting task ids with `-i`. This is the plain `harbor jobs start -p <dataset>`
+path, so datasets from `harbor datasets` or the internal
+[`JetBrains/harbor-datasets`](https://github.com/JetBrains/harbor-datasets) repo
+work unchanged.
+
+Install a published dataset (skip if you already have a checkout):
+
+```bash
+harbor datasets list                       # what's installable
+harbor datasets download django-orm-changes
+```
+
+Set the default dataset directory once in `scripts/.env.local` (passed to harbor
+as `-p`):
+
+```bash
+DATASET_PATH=../harbor-datasets/datasets/django-orm-changes/tasks
+```
+
+Run a single task from that default dataset (`-i` is the task id, repeatable):
+
+```bash
+./skills/run-harbor-eval/scripts/harbor_eval.py --detach \
+  -i django-orm-changes/add-index \
+  --job-name orm-run-$(date +%Y%m%d-%H%M%S)
+```
+
+Override the dataset per run with `--dataset` and run several tasks at once:
+
+```bash
+./skills/run-harbor-eval/scripts/harbor_eval.py --detach \
+  --dataset ../harbor-datasets/datasets/django-orm-changes/tasks \
+  -i django-orm-changes/add-index \
+  -i django-orm-changes/select-related \
+  --job-name orm-multi-$(date +%Y%m%d-%H%M%S)
+```
+
+Smoke-test the setup with Harbor's built-in `hello-world` task:
+
+```bash
+./skills/run-harbor-eval/scripts/harbor_eval.py --detach \
+  --dataset ../harbor-datasets/datasets/hello-world/tasks \
+  -i hello-world/hello-world \
+  --job-name smoke-$(date +%Y%m%d-%H%M%S)
+```
+
+`--harness`, `--model`, `--ide`, and `--skill` compose with a standard dataset
+exactly as with the `dpaia` flow. Results land in `jobs/<job-name>/` and are
+inspected the same way (see [Analyze the results](#4-analyze-the-results)).
+Note a standard `--dataset` **cannot** be combined with `dpaia` refs — pick one
+source per run.
+
+### The `dpaia` query flow
+
 Key points for the `dpaia` query flow:
 
 - `--dpaia-query 'is:pr label:Spring repo:dpaia/saas-procurement'` resolves a board query to instance
@@ -463,7 +527,7 @@ and `skills/run-harbor-eval/inspecting-results.md`.
   non-Testcontainers datapoints when the same behavior can be tested without a
   live container.
 - **Verify locally before asking for review.** Run the datapoint through
-  `ide-eval-harbor` (steps 6–8) so you know the oracle reaches reward 1 before
+  `harbor-framework` (steps 6–8) so you know the oracle reaches reward 1 before
   the board pipeline runs it.
 
 ## Troubleshooting

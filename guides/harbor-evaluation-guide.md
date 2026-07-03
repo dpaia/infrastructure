@@ -1,4 +1,4 @@
-# Harbor Datapoint Contribution Guide
+# Harbor Datapoint Local Evaluation Guide
 
 How to contribute an evaluation datapoint that runs on the
 [Harbor](https://pypi.org/project/harbor/) framework — from a source PR in a

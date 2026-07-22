@@ -1,0 +1,97 @@
+name: Publish Image
+run-name: "Publish image for ${{ inputs.pr_url }}"
+
+on:
+  workflow_dispatch:
+    inputs:
+      pr_url:
+        description: 'Source PR URL with the datapoint (e.g. https://github.com/dpaia/Kavita/pull/3)'
+        required: true
+        type: string
+      eval_type:
+        description: 'Evaluation type (e.g. codegen, debugging)'
+        required: false
+        type: string
+        default: 'codegen'
+      namespace:
+        description: 'GHCR namespace (org or org/repo). Image repository is ghcr.io/<namespace>/<instance_id>.'
+        required: false
+        type: string
+        default: 'dpaia'
+      push:
+        description: 'Push the image to the registry (uncheck for a build-only dry run)'
+        required: false
+        type: boolean
+        default: true
+      force:
+        description: 'Rebuild and push even if the tag already exists in the registry'
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout infrastructure
+        uses: actions/checkout@v5
+
+      - name: Check rate limit
+        uses: ./.github/actions/check-rate-limit
+        with:
+          github_token: ${{ secrets.PROJECT_TOKEN }}
+
+      - name: Parse PR URL
+        id: pr
+        uses: ./.github/actions/parse-pr-url
+        with:
+          pr_url: ${{ inputs.pr_url }}
+
+      - name: Setup ee-dataset CLI
+        uses: ./.github/actions/setup-ee-import
+
+      - name: Generate datapoint
+        id: generate
+        uses: ./.github/actions/run-export-script
+        with:
+          organization: ${{ steps.pr.outputs.owner }}
+          repository: ${{ steps.pr.outputs.repo }}
+          pr_number: ${{ steps.pr.outputs.number }}
+          eval_type: ${{ inputs.eval_type }}
+          github_token: ${{ secrets.PROJECT_TOKEN }}
+
+      - name: Publish image to GHCR
+        id: publish
+        uses: ./.github/actions/publish-image
+        with:
+          instance_dir: ${{ steps.generate.outputs.instance_dir }}
+          registry_token: ${{ secrets.GITHUB_TOKEN }}
+          github_token: ${{ secrets.PROJECT_TOKEN }}
+          namespace: ${{ inputs.namespace }}
+          push: ${{ inputs.push }}
+          force: ${{ inputs.force }}
+
+      - name: Job summary
+        if: always()
+        shell: bash
+        env:
+          PR_URL: ${{ inputs.pr_url }}
+          INSTANCE_ID: ${{ steps.generate.outputs.instance_id }}
+          IMAGE: ${{ steps.publish.outputs.image }}
+          PUSHED: ${{ steps.publish.outputs.pushed }}
+          DIGEST: ${{ steps.publish.outputs.digest }}
+        run: |
+          {
+            echo "## Publish Image"
+            echo "- **Source PR:** ${PR_URL}"
+            echo "- **Instance:** \`${INSTANCE_ID:-unknown}\`"
+            echo "- **Image:** \`${IMAGE:-unavailable}\`"
+            echo "- **Pushed:** ${PUSHED:-false}"
+            if [ -n "${DIGEST:-}" ]; then
+              echo "- **Digest:** \`${DIGEST}\`"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

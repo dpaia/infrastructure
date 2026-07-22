@@ -1,0 +1,192 @@
+name: 'Publish Image'
+description: 'Builds a datapoint environment image and publishes it to the dpaia GitHub Container Registry (GHCR)'
+author: 'JetBrains'
+
+inputs:
+  instance_dir:
+    description: 'Path to the instance directory (contains datapoint.json and environment/Dockerfile)'
+    required: true
+  registry_token:
+    description: 'Token used to authenticate to the registry for push. Needs write:packages (e.g. the workflow GITHUB_TOKEN with packages: write).'
+    required: true
+  github_token:
+    description: 'Token with read access to the private source repo. Used only for git-clone auth injection into the Dockerfile (e.g. a PAT).'
+    required: true
+  registry:
+    description: 'Container registry host'
+    required: false
+    default: 'ghcr.io'
+  namespace:
+    description: 'Registry namespace (org or org/repo). Image repository is <registry>/<namespace>/<instance_id>.'
+    required: false
+    default: 'dpaia'
+  registry_username:
+    description: 'Username for registry login'
+    required: false
+    default: ${{ github.actor }}
+  platform:
+    description: 'Target build platform'
+    required: false
+    default: 'linux/amd64'
+  push:
+    description: 'Whether to push the image (set to false for a build-only dry run)'
+    required: false
+    default: 'true'
+  force:
+    description: 'Rebuild and push even if the tag already exists in the registry'
+    required: false
+    default: 'false'
+
+outputs:
+  image:
+    description: 'Full published image reference (<registry>/<namespace>/<instance>:<tag>)'
+    value: ${{ steps.meta.outputs.image }}
+  image_repository:
+    description: 'Image repository without tag'
+    value: ${{ steps.meta.outputs.image_repository }}
+  tag:
+    description: 'Image tag (<commit_short>-<dockerfile_sha>)'
+    value: ${{ steps.meta.outputs.tag }}
+  commit_short:
+    description: 'First 12 chars of the datapoint base_commit'
+    value: ${{ steps.meta.outputs.commit_short }}
+  dockerfile_sha:
+    description: 'First 12 chars of the Dockerfile sha256'
+    value: ${{ steps.meta.outputs.dockerfile_sha }}
+  pushed:
+    description: 'true if the image was built and pushed, false if skipped (tag already present)'
+    value: ${{ steps.publish.outputs.pushed }}
+  digest:
+    description: 'Image digest reported by the registry after push (empty if skipped or push disabled)'
+    value: ${{ steps.publish.outputs.digest }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Compute image metadata
+      id: meta
+      shell: bash
+      env:
+        INSTANCE_DIR_INPUT: ${{ inputs.instance_dir }}
+        REGISTRY: ${{ inputs.registry }}
+        NAMESPACE: ${{ inputs.namespace }}
+      run: |
+        set -euo pipefail
+
+        command -v jq >/dev/null || { echo "Error: jq is required but not found" >&2; exit 1; }
+
+        if [ ! -d "$INSTANCE_DIR_INPUT" ]; then
+          echo "Error: instance directory does not exist: $INSTANCE_DIR_INPUT" >&2
+          exit 1
+        fi
+        INSTANCE_DIR="$(cd "$INSTANCE_DIR_INPUT" && pwd)"
+
+        DATAPOINT_JSON="$INSTANCE_DIR/datapoint.json"
+        DOCKERFILE="$INSTANCE_DIR/environment/Dockerfile"
+        for required in "$DATAPOINT_JSON" "$DOCKERFILE"; do
+          if [ ! -f "$required" ]; then
+            echo "Error: required file is missing: $required" >&2
+            exit 1
+          fi
+        done
+
+        INSTANCE_ID="$(jq -r '.instance_id // empty' "$DATAPOINT_JSON")"
+        if [ -z "$INSTANCE_ID" ]; then
+          echo "Error: instance_id is missing from datapoint.json" >&2
+          exit 1
+        fi
+
+        BASE_COMMIT="$(jq -r '.base_commit // empty' "$DATAPOINT_JSON")"
+        if [ -z "$BASE_COMMIT" ]; then
+          echo "Error: base_commit is missing from datapoint.json; cannot build a deterministic tag" >&2
+          exit 1
+        fi
+        COMMIT_SHORT="${BASE_COMMIT:0:12}"
+
+        # Content-address the environment definition so identical Dockerfiles map to the same tag.
+        DOCKERFILE_SHA="$(sha256sum "$DOCKERFILE" | cut -c1-12)"
+
+        TAG="${COMMIT_SHORT}-${DOCKERFILE_SHA}"
+        # GHCR requires the repository path to be lowercase.
+        IMAGE_REPOSITORY="${REGISTRY,,}/${NAMESPACE,,}/${INSTANCE_ID,,}"
+        IMAGE="${IMAGE_REPOSITORY}:${TAG}"
+
+        echo "instance_dir=$INSTANCE_DIR" >> "$GITHUB_OUTPUT"
+        echo "dockerfile=$DOCKERFILE" >> "$GITHUB_OUTPUT"
+        echo "commit_short=$COMMIT_SHORT" >> "$GITHUB_OUTPUT"
+        echo "dockerfile_sha=$DOCKERFILE_SHA" >> "$GITHUB_OUTPUT"
+        echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+        echo "image_repository=$IMAGE_REPOSITORY" >> "$GITHUB_OUTPUT"
+        echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
+
+        echo "Resolved image: $IMAGE"
+
+    - name: Log in to registry
+      shell: bash
+      env:
+        REGISTRY: ${{ inputs.registry }}
+        REGISTRY_USERNAME: ${{ inputs.registry_username }}
+        REGISTRY_TOKEN: ${{ inputs.registry_token }}
+      run: |
+        set -euo pipefail
+        echo "$REGISTRY_TOKEN" | docker login "$REGISTRY" -u "$REGISTRY_USERNAME" --password-stdin
+
+    - name: Build and push image
+      id: publish
+      shell: bash
+      env:
+        DOCKER_CLI_EXPERIMENTAL: enabled
+        INSTANCE_DIR: ${{ steps.meta.outputs.instance_dir }}
+        DOCKERFILE: ${{ steps.meta.outputs.dockerfile }}
+        IMAGE: ${{ steps.meta.outputs.image }}
+        PLATFORM: ${{ inputs.platform }}
+        PUSH: ${{ inputs.push }}
+        FORCE: ${{ inputs.force }}
+        GH_TOKEN: ${{ inputs.github_token }}
+      run: |
+        set -euo pipefail
+
+        # Skip build+push when the tag already exists (unless forced). The tag is
+        # content-addressed by (base_commit, Dockerfile hash), so an existing tag
+        # is byte-for-byte the image we would produce.
+        if [ "$FORCE" != "true" ] && docker manifest inspect "$IMAGE" >/dev/null 2>&1; then
+          echo "Image already present in registry, skipping build and push: $IMAGE"
+          echo "pushed=false" >> "$GITHUB_OUTPUT"
+          echo "digest=" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+
+        DOCKERFILE_DIR="$(dirname "$DOCKERFILE")"
+
+        # Inject GitHub token into git clone URLs for private source repos (mirrors validate.sh).
+        if [ -n "${GH_TOKEN:-}" ]; then
+          REPO_SLUG="$(jq -r '.repo // empty' "$INSTANCE_DIR/datapoint.json" 2>/dev/null || true)"
+          if [ -n "$REPO_SLUG" ]; then
+            REPO_VISIBILITY="$(gh repo view "$REPO_SLUG" --json visibility -q '.visibility' 2>/dev/null || echo "PUBLIC")"
+            if [ "$REPO_VISIBILITY" = "PRIVATE" ]; then
+              echo "Private repo detected ($REPO_SLUG), injecting auth token for git clone ..."
+              sed -i \
+                -e "s|git clone https://github.com/|git clone https://x-access-token:${GH_TOKEN}@github.com/|g" \
+                -e "s|git remote add origin https://github.com/|git remote add origin https://x-access-token:${GH_TOKEN}@github.com/|g" \
+                "$DOCKERFILE"
+            fi
+          fi
+        fi
+
+        echo "Building image $IMAGE ..."
+        docker build --platform "$PLATFORM" -t "$IMAGE" -f "$DOCKERFILE" "$DOCKERFILE_DIR"
+
+        if [ "$PUSH" != "true" ]; then
+          echo "push=false requested, built image locally but not pushing."
+          echo "pushed=false" >> "$GITHUB_OUTPUT"
+          echo "digest=" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+
+        echo "Pushing $IMAGE ..."
+        docker push "$IMAGE"
+
+        DIGEST="$(docker inspect --format='{{index .RepoDigests 0}}' "$IMAGE" 2>/dev/null | awk -F@ '{print $2}' || true)"
+        echo "pushed=true" >> "$GITHUB_OUTPUT"
+        echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
+        echo "Published $IMAGE (digest: ${DIGEST:-unknown})"
